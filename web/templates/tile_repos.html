@@ -1,0 +1,15 @@
+{{define "tile_repos"}}<section id="tile-repos" class="tile tile-repos" hx-get="/tiles/repos" hx-trigger="every {{.PollSeconds}}s" hx-swap="outerHTML">
+  <header class="tile-head"><h2>Repositories</h2></header>
+  {{if .View.Repos}}<ul class="cards">
+    {{range .View.Repos}}<li class="card">
+      <a class="card-title" href="{{.URL}}" target="_blank" rel="noopener">{{.ShortName}}</a>
+      <a class="build build-{{.Build.State}}" {{if .Build.URL}}href="{{.Build.URL}}" target="_blank" rel="noopener"{{end}} title="{{if .Build.Workflow}}{{.Build.Workflow}}: {{.Build.State}} · {{.Build.Age}}{{else}}no workflow run{{end}}"><span class="dot"></span></a>
+      <dl class="counts">
+        <div><dt>issues</dt><dd>{{.OpenIssues}}</dd></div>
+        <div><dt>PRs</dt><dd>{{.OpenPRs}}</dd></div>
+        <div class="{{if .New}}hot{{end}}"><dt>new</dt><dd>{{.New}}</dd></div>
+        <div class="{{if .Unanswered}}hot{{end}}"><dt>unanswered</dt><dd>{{.Unanswered}}</dd></div>
+      </dl>
+    </li>{{end}}
+  </ul>{{else}}<p class="empty">No repositories configured.</p>{{end}}
+</section>{{end}}

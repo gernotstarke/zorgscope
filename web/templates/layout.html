@@ -1,0 +1,21 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{{if .View.Header.AttentionCount}}({{.View.Header.AttentionCount}}) {{end}}zorgscope</title>
+<link rel="stylesheet" href="/static/tokens.css">
+<link rel="stylesheet" href="/static/app.css">
+<meta name="htmx-config" content='{"includeIndicatorStyles": false}'>
+<script src="/static/htmx.min.js" defer></script>
+</head>
+<body hx-headers='{"X-CSRF-Token": "{{.CSRF}}"}'>
+<main class="dashboard">
+{{template "tile_header" .}}
+<section class="grid">
+{{range .View.Tiles}}{{if eq . "attention"}}{{template "tile_attention" $}}{{else if eq . "repos"}}{{template "tile_repos" $}}{{end}}{{end}}
+</section>
+</main>
+</body>
+</html>{{end}}
