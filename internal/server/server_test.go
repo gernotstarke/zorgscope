@@ -134,6 +134,7 @@ func TestDismissRequiresCSRFAndStores(t *testing.T) {
 		}
 		if withHeader {
 			req.Header.Set("X-CSRF-Token", csrf)
+			req.Header.Set("HX-Request", "true") // simulate htmx, which always sets both
 		}
 		r, err := ts.Client().Do(req)
 		if err != nil {
@@ -173,6 +174,7 @@ func TestRefreshAndStatus(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/refresh", nil)
 	req.AddCookie(&http.Cookie{Name: "zs_csrf", Value: csrf})
 	req.Header.Set("X-CSRF-Token", csrf)
+	req.Header.Set("HX-Request", "true")
 	r, err := ts.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -239,6 +241,11 @@ func TestPostRoutesRequireCSRF(t *testing.T) {
 // carries the CSRF token as a hidden form field but sets no X-CSRF-Token header — exactly what a
 // browser without JS produces — must still succeed. A real browser attaches the cookie
 // automatically; the client here does the same explicitly since it has no cookie jar.
+//
+// It also proves the response side of the no-JS fallback: a plain browser POST (no HX-Request
+// header) must not land on a bare tile_attention fragment or a text/plain body with no way back —
+// it must be redirected to "/" (303 See Other). The htmx path (HX-Request: true) is unchanged and
+// still returns the fragment/plain-text bodies the e2e suite exercises.
 func TestNoJSFormFallbackAcceptsCSRFFormField(t *testing.T) {
 	ts, st, ref := newTestServer(t, "dev")
 	resp, _ := get(t, ts, "/")
@@ -252,15 +259,24 @@ func TestNoJSFormFallbackAcceptsCSRFFormField(t *testing.T) {
 		t.Fatal("no csrf cookie issued")
 	}
 
-	postForm := func(path string, form url.Values) *http.Response {
+	// noRedirectClient mirrors what a real browser gives the test harness control over: the
+	// redirect must not be followed silently, so the test can assert the Location a no-JS browser
+	// would navigate to next.
+	noRedirectClient := *ts.Client()
+	noRedirectClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+	post := func(client *http.Client, path string, form url.Values, hx bool) *http.Response {
 		req, err := http.NewRequest(http.MethodPost, ts.URL+path, strings.NewReader(form.Encode()))
 		if err != nil {
 			t.Fatal(err)
 		}
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.AddCookie(&http.Cookie{Name: "zs_csrf", Value: csrf})
+		if hx {
+			req.Header.Set("HX-Request", "true")
+		}
 		// deliberately no X-CSRF-Token header: a no-JS <form> POST cannot set one.
-		r, err := ts.Client().Do(req)
+		r, err := client.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -269,22 +285,53 @@ func TestNoJSFormFallbackAcceptsCSRFFormField(t *testing.T) {
 	}
 
 	dismissForm := url.Values{"id": {"github:arc42/arc42-template|issues/240"}, "updated_at": {"1786874400"}, "csrf_token": {csrf}}
-	if r := postForm("/dismiss", dismissForm); r.StatusCode != http.StatusOK {
-		t.Fatalf("no-JS /dismiss: got %d want 200", r.StatusCode)
+	dismissedID := domain.ItemID{SourceID: "github:arc42/arc42-template", ExternalID: "issues/240"}
+
+	// No-JS: browser navigation, no HX-Request header -> 303 to "/", effect still stored.
+	if r := post(&noRedirectClient, "/dismiss", dismissForm, false); r.StatusCode != http.StatusSeeOther {
+		t.Fatalf("no-JS /dismiss: got %d want 303", r.StatusCode)
+	} else if loc := r.Header.Get("Location"); loc != "/" {
+		t.Fatalf("no-JS /dismiss: Location = %q want \"/\"", loc)
 	}
-	d, _ := st.Dismissal(context.Background(), domain.ItemID{SourceID: "github:arc42/arc42-template", ExternalID: "issues/240"})
-	if d == nil {
+	if d, _ := st.Dismissal(context.Background(), dismissedID); d == nil {
 		t.Fatal("no-JS /dismiss did not store a dismissal")
 	}
 
-	if r := postForm("/dismiss-all", url.Values{"csrf_token": {csrf}}); r.StatusCode != http.StatusOK {
-		t.Fatalf("no-JS /dismiss-all: got %d want 200", r.StatusCode)
+	// htmx: HX-Request set -> 200 with the fragment (unchanged), effect still stored.
+	if r := post(ts.Client(), "/dismiss", dismissForm, true); r.StatusCode != http.StatusOK {
+		t.Fatalf("htmx /dismiss: got %d want 200", r.StatusCode)
+	}
+	if d, _ := st.Dismissal(context.Background(), dismissedID); d == nil {
+		t.Fatal("htmx /dismiss did not store a dismissal")
 	}
 
-	if r := postForm("/refresh", url.Values{"csrf_token": {csrf}}); r.StatusCode != http.StatusAccepted {
-		t.Fatalf("no-JS /refresh: got %d want 202", r.StatusCode)
+	// No-JS /dismiss-all -> 303 to "/".
+	if r := post(&noRedirectClient, "/dismiss-all", url.Values{"csrf_token": {csrf}}, false); r.StatusCode != http.StatusSeeOther {
+		t.Fatalf("no-JS /dismiss-all: got %d want 303", r.StatusCode)
+	} else if loc := r.Header.Get("Location"); loc != "/" {
+		t.Fatalf("no-JS /dismiss-all: Location = %q want \"/\"", loc)
+	}
+
+	// htmx /dismiss-all -> 200 with the fragment (unchanged).
+	if r := post(ts.Client(), "/dismiss-all", url.Values{"csrf_token": {csrf}}, true); r.StatusCode != http.StatusOK {
+		t.Fatalf("htmx /dismiss-all: got %d want 200", r.StatusCode)
+	}
+
+	// No-JS /refresh -> 303 to "/"; the refresh is still triggered (the stored effect here).
+	if r := post(&noRedirectClient, "/refresh", url.Values{"csrf_token": {csrf}}, false); r.StatusCode != http.StatusSeeOther {
+		t.Fatalf("no-JS /refresh: got %d want 303", r.StatusCode)
+	} else if loc := r.Header.Get("Location"); loc != "/" {
+		t.Fatalf("no-JS /refresh: Location = %q want \"/\"", loc)
 	}
 	if ref.calls != 1 {
 		t.Fatalf("no-JS /refresh did not reach the handler, calls=%d", ref.calls)
+	}
+
+	// htmx /refresh -> 202 with the plain-text body (unchanged, what the e2e suite exercises).
+	if r := post(ts.Client(), "/refresh", url.Values{"csrf_token": {csrf}}, true); r.StatusCode != http.StatusAccepted {
+		t.Fatalf("htmx /refresh: got %d want 202", r.StatusCode)
+	}
+	if ref.calls != 2 {
+		t.Fatalf("htmx /refresh did not reach the handler, calls=%d", ref.calls)
 	}
 }

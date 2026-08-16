@@ -87,7 +87,22 @@ func (s *Server) handleDismissAll(w http.ResponseWriter, r *http.Request) {
 	s.handleTileNamed(w, r, "tile_attention")
 }
 
+// isHXRequest reports whether r was issued by htmx (which sets this header on every request it
+// makes). A plain <form> POST from a browser with JS disabled never sets it (§8.5).
+func isHXRequest(r *http.Request) bool {
+	return r.Header.Get("HX-Request") != ""
+}
+
+// handleTileNamed renders tmpl as an htmx fragment for hx-triggered requests. For a no-JS browser
+// POST (no HX-Request header) it instead redirects to "/" (303 See Other): the effect (dismissal)
+// is already stored by the time this is called, but rendering the bare fragment here would leave
+// the browser stranded on an unstyled, doctype-less partial with no way back except the Back
+// button (§8.5 "everything works without JS except tile auto-refresh and passkeys").
 func (s *Server) handleTileNamed(w http.ResponseWriter, r *http.Request, tmpl string) {
+	if !isHXRequest(r) {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
 	v, ok := s.buildView(w, r)
 	if !ok {
 		return
@@ -95,9 +110,16 @@ func (s *Server) handleTileNamed(w http.ResponseWriter, r *http.Request, tmpl st
 	s.render(w, http.StatusOK, tmpl, s.data(r, v))
 }
 
-// handleRefresh triggers a fetch of all sources and returns immediately (FR-9.4).
-func (s *Server) handleRefresh(w http.ResponseWriter, _ *http.Request) {
+// handleRefresh triggers a fetch of all sources and returns immediately (FR-9.4). The htmx path
+// (HX-Request set) keeps its existing 202-plus-plain-text contract, which the e2e suite exercises.
+// A no-JS browser POST redirects to "/" (303 See Other) instead of landing on a bare text/plain
+// response with no navigation back to the dashboard (§8.5).
+func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	n := s.deps.Refresher.TriggerAll()
+	if !isHXRequest(r) {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusAccepted)
 	_, _ = w.Write([]byte("refreshing " + strconv.Itoa(n) + " sources"))
