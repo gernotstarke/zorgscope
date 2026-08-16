@@ -7,8 +7,8 @@
 SHELL          := /bin/sh
 APP            := zorgscope
 PORT           ?= 8080
-GO_IMAGE       ?= golang:1.24
-LINT_IMAGE     ?= golangci/golangci-lint:v2.1
+GO_IMAGE       ?= golang:1.26
+LINT_IMAGE     ?= golangci/golangci-lint:v2.12.0
 FLY_IMAGE      ?= flyio/flyctl:latest
 COMPOSE        := docker compose -f deploy/compose.yml
 COMPOSE_E2E    := docker compose -f deploy/compose.e2e.yml

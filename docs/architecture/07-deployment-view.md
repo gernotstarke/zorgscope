@@ -16,7 +16,7 @@ flowchart LR
   mount `/data`, `[env] ZORGSCOPE_CONFIG=/app/config/zorgscope.yaml`.
 * Config file is baked into the image (copied from `config/`), so config changes deploy via CI.
 * Secrets: `GITHUB_TOKEN`, `PLAUSIBLE_API_KEY`, `TODOIST_TOKEN`, `SESSION_SECRET`, `ENROLL_TOKEN` (`fly secrets set`).
-* Image: multi‑stage `deploy/Dockerfile` – `golang:1.24` build (CGO disabled, `-trimpath -ldflags "-s -w"`),
+* Image: multi‑stage `deploy/Dockerfile` – `golang:1.26` build (CGO disabled, `-trimpath -ldflags "-s -w"`),
   final `gcr.io/distroless/static:nonroot`; ~15–20 MB.
 * Cost: one shared‑cpu‑1x + 1 GB volume ≈ 3–4 €/month.
 

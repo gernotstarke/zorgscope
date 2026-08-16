@@ -31,3 +31,5 @@ at start if missed, retention 30 d. First‑day fallback: new = created within 2
   dismissals cannot hide subsequent activity because they are keyed to `updated_at`.
 * Bad: an item created and answered between two snapshots still shows as new for a day (correct — you should
   see it once); requires persistence (SQLite, ADR‑0004).
+* Detail: "previous snapshot" is the latest one older than the current *snapshot day* (the date of the last
+  scheduled snapshot time ≤ now), so highlights last between 24 h and 48 h — never less than a full day.

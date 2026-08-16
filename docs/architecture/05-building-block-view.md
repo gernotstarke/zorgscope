@@ -5,7 +5,7 @@
 ```mermaid
 flowchart TB
     subgraph zorgscope["zorgscope (single Go binary)"]
-        HTTP[internal/http<br/>router, handlers, auth, middleware, view models]
+        HTTP[internal/server<br/>router, handlers, auth, middleware, view models]
         APP[internal/app<br/>scheduler, refresh, snapshotter, dismiss, dashboard query]
         DOM[internal/domain<br/>Item, Snapshot, Attention, Dismissal — pure]
         PORTS[internal/ports<br/>SourceFetcher, ItemStore, SnapshotStore, DismissalStore,<br/>StatusStore, AuthStore, Clock, Notifier]
@@ -39,7 +39,7 @@ Import rules (enforced by `depguard`):
 | `internal/ports` | `domain`, std lib |
 | `internal/app` | `domain`, `ports`, `config`, std lib |
 | `internal/adapters/*` | `domain`, `ports`, its own third‑party client libs, std lib |
-| `internal/http` | `app`, `domain`, `config`, `ports` (auth store), `web` (embedded FS), webauthn lib, std lib |
+| `internal/server` | `app`, `domain`, `config`, `ports` (auth store), `web` (embedded FS), webauthn lib, std lib |
 | `cmd/*` | everything (wiring) |
 
 ### Responsibilities
@@ -47,7 +47,7 @@ Import rules (enforced by `depguard`):
 | Block | Responsibility | Key types / functions |
 |-------|----------------|-----------------------|
 | `internal/domain` | Data model and rules: age buckets, `IsNew(item, prevSnapshot)`, `IsUnanswered(item, grace, me, collaborators)`, `Attention(item, ctx) Level`, dismissal expiry, snapshot diff, item identity (`SourceID` + `ExternalID`), sorting/capping. | `Item`, `Kind`, `Snapshot`, `Dismissal`, `AttentionLevel`, `Bucket`, `Rules` |
-| `internal/ports` | Interfaces the app depends on; in‑memory fakes for tests live in `ports/fake`. | `SourceFetcher{ID(); Kind(); Fetch(ctx) ([]Item, error)}`, `ItemStore`, `SnapshotStore`, `DismissalStore`, `StatusStore`, `AuthStore`, `CredentialSink` (adapters report auto‑detected expiries), `Clock`, `Notifier` |
+| `internal/ports` | Interfaces the app depends on; in‑memory fakes for tests live in `ports/fake`. | `SourceFetcher{ID() string; Kind() string /*source kind*/; Fetch(ctx) ([]Item, error)}`, `ItemStore`, `SnapshotStore`, `DismissalStore`, `StatusStore`, `AuthStore`, `CredentialSink` (adapters report auto‑detected expiries), `Clock`, `Notifier` |
 | `internal/config` | Parse `zorgscope.yaml`, merge env secrets, validate, expose typed config; hot reload (SIGHUP/fsnotify, local). | `Load(path, env) (Config, error)`, `Validate` |
 | `internal/app` | Use cases: `Scheduler` (ticker per source, jitter, backoff, single‑flight), `RefreshAll`, `Snapshotter` (daily + catch‑up + prune), `Dismiss`, `DashboardQuery` (assemble tile view models from stores + rules), `SourceRegistry` (kind → adapter constructor). | `Scheduler`, `Snapshotter`, `Dashboard`, `Registry` |
 | `internal/adapters/github` | GraphQL client, pagination, mapping to `Item` (issue/pr/workflow‑run), notifications REST for mentions, rate‑limit awareness, ETag. | `RepoFetcher`, `MentionsFetcher` |
@@ -57,9 +57,10 @@ Import rules (enforced by `depguard`):
 | `internal/adapters/watch` | Credential registry from config → `Item{Kind: Credential}` (expiry payload); URL health checks (status, body marker, TLS cert expiry) → `Item{Kind: HealthCheck}`; receives auto‑detected expiries (GitHub token header) via `CredentialSink` port. | `CredentialsFetcher`, `URLFetcher` |
 | `internal/adapters/sqlite` | Schema/migrations (embedded SQL), implementations of all store ports, WAL, pragmas. | `Store` implementing all `*Store` ports |
 | `internal/adapters/clock` | Real clock; fake clock in tests. | `Clock` |
-| `internal/http` | Router (`net/http` mux), handlers `/`, `/tiles/{name}`, `/dismiss`, `/refresh`, `/status`, `/login`, `/enroll`, `/account`, `/logout`, `/healthz`, `/readyz`, `/static/*`; middleware (session, CSRF, security headers, request log, gzip); WebAuthn ceremonies; template rendering with view models. | `Server`, `Handlers`, `Auth` |
+| `internal/server` | Router (`net/http` mux), handlers `/`, `/tiles/{name}`, `/dismiss`, `/refresh`, `/status`, `/login`, `/enroll`, `/account`, `/logout`, `/healthz`, `/readyz`, `/static/*`; middleware (session, CSRF, security headers, request log, gzip); WebAuthn ceremonies; template rendering with view models. | `Server`, `Handlers`, `Auth` |
 | `web/` | `templates/` (layout, page, one partial per tile and per state), `static/` (`tokens.css`, `app.css`, `htmx.min.js`, icons). Embedded via `embed.FS`. | — |
-| `cmd/zorgscope` | Wiring, flags, graceful shutdown. | `main` |
+| `internal/logging` | JSON `slog` logger with secret redaction (QS‑3.3). | `New(w, level, secrets)` |
+| `cmd/zorgscope` | Wiring, flags, graceful shutdown; `sources.go` registers all source kinds. | `main` |
 | `cmd/fakesources` | Deterministic HTTP fakes of all upstreams with a small control API (`POST /__control/github/issues` to inject events) for e2e. | `main` |
 
 ## 5.2 Level 2 – `internal/domain`

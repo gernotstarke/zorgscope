@@ -44,6 +44,7 @@ Evaluate(item, prev, dismissal, now):
   if item.Kind == Credential:  Expires < now → Expired; Expires ≤ now+WarnDays → Expiring; else None   (dismissal keyed to Expires)
   if item.Kind == HealthCheck: !OK and ConsecutiveFailures ≥ 2 → Down; CertExpires ≤ now+WarnDays → Expiring; else None
   (source status auth_failed → synthetic item Kind=Credential, Title "AUTH FAILED: <source>", level AuthFailed; created by app layer from FetchStatus)
+  prev      := latest snapshot of the item's source with date < SnapshotDay(now)   (see §6.4)
   new       := prev == nil ? item.CreatedAt ≥ now-24h : !prev.Contains(item.ID)
   unanswered:= item.Kind ∈ {Issue, PR}
                and item.CreatedAt ≤ now-Grace
@@ -73,6 +74,7 @@ server:
 ui:
   tile_poll_seconds: 60
   attention_cap: 30
+  refresh_min_gap_seconds: 30   # manual refresh never re-fetches a source more often than this
   tiles: [attention, repos, sites, todoist, news, watch]     # order; omit to hide
 snapshot:
   time: "03:00"
@@ -129,9 +131,12 @@ watch:
 
 Secrets by env: `GITHUB_TOKEN`, `PLAUSIBLE_API_KEY`, `TODOIST_TOKEN`, `SESSION_SECRET` (≥ 32 bytes),
 `ENROLL_TOKEN`; optional `AUTH_MODE` (`passkey` default, `dev` only for localhost), `ZORGSCOPE_CONFIG`
-(path), `LOG_LEVEL`, and `*_BASE_URL` overrides per adapter (used by e2e to point at fake sources).
-Validation: unknown keys are errors (`KnownFields(true)`), intervals ≥ 1 m, repos `owner/name`, sites
-hostnames, base_url absolute, `me` non‑empty when github enabled.
+(path), `LOG_LEVEL`, `PORT`, and `GITHUB_BASE_URL` / `PLAUSIBLE_BASE_URL` / `TODOIST_BASE_URL` overrides
+(used by e2e to point at fake sources; also settable as `base_url` in the respective YAML section).
+Validation: unknown keys are errors (`KnownFields(true)`), intervals ≥ 10 s (10 s only for e2e configs;
+production defaults are minutes), repos `owner/name`, sites hostnames, base_url absolute, `me` and
+`GITHUB_TOKEN` present when github enabled, `AUTH_MODE=dev` only for localhost base URLs,
+`SESSION_SECRET` ≥ 32 chars in passkey mode.
 
 ## 8.4 Persistence (SQLite schema, migration 0001)
 
@@ -198,7 +203,7 @@ machine metrics).
 | adapters | contract tests against `httptest` servers replaying fixtures; error‑path tests | `go test` | `internal/adapters/*/*_test.go`, fixtures in `test/fixtures/<adapter>/` |
 | sqlite | store tests on temp DB; migration test | `go test` | `internal/adapters/sqlite/*_test.go` |
 | app | scheduler with fake clock/fetchers; snapshotter; dashboard query | `go test -race` | `internal/app/*_test.go` |
-| http | handler tests, auth tests, golden HTML for each tile state, security header tests, secret canary | `go test` | `internal/http/*_test.go`, goldens in `internal/http/testdata/` |
+| server | handler tests, auth tests, golden HTML for each tile state, security header tests, secret canary | `go test` | `internal/server/*_test.go`, goldens in `internal/server/testdata/` |
 | e2e | Playwright (Chromium/Firefox/WebKit): login (virtual authenticator), tiles, dismiss, refresh, staleness, inject‑new‑issue, viewports, axe | Docker Compose | `test/e2e/` |
 | architecture | import rules | `depguard` via golangci‑lint | `.golangci.yml` |
 

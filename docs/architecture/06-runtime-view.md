@@ -64,8 +64,12 @@ sequenceDiagram
     end
 ```
 
-"Previous snapshot" for new‑detection = the latest snapshot whose date < today's snapshot date; if only
-today's exists (first day), the rule falls back to `created_at ≥ now − 24 h`.
+The **snapshot day** is the date of the most recent scheduled snapshot time at or before now (before 03:00
+it is still yesterday's date). The snapshotter takes at most one snapshot per source and snapshot day; a
+missed one is taken at the next check (catch‑up). "Previous snapshot" for new‑detection = the latest
+snapshot whose date < the current snapshot day, so every item stays `NEW` for at least 24 h and at most
+48 h. If no previous snapshot exists (first day), the rule falls back to `created_at ≥ now − 24 h`.
+Sources without a successful fetch are not snapshotted (an empty snapshot would be noise).
 
 ## 6.5 Passkey enrolment and login
 

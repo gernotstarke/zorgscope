@@ -1,0 +1,12 @@
+# Plans follow the writing-plans task format (dash lists directly under bold labels, bare URLs in
+# commands, Go code with tabs); this file replaces the root config for docs/plans/.
+default: true
+MD013: false
+MD033: false
+MD024: { siblings_only: true }
+MD041: false
+MD060: false
+MD010: { code_blocks: false }
+MD004: false
+MD032: false
+MD034: false

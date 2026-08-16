@@ -2,7 +2,7 @@
 
 | Id | Constraint | Background |
 |----|------------|------------|
-| C‑1 | **Backend language: Go** (current stable, currently 1.24+). | Owner preference; single static binary; strong std lib for HTTP/templates. |
+| C‑1 | **Backend language: Go** (current stable, currently 1.26). | Owner preference; single static binary; strong std lib for HTTP/templates. |
 | C‑2 | **Local toolchain: Docker + GNU make only.** Every developer/agent task (build, test, lint, e2e, docs check, deploy) runs inside containers via `make <target>`. No Go, Node, Playwright or flyctl installation on the host is assumed. | Reproducibility; cheap agents in sandboxes; owner's explicit requirement. |
 | C‑3 | **Hosting: fly.io**, single always‑on machine, persistent volume, secrets via `fly secrets`. Local run and hosted run use the same image. | Owner has a fly.io account; cheap; simple. |
 | C‑4 | **Source hosting: GitHub**, repository `gernotstarke/zorgscope`, CI on GitHub Actions. | Owner's account; free CI minutes for the repo. |

@@ -6,5 +6,6 @@ config:
   MD024: { siblings_only: true }   # duplicate headings allowed in different sections (ADRs)
   MD041: false      # first line heading — some files start with a comment
   MD060: false
+  MD010: { code_blocks: false }   # Go code in fences uses tabs
 ignores:
   - "**/node_modules/**"

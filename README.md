@@ -36,7 +36,7 @@ Only Docker and GNU make are required locally (and a browser).
 | `docs/plans/` | Implementation plans (task lists executable by agents) |
 | `docs/guides/` | How‑tos: browser new‑tab setup, secrets, deployment |
 | `cmd/` | Go entry points (`zorgscope`, `fakesources`) |
-| `internal/` | Go source: `domain`, `ports`, `adapters`, `app`, `http` |
+| `internal/` | Go source: `domain`, `ports`, `config`, `app`, `adapters/*`, `server`, `logging` |
 | `web/` | Templates and static assets (CSS, vendored htmx) |
 | `config/` | Non‑secret runtime configuration (`zorgscope.yaml`) |
 | `deploy/` | Dockerfiles, Compose files, `fly.toml` |

@@ -5,7 +5,7 @@ Technical consequences drawn from them:
 
 | Constraint | Consequence in the architecture |
 |-----------|-----------------------------------|
-| C‑1 Go | Std‑lib first: `net/http` (Go 1.22+ mux), `html/template`, `log/slog`, `database/sql`. Few, well‑known dependencies (see ADR‑0002). |
+| C‑1 Go | Std‑lib first: `net/http` (method+pattern mux), `html/template`, `log/slog`, `database/sql`. Few, well‑known dependencies (see ADR‑0002). |
 | C‑2 Docker + make only | Every make target wraps a `docker run`/`docker compose`; caches in named volumes; multi‑stage Dockerfile builds the same binary CI ships. |
 | C‑3 fly.io single machine | In‑process scheduler instead of external cron; SQLite on volume instead of a database service; `min_machines_running = 1`. |
 | C‑5 single user, passkeys | No user table beyond one account row and its credentials; no roles. |
