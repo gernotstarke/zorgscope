@@ -31,3 +31,27 @@ should still follow the TDD steps — the point is the process — but should no
   wrong — do not loosen the rule.
 * Do not add third‑party dependencies beyond those listed in the plan's Tech Stack without an ADR.
 * Every new source kind needs: adapter, fake, tile template, config section, registry entry (QS‑4.2).
+
+## Deviations
+
+Departures from the M1 plan text made while executing it, with the reason. The plan stays as written;
+this table is the record of where the code intentionally differs.
+
+| # | Task | Plan says | What we do instead | Why |
+|---|------|-----------|--------------------|-----|
+| D‑1 | 7, 15 | `config/zorgscope.yaml` ships with `plausible.enabled: true` and `todoist.enabled: true` | Both set to `false` with a "enabled in M2" comment | `Validate()` requires `PLAUSIBLE_API_KEY`/`TODOIST_TOKEN` when a source is enabled, so `make app` with only a `GITHUB_TOKEN` exits 2. M1 builds no adapter for either source. |
+| D‑2 | 1 | `.golangci.yml` defines depguard rules for `domain`, `ports`, `app`, `adapters` | Adds a `server` rule (`$gostd` + domain, ports, app, config, server, web) | arc42 ch. 5 presents the whole import table as depguard‑enforced; the plan never revisits the file, so `internal/server` would go unchecked for all of M1. `cmd/*` stays unconstrained by design. |
+| D‑3 | 2 | A domain test ends with `_ = time.Now // keep import used in later edits` | Line omitted; `time` import dropped if unused | Global constraint: no `time.Now()` in `internal/domain`. |
+| D‑4 | 4 | `Evaluate` suppresses dismissed items in the `raise()` closure and again in a second `if ev.Dismissed` after the Issue/PR switch | Stale/Aged routed through the same `raise()` closure | One rule, one code path; behaviour and tests unchanged. |
+| D‑5 | 7, 13 | `config.indexOf()` and `github.splitRepo()` hand‑roll `strings.Index` / `strings.Cut` | Use the standard library | No behavioural difference; std lib is allowed in every package. |
+| D‑6 | 6, 7 | `(*RateLimitedError).Error` and `(*ValidationError).Error` have no doc comments | Doc comments added | `revive`'s `exported` rule is enabled, so `make lint` would fail. |
+| D‑7 | 14, 15 | `fmt.Fprintln(os.Stderr, …)` and `sb.Write(…)` return values ignored | `_, _ =` at both call sites | golangci‑lint v2 applies no `exclusions.presets`, so `errcheck` flags them. Matches the plan's own idiom in `internal/server/health.go`. |
+| D‑8 | 14 | `web/embed.go` written in step 1, templates in step 4; `web/templates/page.html` listed for creation | Templates written together with `embed.go`; `page.html` not created | The embed pattern cannot resolve before the templates exist; nothing defines or references a `page` block, and an empty file breaks `template.ParseFS`. |
+| D‑9 | 15 | `logging.New` redacts only `slog.KindString` attribute values | Redaction applies to the attribute's rendered string form, with a test covering an `error` value | Every `"err", err` log site passes a `KindAny` value, so secrets in error text would reach stdout (QS‑3.3). |
+| D‑10 | 15 | CI runs `lint`, `test`, `test-domain`, `image`, `e2e` | Adds a `docs-check` job | `make check` includes `docs-check` and this README claims CI runs exactly these targets. |
+| D‑11 | 4, 7 | `domain.Rules.Me` is populated from config but read by no rule | Field kept, doc comment explains it is plumbed for M2's "waiting on me" refinement | arc42 ch. 5 implies `Me` is an `IsUnanswered` input while ch. 8's pseudocode does not use it; keeping and documenting avoids inventing behaviour. |
+| D‑12 | 7 | `Validate()` also resolves defaults and derived fields (timezone `Location`, snapshot `Hour`/`Minute`, `ExpiresAt`, `ExpectStatus`, `PollInterval`) | Behaviour kept, documented in the doc comment | Tasks 10, 11 and 15 depend on those side effects; splitting it would break `Parse`'s contract. |
+
+Accepted as‑is after review (no code change): the four `time.Now()` sites outside `clock`/`cmd`
+(sqlite migration timestamp, GitHub rate‑limit header parsing, the fake GitHub server, request‑latency
+middleware) are infrastructure timestamps where a `Clock` buys no testability.
