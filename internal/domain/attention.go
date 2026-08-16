@@ -122,13 +122,22 @@ func (r Rules) warnHorizon(days int) time.Duration {
 func (r Rules) Evaluate(it Item, prev *Snapshot, dis *Dismissal, now time.Time) Evaluation {
 	ev := Evaluation{Bucket: BucketOf(it.CreatedAt, now)}
 	ev.Dismissed = dis != nil && dis.Covers(it)
-	raise := func(l Level) { // dismissal suppresses attention levels, never informational ones
+	raise := func(l Level) { // dismissal caps the level at LevelNone; never raises it
 		if !ev.Dismissed && l > ev.Level {
 			ev.Level = l
 		}
 	}
 	switch it.Kind {
 	case KindWorkflowRun:
+		// DecodePayload's error is deliberately discarded here and below. The realistic corruption
+		// mode — an item whose Kind and payload type disagree, e.g. an IssuePayload stored on a
+		// KindWorkflowRun item — unmarshals without error, because JSON ignores unknown fields and
+		// leaves the rest zero; checking the error would not catch it. The error is only non-nil for
+		// payload bytes that are not valid JSON at all, i.e. database corruption. This package has no
+		// logging port and Evaluate returns no error (its signature is load-bearing for later tasks),
+		// so there is nowhere for such an error to go. A zero payload therefore evaluates to
+		// LevelNone: the real defence is that Kind and payload are always written together by one
+		// adapter, plus the adapter's own tests.
 		p, _ := DecodePayload[WorkflowRunPayload](it)
 		if p.Conclusion == "failure" {
 			raise(LevelBuildFailed)

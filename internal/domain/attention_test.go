@@ -171,3 +171,122 @@ func TestLevelMeta(t *testing.T) {
 		t.Fatal("severity order wrong (used for sorting)")
 	}
 }
+
+// Finding 1: the HealthCheck cert-expiry branch (`p.CertExpires != nil && p.CertExpires.Sub(now) <=
+// r.warnHorizon(0) → LevelExpiring`) had no covering test. These pin it, including its precedence
+// against the Down branch.
+func TestEvaluateHealthCheckCertExpiry(t *testing.T) {
+	base := Item{ID: ItemID{"watch:url:x", "x"}, Kind: KindHealthCheck, CreatedAt: now0}
+
+	soon := now0.Add(5 * 24 * time.Hour) // inside the 14-day default warn horizon
+	expiringSoon := base
+	expiringSoon.Payload = MustPayload(HealthCheckPayload{OK: true, CertExpires: &soon})
+	if ev := rules.Evaluate(expiringSoon, nil, nil, now0); ev.Level != LevelExpiring {
+		t.Fatalf("cert expires in 5 d (warn 14) → Expiring, got %+v", ev)
+	}
+
+	far := now0.Add(90 * 24 * time.Hour) // well outside the warn horizon
+	expiringFar := base
+	expiringFar.Payload = MustPayload(HealthCheckPayload{OK: true, CertExpires: &far})
+	if ev := rules.Evaluate(expiringFar, nil, nil, now0); ev.Level != LevelNone {
+		t.Fatalf("cert expires in 90 d (warn 14) → None, got %+v", ev)
+	}
+
+	noCert := base
+	noCert.Payload = MustPayload(HealthCheckPayload{OK: true})
+	if ev := rules.Evaluate(noCert, nil, nil, now0); ev.Level != LevelNone {
+		t.Fatalf("OK, no CertExpires → None, got %+v", ev)
+	}
+
+	// a down check with a soon-expiring cert must still report Down: the `else if` means
+	// ConsecutiveFailures takes precedence over CertExpires.
+	downAndExpiring := base
+	downAndExpiring.Payload = MustPayload(HealthCheckPayload{OK: false, ConsecutiveFailures: 2, CertExpires: &soon})
+	if ev := rules.Evaluate(downAndExpiring, nil, nil, now0); ev.Level != LevelDown {
+		t.Fatalf("down + expiring cert → Down (precedence), got %+v", ev)
+	}
+}
+
+// Finding 2: boundary tests for the three configurable thresholds. Each pins the exact comparison
+// operator used in attention.go — an off-by-one (< vs <=, >= vs >) would flip one of these three
+// points and fail here.
+func TestIsUnansweredGraceBoundary(t *testing.T) {
+	// attention.go: `if now.Sub(it.CreatedAt) < r.Grace { return false }` — strictly-less is the
+	// "still within grace" case; age == Grace is already past grace.
+	cases := []struct {
+		name string
+		it   Item
+		want bool
+	}{
+		{"age == Grace exactly (boundary, not < Grace) → past grace, unanswered", issue("i", "alice", now0.Add(-rules.Grace), "", time.Time{}), true},
+		{"age == Grace-1s (< Grace) → still within grace, not unanswered", issue("i", "alice", now0.Add(-(rules.Grace - time.Second)), "", time.Time{}), false},
+		{"age == Grace+1s (> Grace) → past grace, unanswered", issue("i", "alice", now0.Add(-(rules.Grace + time.Second)), "", time.Time{}), true},
+	}
+	for _, c := range cases {
+		if got := rules.IsUnanswered(c.it, now0); got != c.want {
+			t.Errorf("%s: got %v want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestIsStaleBoundary(t *testing.T) {
+	// attention.go: `return now.Sub(last) >= r.StaleAfter` — age == StaleAfter is already stale
+	// (inclusive boundary on the ">=" side).
+	created := now0.Add(-2 * rules.StaleAfter) // old enough that CreatedAt never masks LastActivityAt
+	cases := []struct {
+		name string
+		it   Item
+		want bool
+	}{
+		{"age == StaleAfter exactly (boundary, >= StaleAfter) → stale", issue("i", "alice", created, "bob", now0.Add(-rules.StaleAfter)), true},
+		{"age == StaleAfter-1s (< StaleAfter) → not yet stale", issue("i", "alice", created, "bob", now0.Add(-(rules.StaleAfter - time.Second))), false},
+		{"age == StaleAfter+1s (> StaleAfter) → stale", issue("i", "alice", created, "bob", now0.Add(-(rules.StaleAfter + time.Second))), true},
+	}
+	for _, c := range cases {
+		if got := rules.IsStale(c.it, now0); got != c.want {
+			t.Errorf("%s: got %v want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestCredentialExpiringBoundary(t *testing.T) {
+	// attention.go: `case p.Expires != nil && p.Expires.Sub(now) <= r.warnHorizon(p.WarnDays): raise(LevelExpiring)`
+	// — remaining == warnHorizon is already inside the warn window (inclusive "<=").
+	horizon := time.Duration(rules.WarnDays) * 24 * time.Hour
+	base := Item{ID: ItemID{"watch:credentials", "c1"}, Kind: KindCredential, CreatedAt: now0}
+
+	atBoundary := horizon
+	exp := now0.Add(atBoundary)
+	cred := base
+	cred.Payload = MustPayload(CredentialPayload{Expires: &exp})
+	if ev := rules.Evaluate(cred, nil, nil, now0); ev.Level != LevelExpiring {
+		t.Fatalf("remaining == warnHorizon exactly (boundary, <= horizon) → Expiring, got %+v", ev)
+	}
+
+	insideBoundary := horizon - time.Second
+	exp2 := now0.Add(insideBoundary)
+	cred.Payload = MustPayload(CredentialPayload{Expires: &exp2})
+	if ev := rules.Evaluate(cred, nil, nil, now0); ev.Level != LevelExpiring {
+		t.Fatalf("remaining == warnHorizon-1s (< horizon) → still Expiring, got %+v", ev)
+	}
+
+	outsideBoundary := horizon + time.Second
+	exp3 := now0.Add(outsideBoundary)
+	cred.Payload = MustPayload(CredentialPayload{Expires: &exp3})
+	if ev := rules.Evaluate(cred, nil, nil, now0); ev.Level != LevelNone {
+		t.Fatalf("remaining == warnHorizon+1s (> horizon) → None, got %+v", ev)
+	}
+}
+
+// Finding 3: DecodePayload's error is deliberately discarded in Evaluate (see the comment above the
+// first DecodePayload call). This pins that as intended behaviour rather than an oversight: payload
+// bytes that are not valid JSON at all must not panic, and must evaluate as if the payload were the
+// zero value, i.e. LevelNone.
+func TestEvaluateMalformedPayloadYieldsNoneNotPanic(t *testing.T) {
+	it := Item{ID: ItemID{"github:o/r", "runs/1"}, Kind: KindWorkflowRun, CreatedAt: now0, UpdatedAt: now0,
+		Payload: []byte("{not json")}
+	ev := rules.Evaluate(it, nil, nil, now0) // must not panic
+	if ev.Level != LevelNone {
+		t.Fatalf("malformed payload → decode error discarded, zero payload → None, got %+v", ev)
+	}
+}
