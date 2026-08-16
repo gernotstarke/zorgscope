@@ -1,0 +1,10 @@
+# markdownlint config for docs/ and README.md (run via `make docs-check`)
+config:
+  default: true
+  MD013: false      # line length — tables and prose wrap as they like
+  MD033: false      # inline HTML (<br/> in mermaid/table cells)
+  MD024: { siblings_only: true }   # duplicate headings allowed in different sections (ADRs)
+  MD041: false      # first line heading — some files start with a comment
+  MD060: false
+ignores:
+  - "**/node_modules/**"
