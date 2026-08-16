@@ -18,12 +18,12 @@ classDiagram
       Labels []string
       Payload any
     }
-    class Kind { <<enum>> Issue PR WorkflowRun Task Article MetricSeries Mention }
+    class Kind { <<enum>> Issue PR WorkflowRun Task Article MetricSeries Mention Credential HealthCheck }
     class Snapshot { SourceID; Date; IDs set }
     class Dismissal { ItemID; UpdatedAt; DismissedAt }
     class FetchStatus { SourceID; LastSuccess; LastError; ErrorMsg; NextRun; Count; InFlight }
     class Rules { Grace; StaleAfter; Me; Collaborators; BotSuffix }
-    class AttentionLevel { <<enum>> None Aged Stale Unanswered New BuildFailed }
+    class AttentionLevel { <<enum>> None Aged Stale Unanswered New BuildFailed Expiring Expired AuthFailed Down }
     Item --> Kind
     Rules ..> Item : Evaluate(item, prevSnapshot, dismissal, now)
     Rules ..> Snapshot
@@ -33,13 +33,17 @@ classDiagram
 
 Payload types per kind: `PRPayload{Draft, ReviewDecision, Additions}`, `WorkflowRunPayload{Conclusion, Status, Branch, RunID}`,
 `TaskPayload{Project, Priority, Due, DueHasTime, Recurring}`, `ArticlePayload{Summary, Topic, FeedName}`,
-`MetricSeriesPayload{Visitors7d, Visitors30d, Pageviews30d, DeltaVisitors7d, DeltaVisitors30d, Daily []int, TopPages []Page}`.
+`MetricSeriesPayload{Visitors7d, Visitors30d, Pageviews30d, DeltaVisitors7d, DeltaVisitors30d, Daily []int, TopPages []Page}`,
+`CredentialPayload{Expires *time, WarnDays, UsedBy, URL, AutoDetected}`, `HealthCheckPayload{StatusCode, LatencyMs, OK, ConsecutiveFailures, CertExpires *time, LastOK}`.
 
 ## 8.2 Attention rules (the heart of QG‑1)
 
 ```text
 Evaluate(item, prev, dismissal, now):
   if item.Kind == WorkflowRun and Conclusion == failure  → BuildFailed (unless dismissed for this RunID)
+  if item.Kind == Credential:  Expires < now → Expired; Expires ≤ now+WarnDays → Expiring; else None   (dismissal keyed to Expires)
+  if item.Kind == HealthCheck: !OK and ConsecutiveFailures ≥ 2 → Down; CertExpires ≤ now+WarnDays → Expiring; else None
+  (source status auth_failed → synthetic item Kind=Credential, Title "AUTH FAILED: <source>", level AuthFailed; created by app layer from FetchStatus)
   new       := prev == nil ? item.CreatedAt ≥ now-24h : !prev.Contains(item.ID)
   unanswered:= item.Kind ∈ {Issue, PR}
                and item.CreatedAt ≤ now-Grace
@@ -69,7 +73,7 @@ server:
 ui:
   tile_poll_seconds: 60
   attention_cap: 30
-  tiles: [attention, repos, sites, todoist, news]     # order; omit to hide
+  tiles: [attention, repos, sites, todoist, news, watch]     # order; omit to hide
 snapshot:
   time: "03:00"
   retention_days: 30
@@ -108,6 +112,19 @@ feeds:
   max_items: 20
   group_by_topic: false
   sources: []                 # e.g. - {name: "Simon Willison", url: "https://simonwillison.net/atom/everything/", topic: ai}
+watch:
+  enabled: true
+  warn_days: 14                # default for credentials and TLS certificates
+  credentials:                 # manual registry; zorgscope's own GitHub token is added automatically (FR-11.2)
+    - name: status.arc42.org GitHub token
+      expires: 2026-12-31
+      used_by: status.arc42.org
+      url: https://github.com/settings/tokens
+  urls:
+    - name: status.arc42.org
+      url: https://status.arc42.org
+      expect_status: 200
+      poll_interval: 15m
 ```
 
 Secrets by env: `GITHUB_TOKEN`, `PLAUSIBLE_API_KEY`, `TODOIST_TOKEN`, `SESSION_SECRET` (≥ 32 bytes),
@@ -137,7 +154,7 @@ embedded SQL files applied at start (`schema_version` table). Times are Unix sec
 ## 8.5 UI and design system
 
 * One layout template, one page template, one partial per tile (`tile_attention.html`, `tile_repos.html`,
-  `tile_sites.html`, `tile_todoist.html`, `tile_news.html`, `tile_header.html`) plus shared partials for
+  `tile_sites.html`, `tile_todoist.html`, `tile_news.html`, `tile_watch.html`, `tile_header.html`) plus shared partials for
   states (`state_empty.html`, `state_error.html`, `badge.html`).
 * `web/static/tokens.css`: colour (surface, text, accent, ok, warn, danger, and a 4‑step age scale), spacing
   scale (4/8/12/16/24/32), radii, shadows, type scale; light and dark via `prefers-color-scheme`.
@@ -161,6 +178,7 @@ distroless image, `govulncheck` in CI, least‑privilege upstream tokens (read�
 
 * Adapters return typed errors: `ErrRateLimited{ResetAt}`, `ErrAuth`, `ErrTransient`, `ErrPermanent`
   (`errors.Is`/`As`); never panic on upstream data.
+* `ErrAuth` additionally flags the source `auth_failed`, which the app layer turns into an `AUTH FAILED` attention item (FR‑11.3).
 * Scheduler translates errors into `FetchStatus` + backoff; the UI shows "⚠ data from 14:02 · GitHub: 403 rate limited, retry 14:35".
 * HTTP handlers: domain/store errors → 500 with generic page + logged; template errors are impossible at
   runtime because templates are parsed at start (`template.Must`) and golden‑tested.

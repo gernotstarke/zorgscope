@@ -19,6 +19,7 @@ unnoticed for days.
 | G‑3 | **Extensible in minutes**: adding a repository, site or feed must not require code changes | One configuration entry + deploy. |
 | G‑4 | Serve as a **showcase for solid, agent‑friendly software engineering**: strict separation of concerns, tests on every layer, CI, documented decisions | The repo can be handed to an unfamiliar (human or LLM) developer who can add a source from the docs alone. |
 | G‑5 | **Cheap and low‑maintenance**: one small cloud machine, no manual operations, no local toolchain beyond Docker + make | Hosting cost in the single‑digit‑euro range per month; zero recurring ops tasks. |
+| G‑6 | **Never be surprised by an expiring or broken credential** — for zorgscope itself and for other apps the owner runs (e.g. status.arc42.org) | Every registered credential shows its remaining validity; warnings appear ≥ 14 days ahead; authentication failures of any source are highlighted immediately. |
 
 ## Top quality goals (ordered)
 

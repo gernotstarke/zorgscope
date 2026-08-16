@@ -9,6 +9,7 @@
 | A‑3 | Todoist's current API can filter "overdue OR due before +7 days" server‑side. | Fetch all active tasks and filter locally (still cheap for a personal account). |
 | A‑4 | Passkeys sync via iCloud Keychain across the owner's Apple devices; Arc and Vivaldi (Chromium) support WebAuthn platform authenticators. | Enrol a second passkey per device; roaming key as fallback. |
 | A‑5 | One fly.io shared‑cpu‑1x/256 MB machine suffices (QS‑2.3). | Scale to 512 MB; still cheap. |
+| A‑7 | GitHub returns the `GitHub-Authentication-Token-Expiration` header for expiring tokens (fine‑grained and classic with expiry). | Fall back to a manual `watch.credentials` entry. |
 | A‑6 | Owner accepts that config changes on fly.io go through git push + CI deploy (minutes). | Add hot reload from a mounted volume file (FR‑8.5 covers local). |
 
 ## Risks
@@ -31,4 +32,5 @@
 | O‑2 | Slack notifications: which channel, which triggers? | S‑1 | v2. |
 | O‑3 | Should "unanswered" also consider reactions (👍) as answers? | S‑1 | before implementing FR‑2.3 — default: no. |
 | O‑4 | Exact grace period for "unanswered" (default 4 h) and stale threshold (30 d). | S‑1 | config default; adjustable. |
+| O‑6 | Which credentials/URLs to watch beyond zorgscope's own tokens (status.arc42.org token(s), domains, certificates)? | S‑1 | before prod; config only. |
 | O‑5 | Custom domain instead of `zorgscope.fly.dev`? | S‑1 | any time; fly certs. |

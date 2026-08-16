@@ -8,6 +8,7 @@ new‑tab page of the browser — that condenses everything worth a glance into 
 * **Site statistics** – Plausible visitor numbers and trends for the arc42 and personal sites.
 * **Todoist** – overdue tasks and everything due within the next seven days.
 * **News** – configurable RSS/Atom feeds (AI/LLM, agentic engineering, …).
+* **Watch** – expiry countdown for registered credentials/certificates (incl. zorgscope's own GitHub token, detected automatically), auth failures of any source, and simple health checks of your own apps (e.g. status.arc42.org).
 
 Single Go binary, server‑rendered UI (html/template + htmx + hand‑written CSS), SQLite for cache and
 daily snapshots, passkey login, hosted on one small fly.io machine. Locally everything runs under

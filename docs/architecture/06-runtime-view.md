@@ -25,6 +25,9 @@ sequenceDiagram
     end
 ```
 
+The GitHub adapter additionally reports the `GitHub-Authentication-Token-Expiration` header (if present) through
+the `CredentialSink` port so the Watch tile shows zorgscope's own token expiry (FR‑11.2).
+
 Items are replaced per source atomically; `first_seen` is preserved for existing ids so "since last visit"
 (FR‑7.4) works. Removed items (closed issues) are deleted from the cache but not from snapshots.
 

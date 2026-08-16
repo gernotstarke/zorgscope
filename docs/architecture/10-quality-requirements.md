@@ -6,6 +6,7 @@ architectural means:
 
 | Scenario group | Realised by |
 |----------------|-------------|
+| QS‑1.9/1.10 credentials | `watch` adapter, `CredentialSink`, `ErrAuth` → `AuthFailed` ([8.2](08-crosscutting-concepts.md#82-attention-rules-the-heart-of-qg1), [8.7](08-crosscutting-concepts.md#87-error-handling)) |
 | QS‑1.x reliability | domain rules ([8.2](08-crosscutting-concepts.md#82-attention-rules-the-heart-of-qg1)), scheduler isolation/backoff ([6.1](06-runtime-view.md)), snapshot catch‑up ([6.4](06-runtime-view.md)), staleness UI |
 | QS‑2.x performance | cache‑only read path ([6.2](06-runtime-view.md)), self‑hosted tiny assets, ETag fragments |
 | QS‑3.x security/ops | [8.6](08-crosscutting-concepts.md#86-security), ADR‑0006, ADR‑0005, distroless image, CI |

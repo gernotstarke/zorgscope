@@ -4,7 +4,7 @@ zorgscope is a single‑user web dashboard that aggregates GitHub issues/PRs/CI 
 Todoist tasks and news feeds into tiles, highlighting what needs attention. It is the browser new‑tab page of
 its owner.
 
-* Requirements overview: [docs/requirements](../requirements/README.md), functional epics E‑1 … E‑10.
+* Requirements overview: [docs/requirements](../requirements/README.md), functional epics E‑1 … E‑11.
 * Quality goals (ordered): QG‑1 reliability of detection, QG‑2 perceived performance, QG‑3 security & low
   operating cost, QG‑4 flexibility of sources, QG‑5 compatibility, QG‑6 usability & aesthetics — see
   [requirements ch. 1](../requirements/01-goals.md) and scenarios in [ch. 5](../requirements/05-quality-requirements.md).

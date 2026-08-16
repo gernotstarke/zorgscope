@@ -47,6 +47,7 @@ flowchart LR
 | EXT‑4 | RSS/Atom publishers | in | HTTP GET, RSS 2.0 / Atom 1.0 / JSON Feed | title, link, published, summary | none | Use `ETag`/`If‑Modified‑Since`; polite intervals. |
 | EXT‑5 | Browser | out | HTTPS, HTML, htmx partial responses | dashboard page & tile fragments | Passkey (WebAuthn) + session cookie | Also served on `http://localhost:8080` for local dev. |
 | EXT‑6 | fly.io | env | container runtime, volume, secrets, HTTPS termination | — | fly API token (deploy) | Single machine, always on. |
+| EXT‑8 | Watched URLs (own apps, e.g. status.arc42.org) | in | HTTPS HEAD/GET | status code, optional body marker, TLS certificate expiry | none | FR‑11.4; polite intervals (default 15 m). |
 | EXT‑7 | Slack (later) | out | incoming webhook | new‑item alerts | webhook URL | Not in v1. |
 
 ## 3.4 Monitored objects (initial configuration)
@@ -58,5 +59,8 @@ Repositories (all issues + PRs + Actions status): `arc42/arc42.org-site`, `arc42
 Plausible sites: `arc42.org`, `arc42.de`, `docs.arc42.org`, `quality.arc42.org`, `faq.arc42.org`, `esabuch.de`, `gernotstarke.de`.
 
 Todoist: the personal account of S‑1. Feeds: to be decided; the mechanism is provider‑agnostic.
+
+Watched credentials and URLs: maintained by S‑1 in the config (initially the tokens used by zorgscope
+itself and by status.arc42.org; URL `https://status.arc42.org`).
 
 The list lives in `config/zorgscope.yaml` and is expected to grow (QG‑4).

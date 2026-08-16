@@ -4,6 +4,7 @@
 |------|---------|
 | **Attention item** | An item that currently needs the user's look: `new`, `unanswered`, `build failed`, a mention or review request — and not dismissed. |
 | **Age bucket** | Classification of an item's age (`created_at` for new‑ness, `updated_at` for staleness): `< 24 h`, `< 7 d`, `< 30 d`, `≥ 30 d`. |
+| **Credential (watched)** | A token/key/certificate/domain registered in `watch.credentials` (or detected automatically) with an expiry date and warning threshold. |
 | **Dismissal** | The user's explicit "seen" for an item, bound to the item's `updated_at`; expires when the item changes. |
 | **Fetch** / **poll** | One execution of a source adapter retrieving current data. |
 | **Fake sources** | A Go program (`cmd/fakesources`) that imitates GitHub, Plausible, Todoist and feeds with deterministic data, used by e2e tests and local demo mode. |
@@ -18,5 +19,6 @@
 | **Stale** | Open issue/PR with no activity for ≥ 30 d (configurable). |
 | **Staleness (of data)** | Age of the last successful fetch for a source, shown per tile. |
 | **Tile** | A self‑contained rectangle of the dashboard grid rendered from one htmx fragment. |
+| **Health check (watched URL)** | A URL polled for status code/body/TLS expiry; failures become attention items. |
 | **Unanswered** | Open issue/PR older than the grace period without a comment/review by anyone other than its author (bots excluded). |
 | **zorg** | Gernot Starke's nickname; **zorgscope** = zorg's scope of things to watch. |

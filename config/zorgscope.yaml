@@ -8,7 +8,7 @@ server:
 ui:
   tile_poll_seconds: 60
   attention_cap: 30
-  tiles: [attention, repos, sites, todoist, news]
+  tiles: [attention, repos, sites, todoist, news, watch]
 
 snapshot:
   time: "03:00"
@@ -59,3 +59,17 @@ feeds:
   # - name: Simon Willison
   #   url: https://simonwillison.net/atom/everything/
   #   topic: ai
+
+watch:
+  enabled: true
+  warn_days: 14
+  credentials: []          # add entries like:
+  # - name: status.arc42.org GitHub token
+  #   expires: 2026-12-31
+  #   used_by: status.arc42.org
+  #   url: https://github.com/settings/tokens
+  urls:
+    - name: status.arc42.org
+      url: https://status.arc42.org
+      expect_status: 200
+      poll_interval: 15m

@@ -30,6 +30,8 @@ zorgscope quality
 | QS‑1.5 | Repo has > 100 open issues | Poll runs | All open items are fetched (pagination) | Contract test with paginated fixture; count matches. |
 | QS‑1.6 | Item was dismissed | Someone comments on it | The item's `updated_at` changes → dismissal expires → item reappears as `UNANSWERED` if applicable | Unit + e2e test. |
 | QS‑1.7 | Two polls overlap (slow upstream) | Scheduler ticks | No concurrent fetch of the same source; no lost updates | Unit test with blocking fake fetcher; `-race` clean. |
+| QS‑1.9 | A registered credential expires in 14 days | Daily evaluation | `EXPIRING` attention item appears with remaining days; disappears only when the config date is renewed or dismissed for that date | Unit test with fake clock; e2e with fake config. |
+| QS‑1.10 | A source token is revoked | Next poll returns 401 | Within one poll interval the source shows `AUTH FAILED` and an attention item exists; other sources unaffected | Integration test with fake server switching to 401. |
 | QS‑1.8 | Any upstream failure | — | The dashboard never shows an empty tile without saying why and how old the data is | UI review + e2e assertion on staleness badge text. |
 
 ### QG‑2 Performance efficiency
