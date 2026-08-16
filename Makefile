@@ -14,11 +14,12 @@ COMPOSE        := docker compose -f deploy/compose.yml
 COMPOSE_E2E    := docker compose -f deploy/compose.e2e.yml
 GOCACHE_VOL    := $(APP)-gocache
 GOMOD_VOL      := $(APP)-gomod
+CGO_ENABLED    ?= 0
 # Run a command inside the Go image with module & build caches persisted in named volumes.
 GO_RUN          = docker run --rm -t \
                     -v "$(CURDIR)":/src -w /src \
                     -v $(GOMOD_VOL):/go/pkg/mod -v $(GOCACHE_VOL):/root/.cache/go-build \
-                    -e CGO_ENABLED=0 $(GO_IMAGE)
+                    -e CGO_ENABLED=$(CGO_ENABLED) $(GO_IMAGE)
 
 .DEFAULT_GOAL := help
 
