@@ -74,6 +74,10 @@ func TestValidationErrors(t *testing.T) {
 		{"unknown tile", "server:\n  base_url: http://localhost:8080\nui:\n  tiles: [attention, weather]\n", map[string]string{"AUTH_MODE": "dev"}, "ui.tiles[1]"},
 		{"bad credential date", "server:\n  base_url: http://localhost:8080\nwatch:\n  credentials:\n    - name: x\n      expires: 31.12.2026\n", map[string]string{"AUTH_MODE": "dev"}, "watch.credentials[0].expires"},
 		{"passkey without session secret", "server:\n  base_url: https://zorgscope.fly.dev\n", map[string]string{"AUTH_MODE": "passkey"}, "SESSION_SECRET"},
+		{"unknown key in repo mapping", "server:\n  base_url: http://localhost:8080\ngithub:\n  enabled: true\n  me: x\n  repos:\n    - name: a/b\n      pol_interval: 5m\n", map[string]string{"GITHUB_TOKEN": "t", "AUTH_MODE": "dev"}, "pol_interval"},
+		{"plausible enabled without token", "server:\n  base_url: http://localhost:8080\nplausible:\n  enabled: true\n  sites: [arc42.org]\n", map[string]string{"AUTH_MODE": "dev"}, "PLAUSIBLE_API_KEY"},
+		{"todoist enabled without token", "server:\n  base_url: http://localhost:8080\ntodoist:\n  enabled: true\n", map[string]string{"AUTH_MODE": "dev"}, "TODOIST_TOKEN"},
+		{"bad plausible site", "server:\n  base_url: http://localhost:8080\nplausible:\n  enabled: true\n  sites: [arc42.org/bad]\n", map[string]string{"PLAUSIBLE_API_KEY": "p", "AUTH_MODE": "dev"}, "plausible.sites[0]"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -102,5 +106,27 @@ func TestDisabledSourcesNeedNoSecrets(t *testing.T) {
 func TestLoadMissingFile(t *testing.T) {
 	if _, err := Load("testdata/does-not-exist.yaml", env(nil)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("want ErrNotExist, got %v", err)
+	}
+}
+
+// TestLoadUnknownKeyFixture loads testdata/unknown-key.yaml through Load (rather than an inline
+// string via Parse, as TestValidationErrors/unknown_key does) so the fixture file is exercised.
+func TestLoadUnknownKeyFixture(t *testing.T) {
+	_, err := Load("testdata/unknown-key.yaml", env(nil))
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("expected ValidationError, got %T %v", err, err)
+	}
+	if !strings.Contains(ve.Key, "prot") {
+		t.Fatalf("key = %q, want it to contain %q", ve.Key, "prot")
+	}
+}
+
+// TestIntervalBoundaryAccepted pins checkInterval's bound at >=, not >: exactly the minimum
+// interval (10s) must be accepted.
+func TestIntervalBoundaryAccepted(t *testing.T) {
+	y := "server:\n  base_url: http://localhost:8080\ngithub:\n  enabled: true\n  me: x\n  poll_interval: 10s\n  repos: [a/b]\n"
+	if _, err := Parse(strings.NewReader(y), env(map[string]string{"GITHUB_TOKEN": "t", "AUTH_MODE": "dev"})); err != nil {
+		t.Fatalf("10s (the minimum) should be accepted: %v", err)
 	}
 }

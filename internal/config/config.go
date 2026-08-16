@@ -3,6 +3,7 @@
 package config
 
 import (
+	"fmt"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -78,12 +79,27 @@ type RepoConfig struct {
 	PollInterval time.Duration `yaml:"poll_interval"`
 }
 
+// repoConfigKeys are the only keys accepted in a repos: mapping entry. Node.Decode does not
+// inherit the parent decoder's KnownFields(true) setting (yaml.v3 always decodes nested nodes
+// loosely), so unknown keys are checked by hand here to preserve the "unknown keys are errors"
+// guarantee for this sub-schema (§8.3).
+var repoConfigKeys = map[string]bool{"name": true, "poll_interval": true}
+
 // UnmarshalYAML implements the scalar-or-mapping form: a bare "owner/name" string, or a mapping
-// with a `name` key plus per-repo overrides such as `poll_interval`.
+// with a `name` key plus per-repo overrides such as `poll_interval`. Unknown keys in the mapping
+// form are rejected with a *ValidationError naming the offending key.
 func (r *RepoConfig) UnmarshalYAML(n *yaml.Node) error {
 	if n.Kind == yaml.ScalarNode {
 		r.Name = n.Value
 		return nil
+	}
+	if n.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			key := n.Content[i].Value
+			if !repoConfigKeys[key] {
+				return &ValidationError{Key: fmt.Sprintf("github.repos[].%s", key), Msg: fmt.Sprintf("unknown key %q in repo config", key)}
+			}
+		}
 	}
 	type plain RepoConfig
 	var p plain

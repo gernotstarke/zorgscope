@@ -31,6 +31,13 @@ func Parse(r io.Reader, getenv func(string) string) (*Config, error) {
 	dec := yaml.NewDecoder(r)
 	dec.KnownFields(true)
 	if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
+		// A nested UnmarshalYAML (e.g. RepoConfig) may already have returned a *ValidationError;
+		// yaml.v3 propagates such errors unwrapped (see decode.go's fail/handleErr), so pass it
+		// through as-is instead of re-deriving a key from its text via yamlErrorKey.
+		var ve *ValidationError
+		if errors.As(err, &ve) {
+			return nil, ve
+		}
 		return nil, &ValidationError{Key: yamlErrorKey(err), Msg: err.Error()}
 	}
 	applyEnv(&cfg, getenv)

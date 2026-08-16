@@ -93,8 +93,11 @@ func (c *Config) Validate() error {
 		if err := checkInterval("github.poll_interval", c.GitHub.PollInterval); err != nil {
 			return err
 		}
-		if c.GitHub.GracePeriod < 0 || c.GitHub.StaleAfter <= 0 {
-			return fail("github.grace_period/stale_after", "must be positive")
+		if c.GitHub.GracePeriod < 0 {
+			return fail("github.grace_period", "must be positive")
+		}
+		if c.GitHub.StaleAfter <= 0 {
+			return fail("github.stale_after", "must be positive")
 		}
 		for i, r := range c.GitHub.Repos {
 			if !repoRe.MatchString(r.Name) {
