@@ -1,0 +1,16 @@
+services:
+  zorgscope:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    ports: ["${PORT:-8080}:8080"]
+    env_file: [../.env]
+    environment:
+      ZORGSCOPE_CONFIG: /app/config/zorgscope.yaml
+      ZORGSCOPE_DATA: /data/zorgscope.db
+    volumes:
+      - zorgscope-data:/data
+      - ../config:/app/config:ro
+    restart: unless-stopped
+volumes:
+  zorgscope-data:

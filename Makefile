@@ -54,6 +54,10 @@ fmt: ## gofmt all Go files
 tidy: ## go mod tidy
 	$(GO_RUN) go mod tidy
 
+.PHONY: go
+go: ## Run any go command in the Go container: make go ARGS="test ./... -run TestX -v"
+	$(GO_RUN) go $(ARGS)
+
 .PHONY: e2e
 e2e: ## End-to-end tests: app + fake sources + Playwright (Docker Compose)
 	$(COMPOSE_E2E) up --build --abort-on-container-exit --exit-code-from playwright
