@@ -207,7 +207,11 @@ func (s *Server) api(h http.HandlerFunc) http.HandlerFunc {
 		fail, rl := s.failStatus, s.failRateLimit
 		s.failStatus = 0
 		exp := s.tokenExpiry
+		now := s.seedNow
 		s.mu.Unlock()
+		if now.IsZero() {
+			now = time.Now()
+		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.Header().Set("X-RateLimit-Limit", "5000")
 		if exp != nil {
@@ -216,7 +220,7 @@ func (s *Server) api(h http.HandlerFunc) http.HandlerFunc {
 		if fail != 0 {
 			if rl {
 				w.Header().Set("X-RateLimit-Remaining", "0")
-				w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(15*time.Minute).Unix(), 10))
+				w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(now.Add(15*time.Minute).Unix(), 10))
 			}
 			w.WriteHeader(fail)
 			_, _ = fmt.Fprintf(w, `{"message":"forced failure %d"}`, fail)
@@ -273,6 +277,12 @@ func (s *Server) page(list []Issue, after any, n int) map[string]any {
 	if c, ok := after.(string); ok && c != "" {
 		start, _ = strconv.Atoi(c)
 	}
+	if start < 0 {
+		start = 0
+	}
+	if start > len(list) {
+		start = len(list)
+	}
 	if n <= 0 {
 		n = 100
 	}
@@ -323,9 +333,13 @@ func (s *Server) graphql(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	now := s.seedNow
 	s.mu.Unlock()
+	if now.IsZero() {
+		now = time.Now()
+	}
 
-	data := map[string]any{"rateLimit": map[string]any{"cost": 1, "remaining": 4999, "resetAt": time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}}
+	data := map[string]any{"rateLimit": map[string]any{"cost": 1, "remaining": 4999, "resetAt": now.Add(time.Hour).UTC().Format(time.RFC3339)}}
 	if repo == nil {
 		data["repository"] = nil
 	} else {
@@ -366,7 +380,7 @@ func (s *Server) runs(w http.ResponseWriter, r *http.Request) {
 			"updated_at": run.UpdatedAt.UTC().Format(time.RFC3339), "run_started_at": run.CreatedAt.UTC().Format(time.RFC3339)})
 	}
 	if per := r.URL.Query().Get("per_page"); per != "" {
-		if p, err := strconv.Atoi(per); err == nil && p < len(list) {
+		if p, err := strconv.Atoi(per); err == nil && p >= 0 && p < len(list) {
 			list = list[:p]
 		}
 	}

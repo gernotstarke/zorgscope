@@ -120,4 +120,58 @@ func TestRunsNotificationsAndControl(t *testing.T) {
 	}
 }
 
+// TestPageOutOfRangeCursorDoesNotPanic covers finding 1: a cursor from before a /__control/reset (or
+// any cursor a client held past the point the underlying list shrank) must yield a well-formed empty
+// page, not a panic from slicing past len(list).
+func TestPageOutOfRangeCursorDoesNotPanic(t *testing.T) {
+	s := New()
+	now := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	Seed(s, now)
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	_, out := gql(t, srv, "tok", map[string]any{"owner": "arc42", "name": "arc42-template", "n": 100, "withIssues": true, "withPRs": false, "issuesAfter": "1000"})
+	issues := out["data"].(map[string]any)["repository"].(map[string]any)["issues"].(map[string]any)
+	if nodes := issues["nodes"].([]any); len(nodes) != 0 {
+		t.Fatalf("expected empty page for out-of-range cursor, got %d nodes", len(nodes))
+	}
+	if issues["pageInfo"].(map[string]any)["hasNextPage"] != false {
+		t.Fatalf("expected hasNextPage=false for out-of-range cursor, got %v", issues["pageInfo"])
+	}
+
+	// A negative cursor must not panic either.
+	_, out = gql(t, srv, "tok", map[string]any{"owner": "arc42", "name": "arc42-template", "n": 100, "withIssues": true, "withPRs": false, "issuesAfter": "-5"})
+	issues = out["data"].(map[string]any)["repository"].(map[string]any)["issues"].(map[string]any)
+	if nodes := issues["nodes"].([]any); len(nodes) != 3 {
+		t.Fatalf("expected full page for negative cursor clamped to 0, got %d nodes", len(nodes))
+	}
+}
+
+// TestRunsNegativePerPageDoesNotPanic covers finding 2: a negative per_page must not panic the
+// handler by slicing list[:p] with a negative bound.
+func TestRunsNegativePerPageDoesNotPanic(t *testing.T) {
+	s := New()
+	Seed(s, time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC))
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/repos/arc42/arc42.org-site/actions/runs?per_page=-1", nil)
+	req.Header.Set("Authorization", "Bearer tok")
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	var out map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if runs, ok := out["workflow_runs"].([]any); !ok || len(runs) != 1 {
+		t.Fatalf("expected full list to be unaffected by negative per_page, got %v", out["workflow_runs"])
+	}
+}
+
 func mustJSON(v any) string { b, _ := json.Marshal(v); return string(b) }

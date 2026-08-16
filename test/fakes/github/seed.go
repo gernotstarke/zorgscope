@@ -3,10 +3,13 @@ package githubfake
 import "time"
 
 // Seed fills the server with a small, deterministic data set relative to now:
-//   - arc42/arc42-template: #236 answered by gernotstarke (aged), #240 opened 2 h ago without
-//     comments (NEW, inside grace), #233 30 d old with last comment by the opener (UNANSWERED),
-//     PR #237 20 d old, no comments (UNANSWERED); latest run on master succeeded.
-//   - arc42/arc42.org-site: #12 answered; latest run on main FAILED.
+//   - arc42/arc42-template: #236 answered by gernotstarke, but its last activity is 51 d old — past
+//     the 30 d stale_after default, so under the domain rules it evaluates to STALE, not merely aged;
+//     #240 opened 2 h ago without comments (NEW, inside the 4 h grace); #233 30 d old with last
+//     comment by the opener (UNANSWERED); PR #237 20 d old, no comments (UNANSWERED); latest run on
+//     master succeeded.
+//   - arc42/arc42.org-site: #12 answered, last activity 2 d old — well inside stale_after, so this one
+//     stays merely aged; latest run on main FAILED (BUILD FAILED).
 //   - one mention notification in an unmonitored repo.
 func Seed(s *Server, now time.Time) {
 	s.mu.Lock()
