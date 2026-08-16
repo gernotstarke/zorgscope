@@ -24,6 +24,9 @@ linters:
         adapters:
           files: ["**/internal/adapters/**", "!**/*_test.go"]
           allow: ["$gostd", "github.com/gernotstarke/zorgscope/internal/domain", "github.com/gernotstarke/zorgscope/internal/ports", "modernc.org/sqlite"]
+        server:
+          files: ["**/internal/server/**", "!**/*_test.go"]
+          allow: ["$gostd", "github.com/gernotstarke/zorgscope/internal/domain", "github.com/gernotstarke/zorgscope/internal/ports", "github.com/gernotstarke/zorgscope/internal/app", "github.com/gernotstarke/zorgscope/internal/config", "github.com/gernotstarke/zorgscope/internal/server", "github.com/gernotstarke/zorgscope/web"]
     revive:
       rules:
         - name: exported
