@@ -54,7 +54,7 @@ Go unit tests live next to the code they test (`*_test.go`), as is idiomatic in 
 
 ## Status
 
-Requirements and architecture are written; implementation follows the plan in `docs/plans/`.
+M1 (walking skeleton) implemented: GitHub attention + repositories, snapshots, dismiss, refresh, dev auth, SQLite, Docker, CI. Next: M2 (all sources) — see `docs/plans/README.md`.
 
 ## Licence
 

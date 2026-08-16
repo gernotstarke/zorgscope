@@ -1,0 +1,15 @@
+server:
+  base_url: http://localhost:8080
+ui:
+  tile_poll_seconds: 5
+  refresh_min_gap_seconds: 1
+github:
+  enabled: true
+  me: gernotstarke
+  poll_interval: 10s
+  grace_period: 4h
+  repos: [arc42/arc42-template, arc42/arc42.org-site]
+plausible: { enabled: false }
+todoist: { enabled: false }
+feeds: { enabled: false }
+watch: { enabled: false }

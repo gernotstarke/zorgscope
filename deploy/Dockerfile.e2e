@@ -1,0 +1,6 @@
+FROM mcr.microsoft.com/playwright:v1.62.1-noble
+WORKDIR /e2e
+COPY test/e2e/package.json test/e2e/package-lock.json ./
+RUN npm ci
+COPY test/e2e/ ./
+CMD ["sh", "-c", "node wait-for-ready.js && npx playwright test"]

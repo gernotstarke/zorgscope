@@ -1,0 +1,42 @@
+services:
+  fakesources:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args: { CMD: fakesources }
+    command: ["-addr", ":9090"]
+  zorgscope:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    depends_on: [fakesources]
+    ports: ["${PORT:-8080}:8080"]
+    environment:
+      ZORGSCOPE_CONFIG: /e2e/config.e2e.yaml
+      ZORGSCOPE_DATA: /data/zorgscope.db
+      ZORGSCOPE_BASE_URL: http://localhost:8080
+      GITHUB_BASE_URL: http://fakesources:9090
+      GITHUB_TOKEN: fake-token
+      AUTH_MODE: dev
+      LOG_LEVEL: info
+    volumes:
+      - ../test/e2e/config.e2e.yaml:/e2e/config.e2e.yaml:ro
+    # mode=1777 is required, not cosmetic: deploy/Dockerfile now bakes a nonroot-owned /data
+    # directory into the image (for the named-volume case in compose.yml, see its comment), and
+    # Docker's tmpfs mount preserves a pre-existing mount point's *mode* bits but resets ownership
+    # to root — so an unqualified `tmpfs: ["/data"]` here would mount root:root 0755, which the
+    # nonroot container user cannot write to (SQLITE_CANTOPEN). world-writable+sticky (1777, the
+    # same mode /tmp uses) makes this tmpfs mount writable regardless of image content.
+    tmpfs: ["/data:mode=1777"]
+  playwright:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.e2e
+    depends_on: [zorgscope]
+    environment:
+      BASE_URL: http://zorgscope:8080
+      FAKES_URL: http://fakesources:9090
+      CI: "1"
+    volumes:
+      - ../test/e2e/playwright-report:/e2e/playwright-report
+      - ../test/e2e/test-results:/e2e/test-results

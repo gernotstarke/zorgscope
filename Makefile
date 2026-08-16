@@ -64,6 +64,14 @@ e2e: ## End-to-end tests: app + fake sources + Playwright (Docker Compose)
 	$(COMPOSE_E2E) up --build --abort-on-container-exit --exit-code-from playwright
 	$(COMPOSE_E2E) down -v
 
+.PHONY: demo
+demo: ## Run the dashboard against fake sources on http://localhost:$(PORT) (no tokens needed)
+	$(COMPOSE_E2E) up --build -d fakesources zorgscope
+	@echo ">> demo running at http://localhost:$(PORT) (stop with: make demo-stop)"
+.PHONY: demo-stop
+demo-stop: ## Stop the demo
+	$(COMPOSE_E2E) down -v
+
 .PHONY: docs-check
 docs-check: ## Lint Markdown and check links in docs/
 	docker run --rm -v "$(CURDIR)":/work -w /work davidanson/markdownlint-cli2:latest "docs/**/*.md" "README.md"
