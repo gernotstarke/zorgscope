@@ -160,7 +160,7 @@ items      (source_id TEXT, external_id TEXT, kind TEXT, title TEXT, url TEXT, a
 snapshots  (source_id TEXT, date TEXT/*YYYY-MM-DD*/, taken_at INT, ids TEXT/*json array*/, PRIMARY KEY(source_id, date));
 dismissals (source_id TEXT, external_id TEXT, updated_at INT, dismissed_at INT, PRIMARY KEY(source_id, external_id));
 fetch_status (source_id TEXT PRIMARY KEY, kind TEXT, last_success INT, last_error INT, error_msg TEXT,
-            next_run INT, item_count INT, duration_ms INT, in_flight INT);
+            next_run INT, item_count INT, duration_ms INT, in_flight INT, auth_failed INT);
 account    (id INT PRIMARY KEY CHECK(id=1), created_at INT, last_visit_at INT);
 credentials(id BLOB PRIMARY KEY, public_key BLOB, aaguid BLOB, sign_count INT, transports TEXT, name TEXT, created_at INT, last_used_at INT);
 sessions   (id TEXT PRIMARY KEY, created_at INT, expires_at INT, last_seen_at INT, user_agent TEXT);

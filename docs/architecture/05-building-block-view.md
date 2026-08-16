@@ -61,7 +61,7 @@ Import rules (enforced by `depguard`):
 | `web/` | `templates/` (layout, page, one partial per tile and per state), `static/` (`tokens.css`, `app.css`, `htmx.min.js`, icons). Embedded via `embed.FS`. | — |
 | `internal/logging` | JSON `slog` logger with secret redaction (QS‑3.3). | `New(w, level, secrets)` |
 | `cmd/zorgscope` | Wiring, flags, graceful shutdown; `sources.go` registers all source kinds. | `main` |
-| `cmd/fakesources` | Deterministic HTTP fakes of all upstreams with a small control API (`POST /__control/github/issues` to inject events) for e2e. | `main` |
+| `cmd/fakesources` | Deterministic HTTP fakes of all upstreams with a small control API (`POST /__control/issues` to inject events) for e2e. | `main` |
 
 ## 5.2 Level 2 – `internal/domain`
 
@@ -73,9 +73,9 @@ domain/
   buckets.go       Bucket(age) → LT24h | LT7d | LT30d | GE30d
   snapshot.go      Snapshot{SourceID, Date, TakenAt, IDs}; Diff(prev, cur) (added, removed)
   dismissal.go     Dismissal{ItemID, UpdatedAt, DismissedAt}; Covers(item) bool
-  attention.go     (Task 4, not yet implemented) Level (None, Aged, Stale, Expiring, Unanswered, New, BuildFailed, Expired, Down, AuthFailed), Rules struct (Grace, StaleAfter, Me, Bots), Evaluate(item, prevSnapshot, dismissal, now)
-  sort.go          (Task 5, not yet implemented) attention ordering: level desc, created desc; cap with overflow count
-  fetchstatus.go   (Task 5, not yet implemented) FetchStatus{SourceID, Kind, LastSuccess, LastError, ErrorMsg, NextRun, ItemCount, Duration, InFlight, AuthFailed}
+  attention.go     Level (None, Aged, Stale, Expiring, Unanswered, New, BuildFailed, Expired, Down, AuthFailed), Rules struct (Grace, StaleAfter, Me, Bots), Evaluate(item, prevSnapshot, dismissal, now)
+  sort.go          attention ordering: level desc, created desc; cap with overflow count
+  fetchstatus.go   FetchStatus{SourceID, Kind, LastSuccess, LastError, ErrorMsg, NextRun, ItemCount, Duration, InFlight, AuthFailed}
 ```
 
 All payload structs currently live together in `item.go`; splitting them into per-kind files (e.g. `metrics.go`,
