@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -190,5 +191,77 @@ func TestRunLoopPollsRepeatedly(t *testing.T) {
 	s.Run(ctx)
 	if f.calls.Load() < 3 {
 		t.Fatalf("expected ≥3 polls, got %d", f.calls.Load())
+	}
+}
+
+// ctxAwareStatusStore is a StatusStore stub that rejects RecordStatus/Status calls made with an
+// already-cancelled context, so a test can prove the terminal status write does NOT reuse the
+// (possibly cancelled) fetch context.
+type ctxAwareStatusStore struct {
+	mu   sync.Mutex
+	last domain.FetchStatus
+	seen bool
+}
+
+func (c *ctxAwareStatusStore) RecordStatus(ctx context.Context, s domain.FetchStatus) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.last, c.seen = s, true
+	return nil
+}
+
+func (c *ctxAwareStatusStore) Status(ctx context.Context, _ string) (*domain.FetchStatus, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.seen {
+		return nil, nil
+	}
+	st := c.last
+	return &st, nil
+}
+
+func (c *ctxAwareStatusStore) Statuses(_ context.Context) ([]domain.FetchStatus, error) {
+	return nil, nil
+}
+
+// TestTerminalStatusWriteSurvivesContextCancellation covers the review finding that the terminal
+// RecordStatus call must not reuse a fetch ctx that gets cancelled mid-flight (Run(ctx) shutdown,
+// or a manual-refresh caller's request ctx expiring during the fetch). If the terminal write used
+// the cancelled ctx, ctxAwareStatusStore would reject it and the recorded status would stay stuck
+// at the earlier InFlight=true snapshot.
+func TestTerminalStatusWriteSurvivesContextCancellation(t *testing.T) {
+	items := memstore.New()
+	statuses := &ctxAwareStatusStore{}
+	clk := clock.NewFake(t0)
+	s := NewScheduler(items, statuses, clk, slog.Default(), 30*time.Second)
+	f := &fakeFetcher{id: "src", block: make(chan struct{})}
+	s.Add(f, time.Minute)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.FetchNow(ctx, "src") }()
+	for s.InFlight() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	cancel() // simulate Run(ctx) shutdown, or a manual-refresh request ctx expiring mid-fetch
+	if err := <-done; err == nil {
+		t.Fatal("expected the fetch to fail once its context was cancelled")
+	}
+
+	got, err := statuses.Status(context.Background(), "src")
+	if err != nil || got == nil {
+		t.Fatalf("terminal status was not recorded: got=%+v err=%v", got, err)
+	}
+	if got.InFlight {
+		t.Fatalf("InFlight must be cleared by the terminal write even though ctx was cancelled: %+v", got)
+	}
+	if got.ErrorMsg == "" {
+		t.Fatalf("terminal status must record the cancellation error: %+v", got)
 	}
 }

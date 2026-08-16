@@ -25,7 +25,13 @@ const (
 	initialBackoff = time.Minute
 	maxBackoff     = 30 * time.Minute
 	staggerStep    = 500 * time.Millisecond
+	// statusWriteTimeout bounds the terminal status write so a detached write can never hang
+	// shutdown indefinitely (it no longer inherits the fetch ctx's cancellation, see fetch).
+	statusWriteTimeout = 5 * time.Second
 )
+
+// componentScheduler is the "component" field value on every log line this file emits (arc42 §8.8).
+const componentScheduler = "scheduler"
 
 type scheduled struct {
 	fetcher  ports.SourceFetcher
@@ -57,7 +63,9 @@ func NewScheduler(items ports.ItemStore, status ports.StatusStore, clock ports.C
 	return &Scheduler{items: items, status: status, clock: clock, log: log, minGap: minGap, byID: map[string]*scheduled{}}
 }
 
-// Add registers a source with its poll interval.
+// Add registers a source with its poll interval. Sources added after Run has started are
+// registered and reachable via SourceIDs and FetchNow, but Run snapshots the source set at entry,
+// so a late addition gets no polling loop until the next Run.
 func (s *Scheduler) Add(f ports.SourceFetcher, interval time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -182,11 +190,16 @@ func (s *Scheduler) fetch(ctx context.Context, sc *scheduled) error {
 	id, kind := sc.fetcher.ID(), sc.fetcher.Kind()
 	start := s.clock.Now()
 	st := domain.FetchStatus{SourceID: id, Kind: kind}
-	if prev, err := s.status.Status(ctx, id); err == nil && prev != nil {
+	prev, readErr := s.status.Status(ctx, id)
+	if readErr != nil {
+		s.log.Warn("status read failed", "component", componentScheduler, "source_id", id, "status", "read_failed", "err", readErr)
+	} else if prev != nil {
 		st = *prev
 	}
 	st.InFlight = true
-	_ = s.status.RecordStatus(ctx, st)
+	if writeErr := s.status.RecordStatus(ctx, st); writeErr != nil {
+		s.log.Warn("status write failed", "component", componentScheduler, "source_id", id, "status", "write_failed", "err", writeErr)
+	}
 
 	fctx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	items, err := sc.fetcher.Fetch(fctx)
@@ -197,19 +210,27 @@ func (s *Scheduler) fetch(ctx context.Context, sc *scheduled) error {
 	done := s.clock.Now()
 	st.InFlight = false
 	st.Duration = done.Sub(start)
+	durationMs := st.Duration.Milliseconds()
 
 	s.mu.Lock()
 	if err == nil {
 		st.LastSuccess, st.ItemCount, st.ErrorMsg, st.AuthFailed = done, len(items), "", false
 		sc.backoff = 0
 		st.NextRun = done.Add(sc.interval)
-		s.log.Info("fetched", "source", id, "items", len(items), "duration", st.Duration)
+		s.log.Info("fetch complete", "component", componentScheduler, "source_id", id, "status", "ok", "items", len(items), "duration_ms", durationMs)
 	} else {
 		st.LastError, st.ErrorMsg = done, err.Error()
 		st.AuthFailed = errors.Is(err, ports.ErrAuth)
 		if rl, ok := ports.AsRateLimited(err); ok && rl.ResetAt.After(done) {
 			st.NextRun = rl.ResetAt.Add(time.Minute)
 		} else {
+			// Deliberate M1 choice (review ruling): ErrPermanent gets the same capped
+			// exponential backoff as ErrTransient rather than stopping retries forever. An
+			// adapter's "permanent" classification, derived from an upstream status code, can
+			// be wrong (a 404 for a repo that gets un-archived, a 403 whose scope later gets
+			// fixed) — for a personal dashboard, retrying every 30 minutes forever beats a
+			// source that silently stops polling with no way back. Do not "fix" this into a
+			// permanent stop without revisiting that call.
 			if sc.backoff == 0 {
 				sc.backoff = initialBackoff
 			} else {
@@ -220,11 +241,22 @@ func (s *Scheduler) fetch(ctx context.Context, sc *scheduled) error {
 			}
 			st.NextRun = done.Add(sc.backoff)
 		}
-		s.log.Warn("fetch failed", "source", id, "err", err, "next_run", st.NextRun)
+		s.log.Warn("fetch failed", "component", componentScheduler, "source_id", id, "status", "error", "err", err, "next_run", st.NextRun, "duration_ms", durationMs)
 	}
 	sc.lastRun, sc.nextRun = done, st.NextRun
 	s.mu.Unlock()
 
-	_ = s.status.RecordStatus(ctx, st)
+	// The terminal write must survive cancellation of ctx: Run(ctx) is cancelled during graceful
+	// shutdown while a fetch is in flight, and a manual-refresh caller's request context can
+	// expire during the up-to-60s fetch window (Task 14). Either way, the write that clears
+	// InFlight and records the outcome must still land, or the dashboard would show a source
+	// stuck "refreshing…" until the next successful poll overwrites it — so it runs on a context
+	// detached from ctx's cancellation, bounded by its own short timeout.
+	wctx, wcancel := context.WithTimeout(context.WithoutCancel(ctx), statusWriteTimeout)
+	if writeErr := s.status.RecordStatus(wctx, st); writeErr != nil {
+		s.log.Warn("status write failed", "component", componentScheduler, "source_id", id, "status", "write_failed", "err", writeErr)
+	}
+	wcancel()
+
 	return err
 }
