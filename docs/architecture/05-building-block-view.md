@@ -46,7 +46,7 @@ Import rules (enforced by `depguard`):
 
 | Block | Responsibility | Key types / functions |
 |-------|----------------|-----------------------|
-| `internal/domain` | Data model and rules: age buckets, `IsNew(item, prevSnapshot)`, `IsUnanswered(item, grace, me, collaborators)`, `Attention(item, ctx) Level`, dismissal expiry, snapshot diff, item identity (`SourceID` + `ExternalID`), sorting/capping. | `Item`, `Kind`, `Snapshot`, `Dismissal`, `AttentionLevel`, `Bucket`, `Rules` |
+| `internal/domain` | Data model and rules: age buckets, `IsNew(item, prevSnapshot)`, `IsUnanswered(item, grace, me, collaborators)`, `Attention(item, ctx) Level`, dismissal expiry, snapshot diff, item identity (`ItemID{SourceID, ExternalID}`), sorting/capping. | `Item`, `Kind`, `ItemID`, `Snapshot`, `Dismissal`, `Bucket`, `AttentionLevel`, `Rules` |
 | `internal/ports` | Interfaces the app depends on; in‑memory fakes for tests live in `ports/fake`. | `SourceFetcher{ID() string; Kind() string /*source kind*/; Fetch(ctx) ([]Item, error)}`, `ItemStore`, `SnapshotStore`, `DismissalStore`, `StatusStore`, `AuthStore`, `CredentialSink` (adapters report auto‑detected expiries), `Clock`, `Notifier` |
 | `internal/config` | Parse `zorgscope.yaml`, merge env secrets, validate, expose typed config; hot reload (SIGHUP/fsnotify, local). | `Load(path, env) (Config, error)`, `Validate` |
 | `internal/app` | Use cases: `Scheduler` (ticker per source, jitter, backoff, single‑flight), `RefreshAll`, `Snapshotter` (daily + catch‑up + prune), `Dismiss`, `DashboardQuery` (assemble tile view models from stores + rules), `SourceRegistry` (kind → adapter constructor). | `Scheduler`, `Snapshotter`, `Dashboard`, `Registry` |
@@ -67,15 +67,18 @@ Import rules (enforced by `depguard`):
 
 ```text
 domain/
-  item.go          Item, Kind, ItemID, Author, Labels; ItemID = SourceID + "/" + ExternalID
-  snapshot.go      Snapshot{SourceID, TakenAt, IDs}; Diff(prev, cur) (added, removed)
-  attention.go     Level (None, Stale, Aged, Unanswered, New, BuildFailed, Expiring, Expired, AuthFailed, Down), Rules struct (Grace, StaleAfter, Me, Bots), Evaluate(item, prevSnapshot, dismissal, now)
+  item.go          Item, Kind, ItemID, and every *Payload struct (Issue, PR, WorkflowRun, Mention, Task,
+                    Article, MetricSeries, Credential, HealthCheck); ItemID = SourceID | ExternalID
+                    ("/" cannot be the separator: source ids such as "github:owner/repo" already contain one)
   buckets.go       Bucket(age) → LT24h | LT7d | LT30d | GE30d
+  snapshot.go      Snapshot{SourceID, Date, TakenAt, IDs}; Diff(prev, cur) (added, removed)
   dismissal.go     Dismissal{ItemID, UpdatedAt, DismissedAt}; Covers(item) bool
-  metrics.go       MetricSeries payload for Plausible items (typed, not raw JSON)
-  task.go          Task payload (project, priority, due, recurring)
-  watch.go         Credential payload (expires, warnDays, usedBy, autoDetected) and HealthCheck payload (status, latency, certExpires, consecutiveFailures)
-  sort.go          attention ordering: level desc, created desc; cap with overflow count
+  attention.go     (Task 4, not yet implemented) Level (None, Stale, Aged, Unanswered, New, BuildFailed, Expiring, Expired, AuthFailed, Down), Rules struct (Grace, StaleAfter, Me, Bots), Evaluate(item, prevSnapshot, dismissal, now)
+  sort.go          (Task 5, not yet implemented) attention ordering: level desc, created desc; cap with overflow count
+  fetchstatus.go   (Task 5, not yet implemented) FetchStatus{SourceID, Kind, LastSuccess, LastError, ErrorMsg, NextRun, ItemCount, Duration, InFlight, AuthFailed}
 ```
+
+All payload structs currently live together in `item.go`; splitting them into per-kind files (e.g. `metrics.go`,
+`task.go`, `watch.go`) is an option worth revisiting for M2 once the payloads grow, but is not planned for M1.
 
 No I/O, no time.Now(), no logging in this package.

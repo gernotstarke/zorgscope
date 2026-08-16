@@ -5,8 +5,7 @@
 ```mermaid
 classDiagram
     class Item {
-      SourceID string
-      ExternalID string
+      ID ItemID
       Kind Kind
       Title string
       URL string
@@ -17,13 +16,16 @@ classDiagram
       LastActivityAt time
       Labels []string
       Payload any
+      FirstSeen time
     }
+    class ItemID { SourceID string; ExternalID string }
     class Kind { <<enum>> Issue PR WorkflowRun Task Article MetricSeries Mention Credential HealthCheck }
-    class Snapshot { SourceID; Date; IDs set }
+    class Snapshot { SourceID; Date; TakenAt; IDs set }
     class Dismissal { ItemID; UpdatedAt; DismissedAt }
     class FetchStatus { SourceID; LastSuccess; LastError; ErrorMsg; NextRun; Count; InFlight }
     class Rules { Grace; StaleAfter; Me; Collaborators; BotSuffix }
     class AttentionLevel { <<enum>> None Aged Stale Unanswered New BuildFailed Expiring Expired AuthFailed Down }
+    Item --> ItemID
     Item --> Kind
     Rules ..> Item : Evaluate(item, prevSnapshot, dismissal, now)
     Rules ..> Snapshot
@@ -31,10 +33,11 @@ classDiagram
     Rules ..> AttentionLevel
 ```
 
-Payload types per kind: `PRPayload{Draft, ReviewDecision, Additions}`, `WorkflowRunPayload{Conclusion, Status, Branch, RunID}`,
+Payload types per kind: `IssuePayload{Comments}`, `PRPayload{Draft, ReviewDecision, Comments}`,
+`WorkflowRunPayload{RunID, WorkflowName, Conclusion, Status, Branch}`,
 `TaskPayload{Project, Priority, Due, DueHasTime, Recurring}`, `ArticlePayload{Summary, Topic, FeedName}`,
-`MetricSeriesPayload{Visitors7d, Visitors30d, Pageviews30d, DeltaVisitors7d, DeltaVisitors30d, Daily []int, TopPages []Page}`,
-`CredentialPayload{Expires *time, WarnDays, UsedBy, URL, AutoDetected}`, `HealthCheckPayload{StatusCode, LatencyMs, OK, ConsecutiveFailures, CertExpires *time, LastOK}`.
+`MetricSeriesPayload{Visitors7d, Visitors30d, Pageviews30d, DeltaVisitors7d, DeltaVisitors30d, Daily []int, TopPages []MetricPage}`,
+`CredentialPayload{Expires *time, WarnDays, UsedBy, URL, AutoDetected, AuthFailed}`, `HealthCheckPayload{StatusCode, LatencyMs, OK, ConsecutiveFailures, CertExpires *time, LastOK}`.
 
 ## 8.2 Attention rules (the heart of QG‑1)
 
