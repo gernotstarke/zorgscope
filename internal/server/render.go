@@ -24,7 +24,7 @@ func parseTemplates() (*template.Template, error) {
 func (s *Server) render(w http.ResponseWriter, status int, name string, data pageData) {
 	var buf bytes.Buffer
 	if err := s.tmpl.ExecuteTemplate(&buf, name, data); err != nil {
-		s.deps.Log.Error("render failed", "template", name, "err", err)
+		s.deps.Log.Error("render failed", "component", componentServer, "template", name, "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}

@@ -233,3 +233,58 @@ func TestPostRoutesRequireCSRF(t *testing.T) {
 		t.Fatalf("refresh handler must not run without CSRF, calls=%d", ref.calls)
 	}
 }
+
+// TestNoJSFormFallbackAcceptsCSRFFormField proves the mutating routes work as plain <form> POSTs
+// (§8.5 "everything works without JS except tile auto-refresh and passkeys"): a request that
+// carries the CSRF token as a hidden form field but sets no X-CSRF-Token header — exactly what a
+// browser without JS produces — must still succeed. A real browser attaches the cookie
+// automatically; the client here does the same explicitly since it has no cookie jar.
+func TestNoJSFormFallbackAcceptsCSRFFormField(t *testing.T) {
+	ts, st, ref := newTestServer(t, "dev")
+	resp, _ := get(t, ts, "/")
+	var csrf string
+	for _, c := range resp.Cookies() {
+		if c.Name == "zs_csrf" {
+			csrf = c.Value
+		}
+	}
+	if csrf == "" {
+		t.Fatal("no csrf cookie issued")
+	}
+
+	postForm := func(path string, form url.Values) *http.Response {
+		req, err := http.NewRequest(http.MethodPost, ts.URL+path, strings.NewReader(form.Encode()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(&http.Cookie{Name: "zs_csrf", Value: csrf})
+		// deliberately no X-CSRF-Token header: a no-JS <form> POST cannot set one.
+		r, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = r.Body.Close()
+		return r
+	}
+
+	dismissForm := url.Values{"id": {"github:arc42/arc42-template|issues/240"}, "updated_at": {"1786874400"}, "csrf_token": {csrf}}
+	if r := postForm("/dismiss", dismissForm); r.StatusCode != http.StatusOK {
+		t.Fatalf("no-JS /dismiss: got %d want 200", r.StatusCode)
+	}
+	d, _ := st.Dismissal(context.Background(), domain.ItemID{SourceID: "github:arc42/arc42-template", ExternalID: "issues/240"})
+	if d == nil {
+		t.Fatal("no-JS /dismiss did not store a dismissal")
+	}
+
+	if r := postForm("/dismiss-all", url.Values{"csrf_token": {csrf}}); r.StatusCode != http.StatusOK {
+		t.Fatalf("no-JS /dismiss-all: got %d want 200", r.StatusCode)
+	}
+
+	if r := postForm("/refresh", url.Values{"csrf_token": {csrf}}); r.StatusCode != http.StatusAccepted {
+		t.Fatalf("no-JS /refresh: got %d want 202", r.StatusCode)
+	}
+	if ref.calls != 1 {
+		t.Fatalf("no-JS /refresh did not reach the handler, calls=%d", ref.calls)
+	}
+}

@@ -79,8 +79,8 @@ func securityHeaders(https bool) func(http.Handler) http.Handler {
 }
 
 // csrf uses the double-submit pattern: an HttpOnly cookie whose value the server also renders into
-// htmx's hx-headers; POSTs must echo it in X-CSRF-Token (QS-3.5). The token is stored on the request
-// context by csrfToken().
+// htmx's hx-headers; POSTs must echo it in X-CSRF-Token (QS-3.5), or in a "csrf_token" hidden form
+// field for the no-JS fallback (§8.5). The token is stored on the request context by csrfToken().
 func csrf(secure bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -100,6 +100,14 @@ func csrf(secure bool) func(http.Handler) http.Handler {
 			if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
 				c, err := r.Cookie(csrfCookie)
 				hdr := r.Header.Get("X-CSRF-Token")
+				if hdr == "" {
+					// No-JS fallback (§8.5 "everything works without JS"): a plain <form> POST
+					// cannot set a header, so accept the token from a hidden form field too.
+					// ParseForm is idempotent; handlers calling it again reuse the cached result.
+					if ferr := r.ParseForm(); ferr == nil {
+						hdr = r.PostForm.Get("csrf_token")
+					}
+				}
 				if err != nil || hdr == "" || subtle.ConstantTimeCompare([]byte(c.Value), []byte(hdr)) != 1 {
 					http.Error(w, "csrf token mismatch", http.StatusForbidden)
 					return

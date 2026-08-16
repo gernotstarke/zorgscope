@@ -17,6 +17,8 @@ button.btn-quiet { border-color: transparent; color: var(--text-muted); }
 .wordmark span { color: var(--accent); }
 .today { margin: 0; color: var(--text-muted); font-size: var(--fs-sm); }
 .header-status { display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-sm); color: var(--text-muted); }
+/* no-JS fallback forms (§8.5) wrap action buttons; keep them out of the flex/grid box model */
+.header-status form, .tile-head form, .row form { display: contents; }
 .attention-count { min-width: 2.2em; text-align: center; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); font-weight: 600; font-variant-numeric: tabular-nums; }
 .attention-count.has-items { background: var(--accent); color: var(--accent-ink); }
 .sources { list-style: none; display: flex; gap: 5px; margin: 0; padding: 0; }

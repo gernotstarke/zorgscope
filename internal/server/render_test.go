@@ -45,6 +45,9 @@ func TestGoldenTiles(t *testing.T) {
 	rows.Repos = []app.RepoCard{
 		{Name: "arc42/arc42-template", ShortName: "arc42-template", URL: "https://github.com/arc42/arc42-template", OpenIssues: 3, OpenPRs: 1, New: 1, Unanswered: 2, Build: app.BuildView{State: "ok", Workflow: "build", URL: "https://github.com/arc42/arc42-template/actions/runs/1001", Age: "6h"}},
 		{Name: "arc42/arc42.org-site", ShortName: "arc42.org-site", URL: "https://github.com/arc42/arc42.org-site", OpenIssues: 1, Build: app.BuildView{State: "failed", Workflow: "deploy", URL: "https://github.com/arc42/arc42.org-site/actions/runs/2002", Age: "1h"}},
+		// Build.URL == "" exercises tile_repos.html's no-link <span> branch (the html/template
+		// conditional-href escaper hazard) — this must not be dropped or the branch goes untested.
+		{Name: "arc42/arc42-mini", ShortName: "arc42-mini", URL: "https://github.com/arc42/arc42-mini", OpenIssues: 0, Build: app.BuildView{State: "unknown"}},
 	}
 	data := pageData{View: rows, CSRF: "csrf-token", PollSeconds: 60}
 	var buf bytes.Buffer

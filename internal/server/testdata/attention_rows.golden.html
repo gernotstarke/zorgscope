@@ -1,19 +1,19 @@
 <section id="tile-attention" class="tile tile-attention" hx-get="/tiles/attention" hx-trigger="every 60s" hx-swap="outerHTML" aria-live="polite">
   <header class="tile-head">
     <h2>Attention <span class="count">3</span></h2>
-    <button class="btn btn-quiet" hx-post="/dismiss-all" hx-target="#tile-attention" hx-swap="outerHTML">dismiss all</button>
+    <form method="post" action="/dismiss-all"><input type="hidden" name="csrf_token" value="csrf-token"><button class="btn btn-quiet" hx-post="/dismiss-all" hx-target="#tile-attention" hx-swap="outerHTML">dismiss all</button></form>
   </header>
   <ul class="rows">
     <li class="row level-new bucket-lt24h">
       <span class="badge badge-new">NEW</span>
       <a class="row-title" href="https://github.com/arc42/arc42-template/issues/240" target="_blank" rel="noopener"><span class="row-source">arc42-template #240</span> Typo in section 8</a>
       <span class="row-meta">newcomer · 2h</span>
-      <button class="dismiss" hx-post="/dismiss" hx-vals='{"id": "github:arc42/arc42-template|issues/240", "updated_at": 1786968000}' hx-target="#tile-attention" hx-swap="outerHTML" aria-label="dismiss Typo in section 8" title="seen">✕</button>
+      <form method="post" action="/dismiss"><input type="hidden" name="id" value="github:arc42/arc42-template|issues/240"><input type="hidden" name="updated_at" value="1786968000"><input type="hidden" name="csrf_token" value="csrf-token"><button class="dismiss" hx-post="/dismiss" hx-vals='{"id": "github:arc42/arc42-template|issues/240", "updated_at": 1786968000}' hx-target="#tile-attention" hx-swap="outerHTML" aria-label="dismiss Typo in section 8" title="seen">✕</button></form>
     </li><li class="row level-unanswered bucket-lt30d">
       <span class="badge badge-unanswered">UNANSWERED</span>
       <a class="row-title" href="https://github.com/arc42/arc42-template/pull/237" target="_blank" rel="noopener"><span class="row-source">arc42-template #237</span> Add example stakeholder table</a>
       <span class="row-meta">Sofeso · 20d</span>
-      <button class="dismiss" hx-post="/dismiss" hx-vals='{"id": "github:arc42/arc42-template|pulls/237", "updated_at": 1785400000}' hx-target="#tile-attention" hx-swap="outerHTML" aria-label="dismiss Add example stakeholder table" title="seen">✕</button>
+      <form method="post" action="/dismiss"><input type="hidden" name="id" value="github:arc42/arc42-template|pulls/237"><input type="hidden" name="updated_at" value="1785400000"><input type="hidden" name="csrf_token" value="csrf-token"><button class="dismiss" hx-post="/dismiss" hx-vals='{"id": "github:arc42/arc42-template|pulls/237", "updated_at": 1785400000}' hx-target="#tile-attention" hx-swap="outerHTML" aria-label="dismiss Add example stakeholder table" title="seen">✕</button></form>
     </li>
   </ul>
   <p class="more">+ 1 more</p>

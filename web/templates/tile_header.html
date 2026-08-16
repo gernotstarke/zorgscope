@@ -9,6 +9,6 @@
       {{range .View.Header.Sources}}<li class="source {{if .AuthFailed}}source-auth{{else if not .Healthy}}source-error{{else}}source-ok{{end}}{{if .InFlight}} source-busy{{end}}" title="{{.ID}} · {{if .Healthy}}data {{.Age}} old{{else}}error: {{.Error}}{{end}}"></li>{{end}}
     </ul>
     <span class="asof">data as of {{.View.Header.DataAsOf}}{{if .View.Header.Refreshing}} · refreshing ({{.View.Header.Refreshing}})…{{end}}</span>
-    <button class="btn" hx-post="/refresh" hx-swap="none" title="fetch all sources now">↻ refresh</button>
+    <form method="post" action="/refresh"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><button class="btn" hx-post="/refresh" hx-swap="none" title="fetch all sources now">↻ refresh</button></form>
   </div>
 </header>{{end}}
