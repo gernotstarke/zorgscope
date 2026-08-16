@@ -23,15 +23,29 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		var ve *config.ValidationError
-		if errors.As(err, &ve) {
-			_, _ = fmt.Fprintln(os.Stderr, "zorgscope:", err)
+		var ce *configErr
+		if errors.As(err, &ce) {
+			_, _ = fmt.Fprintln(os.Stderr, "zorgscope:", ce.err)
 			os.Exit(2)
 		}
 		slog.Error("zorgscope failed", "err", err)
 		os.Exit(1)
 	}
 }
+
+// configErr marks any error returned by the config.Load step so main always treats it as a config
+// error (arc42 §8.7: "config errors → exit code 2 with message"), not just the *config.ValidationError
+// case (bad YAML, a failed validation rule). Without this, a missing or misconfigured
+// ZORGSCOPE_CONFIG path — the single most likely operator mistake in a container with a bad mount —
+// falls through config.Load as a raw *fs.PathError from os.Open, which carries no "config error"
+// framing of its own and would otherwise hit the generic slog.Error+exit(1) branch below. Wrapping
+// (rather than replacing) the error preserves errors.Is/errors.As access to the underlying cause —
+// e.g. errors.Is(err, os.ErrNotExist) — which Task 7's review specifically wanted kept working on
+// config.Load's return value.
+type configErr struct{ err error }
+
+func (e *configErr) Error() string { return e.err.Error() }
+func (e *configErr) Unwrap() error { return e.err }
 
 func run() error {
 	cfgPath := os.Getenv("ZORGSCOPE_CONFIG")
@@ -40,7 +54,7 @@ func run() error {
 	}
 	cfg, err := config.Load(cfgPath, os.Getenv)
 	if err != nil {
-		return err
+		return &configErr{err}
 	}
 	log := logging.New(os.Stdout, cfg.LogLevel, []string{cfg.Secrets.GitHubToken, cfg.Secrets.PlausibleAPIKey,
 		cfg.Secrets.TodoistToken, cfg.Secrets.SessionSecret, cfg.Secrets.EnrollToken})
