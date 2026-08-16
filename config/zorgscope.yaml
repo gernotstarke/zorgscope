@@ -33,7 +33,7 @@ github:
     - gernotstarke/gernotstarke.de-site
 
 plausible:
-  enabled: true
+  enabled: false          # enabled in M2 (adapter not built yet)
   poll_interval: 30m
   order: visitors
   sites:
@@ -46,7 +46,7 @@ plausible:
     - gernotstarke.de
 
 todoist:
-  enabled: true
+  enabled: false          # enabled in M2 (adapter not built yet)
   poll_interval: 5m
   horizon_days: 7
 
