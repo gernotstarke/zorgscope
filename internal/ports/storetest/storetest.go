@@ -168,5 +168,62 @@ func Run(t *testing.T, open func(t *testing.T) ports.Store) {
 		if len(all) != 2 || all[0].SourceID != "s0" || !all[0].AuthFailed || all[0].ErrorMsg != "boom" {
 			t.Fatalf("Statuses = %+v", all)
 		}
+		// upsert: recording again for the same source must replace, not duplicate
+		st3 := st
+		st3.ItemCount = 7
+		st3.Duration = 5 * time.Second
+		st3.LastSuccess = t0.Add(time.Hour)
+		if err := s.RecordStatus(ctx, st3); err != nil {
+			t.Fatal(err)
+		}
+		got, _ = s.Status(ctx, "s1")
+		if got == nil || got.ItemCount != 7 || !got.LastSuccess.Equal(t0.Add(time.Hour)) || got.Duration != 5*time.Second {
+			t.Fatalf("upsert must replace status: %+v", got)
+		}
+		all, _ = s.Statuses(ctx)
+		if len(all) != 2 {
+			t.Fatalf("upsert must not duplicate rows, got %d: %+v", len(all), all)
+		}
+	})
+
+	t.Run("returned values are copies, not aliases", func(t *testing.T) {
+		s := open(t)
+		if err := s.ReplaceItems(ctx, "s1", []domain.Item{item("s1", "a", t0)}, t0); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := s.Items(ctx, "s1")
+		got[0].Labels[0] = "corrupted"
+		got[0].Payload[0] = 'X'
+		got2, _ := s.Items(ctx, "s1")
+		if got2[0].Labels[0] != "bug" {
+			t.Fatalf("mutating a returned item's Labels corrupted the store: %+v", got2[0].Labels)
+		}
+		if got2[0].Payload[0] == 'X' {
+			t.Fatalf("mutating a returned item's Payload corrupted the store: %s", got2[0].Payload)
+		}
+
+		if err := s.PutSnapshot(ctx, domain.NewSnapshot("s1", "2026-08-16", t0, []string{"x"})); err != nil {
+			t.Fatal(err)
+		}
+		snap, _ := s.LatestSnapshot(ctx, "s1")
+		snap.IDs["y"] = struct{}{}
+		delete(snap.IDs, "x")
+		snap2, _ := s.LatestSnapshot(ctx, "s1")
+		if !snap2.Contains("x") || snap2.Contains("y") {
+			t.Fatalf("mutating a returned snapshot's IDs corrupted the store: %+v", snap2.IDList())
+		}
+
+		// putting a snapshot built from a map the caller keeps a live reference to must not let a
+		// later caller mutation reach the store either.
+		liveIDs := []string{"z"}
+		snapToPut := domain.NewSnapshot("s2", "2026-08-16", t0, liveIDs)
+		if err := s.PutSnapshot(ctx, snapToPut); err != nil {
+			t.Fatal(err)
+		}
+		snapToPut.IDs["w"] = struct{}{}
+		snap3, _ := s.LatestSnapshot(ctx, "s2")
+		if snap3.Contains("w") {
+			t.Fatalf("mutating the caller's snapshot after PutSnapshot corrupted the store: %+v", snap3.IDList())
+		}
 	})
 }

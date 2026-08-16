@@ -3,6 +3,7 @@ package memstore
 
 import (
 	"context"
+	"maps"
 	"sort"
 	"sync"
 	"time"
@@ -42,6 +43,13 @@ func cloneItem(it domain.Item) domain.Item {
 		it.Payload = payload
 	}
 	return it
+}
+
+// cloneSnapshot returns a copy of snap whose IDs map is independent of the caller's (or the
+// store's) map, so neither side can mutate the other's state through it.
+func cloneSnapshot(snap domain.Snapshot) domain.Snapshot {
+	snap.IDs = maps.Clone(snap.IDs)
+	return snap
 }
 
 // ReplaceItems implements ports.Store.
@@ -109,6 +117,7 @@ func (s *Store) ExternalIDs(_ context.Context, sourceID string) ([]string, error
 func (s *Store) PutSnapshot(_ context.Context, snap domain.Snapshot) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	snap = cloneSnapshot(snap)
 	list := s.snapshots[snap.SourceID]
 	replaced := false
 	for i := range list {
@@ -133,7 +142,7 @@ func (s *Store) LatestSnapshot(_ context.Context, sourceID string) (*domain.Snap
 	if len(list) == 0 {
 		return nil, nil
 	}
-	snap := list[len(list)-1]
+	snap := cloneSnapshot(list[len(list)-1])
 	return &snap, nil
 }
 
@@ -144,7 +153,7 @@ func (s *Store) SnapshotBefore(_ context.Context, sourceID, date string) (*domai
 	list := s.snapshots[sourceID]
 	for i := len(list) - 1; i >= 0; i-- {
 		if list[i].Date < date {
-			snap := list[i]
+			snap := cloneSnapshot(list[i])
 			return &snap, nil
 		}
 	}
