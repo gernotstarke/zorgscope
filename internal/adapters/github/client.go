@@ -53,7 +53,9 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte, out a
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, rdr)
 	if err != nil {
-		return nil, err
+		// c.baseURL+path never contains the token (sent only via the Authorization header), so
+		// interpolating this error — which may echo the malformed URL — cannot leak it.
+		return nil, fmt.Errorf("%w: build request: %v", ports.ErrPermanent, err)
 	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
@@ -149,7 +151,7 @@ func (c *Client) noteExpiry(h http.Header) {
 func (c *Client) graphql(ctx context.Context, query string, vars map[string]any, out any) error {
 	body, err := json.Marshal(map[string]any{"query": query, "variables": vars})
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: marshal query: %v", ports.ErrPermanent, err)
 	}
 	var resp struct {
 		Data   json.RawMessage `json:"data"`
@@ -160,6 +162,10 @@ func (c *Client) graphql(ctx context.Context, query string, vars map[string]any,
 	if _, err := c.do(ctx, http.MethodPost, "/graphql", body, &resp); err != nil {
 		return err
 	}
+	// A partial-failure response (non-null data *and* non-empty errors) is deliberately out of scope
+	// here: only "errors present with null data" is classified, per arc42 §8.7's spec for this
+	// adapter. Not an oversight — a future reader wanting partial-error surfacing should treat this
+	// as a scope decision to revisit, not a bug.
 	if len(resp.Errors) > 0 && (len(resp.Data) == 0 || string(resp.Data) == "null") {
 		msgs := make([]string, 0, len(resp.Errors))
 		for _, e := range resp.Errors {

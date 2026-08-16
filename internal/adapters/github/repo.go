@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
@@ -123,13 +124,24 @@ func (f *RepoFetcher) ID() string { return "github:" + f.owner + "/" + f.name }
 // Kind implements ports.SourceFetcher.
 func (f *RepoFetcher) Kind() string { return ports.KindGitHubRepo }
 
+// maxPages bounds GraphQL pagination unconditionally. nextPage's stagnant/missing-cursor check
+// already stops a loop that replays the same cursor, but it only compares against the *immediately
+// previous* cursor, so it cannot catch a longer upstream cursor cycle (A→B→A→B…). That is judged
+// implausible for GitHub's API, but this cap is a one-line belt-and-braces addition that makes
+// termination unconditional rather than dependent on upstream cursor behaviour at all. With the
+// default PageSize (100) this allows 50,000 open issues/PRs per list — far beyond any real repo.
+const maxPages = 500
+
 // Fetch implements ports.SourceFetcher.
 func (f *RepoFetcher) Fetch(ctx context.Context) ([]domain.Item, error) {
 	var items []domain.Item
 	var issuesAfter, prsAfter any
 	withIssues, withPRs := true, true
 	defaultBranch := ""
-	for withIssues || withPRs {
+	for page := 0; withIssues || withPRs; page++ {
+		if page >= maxPages {
+			return nil, fmt.Errorf("%w: repository %s/%s exceeded %d pagination pages", ports.ErrPermanent, f.owner, f.name, maxPages)
+		}
 		var data repoData
 		vars := map[string]any{"owner": f.owner, "name": f.name, "n": f.PageSize, "issuesAfter": issuesAfter, "prsAfter": prsAfter,
 			"withIssues": withIssues, "withPRs": withPRs}
@@ -234,7 +246,7 @@ func (f *RepoFetcher) latestRun(ctx context.Context, branch string) (*domain.Ite
 	q := url.Values{"branch": {branch}, "per_page": {"1"}, "exclude_pull_requests": {"true"}}
 	var resp runsResponse
 	path := fmt.Sprintf("/repos/%s/%s/actions/runs?%s", url.PathEscape(f.owner), url.PathEscape(f.name), q.Encode())
-	if _, err := f.c.do(ctx, "GET", path, nil, &resp); err != nil {
+	if _, err := f.c.do(ctx, http.MethodGet, path, nil, &resp); err != nil {
 		return nil, err
 	}
 	if len(resp.WorkflowRuns) == 0 {

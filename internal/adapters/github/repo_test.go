@@ -156,3 +156,31 @@ func TestTokenExpiryReported(t *testing.T) {
 		t.Fatal("unchanged expiry must not be re-reported on every request")
 	}
 }
+
+// TestNextPage exercises the pagination guard directly: it exists to stop Fetch's loop on a
+// malformed or missing cursor, which no end-to-end test against the fake can exercise because the
+// fake's cursors always advance normally.
+func TestNextPage(t *testing.T) {
+	cases := []struct {
+		name        string
+		hasNextPage bool
+		endCursor   string
+		prevAfter   any
+		wantCont    bool
+		wantAfter   any
+	}{
+		{"missing cursor stops", true, "", "5", false, "5"},
+		{"stagnant cursor stops", true, "5", "5", false, "5"},
+		{"no next page stops", false, "5", "0", false, "0"},
+		{"normal advance continues", true, "5", "0", true, "5"},
+		{"first iteration nil prevAfter continues", true, "5", nil, true, "5"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			gotCont, gotAfter := nextPage(c.hasNextPage, c.endCursor, c.prevAfter)
+			if gotCont != c.wantCont || gotAfter != c.wantAfter {
+				t.Fatalf("nextPage(%v,%q,%v) = %v,%v want %v,%v", c.hasNextPage, c.endCursor, c.prevAfter, gotCont, gotAfter, c.wantCont, c.wantAfter)
+			}
+		})
+	}
+}

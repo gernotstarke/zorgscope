@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"time"
 
@@ -50,7 +51,7 @@ type notification struct {
 // Fetch implements ports.SourceFetcher.
 func (f *MentionsFetcher) Fetch(ctx context.Context) ([]domain.Item, error) {
 	var list []notification
-	if _, err := f.c.do(ctx, "GET", "/notifications?all=false&participating=true&per_page=50", nil, &list); err != nil {
+	if _, err := f.c.do(ctx, http.MethodGet, "/notifications?all=false&participating=true&per_page=50", nil, &list); err != nil {
 		return nil, err
 	}
 	var items []domain.Item
