@@ -78,6 +78,7 @@ func TestValidationErrors(t *testing.T) {
 		{"plausible enabled without token", "server:\n  base_url: http://localhost:8080\nplausible:\n  enabled: true\n  sites: [arc42.org]\n", map[string]string{"AUTH_MODE": "dev"}, "PLAUSIBLE_API_KEY"},
 		{"todoist enabled without token", "server:\n  base_url: http://localhost:8080\ntodoist:\n  enabled: true\n", map[string]string{"AUTH_MODE": "dev"}, "TODOIST_TOKEN"},
 		{"bad plausible site", "server:\n  base_url: http://localhost:8080\nplausible:\n  enabled: true\n  sites: [arc42.org/bad]\n", map[string]string{"PLAUSIBLE_API_KEY": "p", "AUTH_MODE": "dev"}, "plausible.sites[0]"},
+		{"malformed PORT", "server:\n  base_url: http://localhost:8080\n", map[string]string{"AUTH_MODE": "dev", "PORT": "abc"}, "PORT"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

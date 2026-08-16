@@ -40,14 +40,16 @@ func Parse(r io.Reader, getenv func(string) string) (*Config, error) {
 		}
 		return nil, &ValidationError{Key: yamlErrorKey(err), Msg: err.Error()}
 	}
-	applyEnv(&cfg, getenv)
+	if err := applyEnv(&cfg, getenv); err != nil {
+		return nil, err
+	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
 }
 
-func applyEnv(cfg *Config, getenv func(string) string) {
+func applyEnv(cfg *Config, getenv func(string) string) error {
 	set := func(dst *string, key string) {
 		if v := getenv(key); v != "" {
 			*dst = v
@@ -66,10 +68,15 @@ func applyEnv(cfg *Config, getenv func(string) string) {
 	set(&cfg.Plausible.BaseURL, "PLAUSIBLE_BASE_URL")
 	set(&cfg.Todoist.BaseURL, "TODOIST_BASE_URL")
 	if p := getenv("PORT"); p != "" {
-		if n, err := strconv.Atoi(p); err == nil {
-			cfg.Server.Port = n
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			// FR-8.1 AC1 / QS-4.3: invalid config must abort startup naming the offending key,
+			// not silently fall back to the default port.
+			return &ValidationError{Key: "PORT", Msg: fmt.Sprintf("invalid integer: %q", p)}
 		}
+		cfg.Server.Port = n
 	}
+	return nil
 }
 
 // yamlErrorKey extracts the offending field name from yaml.v3 messages like
