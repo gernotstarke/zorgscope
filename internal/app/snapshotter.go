@@ -28,7 +28,10 @@ type Snapshotter struct {
 
 // NewSnapshotter wires a snapshotter. sources returns the ids to snapshot (usually Scheduler.SourceIDs).
 // hour and minute are the configured daily snapshot time in loc; retentionDays is how many days of
-// snapshots to keep.
+// snapshots to keep. Precondition: retentionDays must be >= 1 — a zero or negative value computes a
+// cutoff at or after the snapshot just taken and would prune it immediately. internal/config enforces
+// this at load time (>= 1), so callers wiring from config need not re-check it; a caller constructing
+// a Snapshotter directly (a test, a future CLI tool) must.
 func NewSnapshotter(items ports.ItemStore, snaps ports.SnapshotStore, status ports.StatusStore, sources func() []string,
 	hour, minute int, loc *time.Location, retentionDays int, clock ports.Clock, log *slog.Logger) *Snapshotter {
 	return &Snapshotter{items: items, snaps: snaps, status: status, sources: sources, hour: hour, min: minute,
@@ -57,6 +60,13 @@ func (s *Snapshotter) RunDue(ctx context.Context) (int, error) {
 		}
 		taken++
 	}
+	// Pruning runs every call, right after any catch-up snapshot just written for `day`. If the
+	// process was down for longer than the retention window, this can delete the very pre-outage
+	// snapshot that SnapshotBefore would otherwise have returned as `prev` for FR-7.2's NEW diff —
+	// degrading `prev` to nil and falling back to §8.2's `CreatedAt >= now-24h` rule. That is
+	// intentional: a snapshot older than the retention window is supposed to be gone regardless of
+	// why it wasn't superseded sooner, and the CreatedAt fallback is a graceful degradation, not a
+	// bug. Do not reorder prune relative to the snapshot write, and do not special-case this.
 	if err := s.prune(ctx, day); err != nil {
 		errs = append(errs, err)
 	}

@@ -1,15 +1,104 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/gernotstarke/zorgscope/internal/adapters/clock"
 	"github.com/gernotstarke/zorgscope/internal/domain"
+	"github.com/gernotstarke/zorgscope/internal/ports"
 	"github.com/gernotstarke/zorgscope/internal/ports/memstore"
 )
+
+// failingSnapshotStore wraps a real ports.SnapshotStore and fails LatestSnapshot for one chosen
+// source, simulating a store error partway through RunDue's loop over sources.
+type failingSnapshotStore struct {
+	ports.SnapshotStore
+	failFor string
+	err     error
+}
+
+func (f *failingSnapshotStore) LatestSnapshot(ctx context.Context, sourceID string) (*domain.Snapshot, error) {
+	if sourceID == f.failFor {
+		return nil, f.err
+	}
+	return f.SnapshotStore.LatestSnapshot(ctx, sourceID)
+}
+
+// errBoom is the sentinel the fake store fails with, used to prove the failure survives errors.Join.
+var errBoom = errors.New("boom: store unavailable")
+
+// TestSnapshotterContinuesPastAFailingSource covers the disclosed deviation from the brief's
+// abort-on-first-error snippet: a store error for one source is logged and does not stop the
+// remaining sources, and the error is still surfaced to the caller through errors.Join.
+func TestSnapshotterContinuesPastAFailingSource(t *testing.T) {
+	berlin, _ := time.LoadLocation("Europe/Berlin")
+	ctx := context.Background()
+	st := memstore.New()
+	clk := clock.NewFake(time.Date(2026, 8, 16, 8, 0, 0, 0, berlin))
+	_ = st.ReplaceItems(ctx, "good", []domain.Item{{ID: domain.ItemID{SourceID: "good", ExternalID: "a"}}}, clk.Now())
+	_ = st.RecordStatus(ctx, domain.FetchStatus{SourceID: "good", LastSuccess: clk.Now()})
+	_ = st.ReplaceItems(ctx, "bad", []domain.Item{{ID: domain.ItemID{SourceID: "bad", ExternalID: "b"}}}, clk.Now())
+	_ = st.RecordStatus(ctx, domain.FetchStatus{SourceID: "bad", LastSuccess: clk.Now()})
+	failing := &failingSnapshotStore{SnapshotStore: st, failFor: "bad", err: errBoom}
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	// "bad" listed first so a failure early in the loop must not stop "good" later in the loop.
+	sn := NewSnapshotter(st, failing, st, func() []string { return []string{"bad", "good"} }, 3, 0, berlin, 30, clk, logger)
+
+	n, err := sn.RunDue(ctx)
+
+	// (a) the failing source did not block the others.
+	if latest, _ := st.LatestSnapshot(ctx, "good"); latest == nil || latest.Date != "2026-08-16" || !latest.Contains("a") {
+		t.Fatalf("good source was not snapshotted despite bad source failing: %+v", latest)
+	}
+	// (c) taken reflects only the sources that actually succeeded.
+	if n != 1 {
+		t.Fatalf("taken = %d, want 1 (only the good source)", n)
+	}
+	// (b) the error is non-nil and unwraps to the underlying failure through errors.Join.
+	if err == nil {
+		t.Fatal("RunDue returned no error despite a failing source")
+	}
+	if !errors.Is(err, errBoom) {
+		t.Fatalf("errors.Is(err, errBoom) = false; err = %v", err)
+	}
+	if got, _ := st.LatestSnapshot(ctx, "bad"); got != nil {
+		t.Fatalf("bad source should have no snapshot after a failed LatestSnapshot call: %+v", got)
+	}
+	if !strings.Contains(logBuf.String(), "snapshot failed") || !strings.Contains(logBuf.String(), "source_id=bad") {
+		t.Fatalf("expected a per-source failure log line for source_id=bad, got: %s", logBuf.String())
+	}
+}
+
+// TestSnapshotterRunLogsFailure exercises Run's "snapshotter run failed" branch, which is otherwise
+// dead in the test suite since no other test causes RunDue to return an error.
+func TestSnapshotterRunLogsFailure(t *testing.T) {
+	berlin, _ := time.LoadLocation("Europe/Berlin")
+	st := memstore.New()
+	clk := clock.NewFake(time.Date(2026, 8, 16, 8, 0, 0, 0, berlin))
+	failing := &failingSnapshotStore{SnapshotStore: st, failFor: "bad", err: errBoom}
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	sn := NewSnapshotter(st, failing, st, func() []string { return []string{"bad"} }, 3, 0, berlin, 30, clk, logger)
+
+	// A pre-cancelled ctx: Run still executes RunDue once (which fails) before its select observes
+	// ctx.Done(), so this exercises the failure-logging branch without needing a goroutine or timer.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	sn.Run(ctx, time.Hour)
+
+	if !strings.Contains(logBuf.String(), "snapshotter run failed") {
+		t.Fatalf("expected a \"snapshotter run failed\" log line, got: %s", logBuf.String())
+	}
+}
 
 // TestSnapshotterRunShutsDownOnCancel verifies that Run returns promptly once ctx is cancelled and
 // does not leak a goroutine (it must not spawn one of its own).
