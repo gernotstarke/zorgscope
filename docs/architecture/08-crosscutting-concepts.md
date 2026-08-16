@@ -22,9 +22,9 @@ classDiagram
     class Kind { <<enum>> Issue PR WorkflowRun Task Article MetricSeries Mention Credential HealthCheck }
     class Snapshot { SourceID; Date; TakenAt; IDs set }
     class Dismissal { ItemID; UpdatedAt; DismissedAt }
-    class FetchStatus { SourceID; LastSuccess; LastError; ErrorMsg; NextRun; Count; InFlight }
+    class FetchStatus { SourceID; Kind; LastSuccess; LastError; ErrorMsg; NextRun; ItemCount; Duration; InFlight; AuthFailed }
     class Rules { Grace; StaleAfter; Me; Collaborators; BotSuffix }
-    class AttentionLevel { <<enum>> None Aged Stale Unanswered New BuildFailed Expiring Expired AuthFailed Down }
+    class AttentionLevel { <<enum>> None Aged Stale Expiring Unanswered New BuildFailed Expired Down AuthFailed }
     Item --> ItemID
     Item --> Kind
     Rules ..> Item : Evaluate(item, prevSnapshot, dismissal, now)
@@ -35,9 +35,14 @@ classDiagram
 
 Payload types per kind: `IssuePayload{Comments}`, `PRPayload{Draft, ReviewDecision, Comments}`,
 `WorkflowRunPayload{RunID, WorkflowName, Conclusion, Status, Branch}`,
+`MentionPayload{Reason, Repo, SubjectType}`,
 `TaskPayload{Project, Priority, Due, DueHasTime, Recurring}`, `ArticlePayload{Summary, Topic, FeedName}`,
 `MetricSeriesPayload{Visitors7d, Visitors30d, Pageviews30d, DeltaVisitors7d, DeltaVisitors30d, Daily []int, TopPages []MetricPage}`,
 `CredentialPayload{Expires *time, WarnDays, UsedBy, URL, AutoDetected, AuthFailed}`, `HealthCheckPayload{StatusCode, LatencyMs, OK, ConsecutiveFailures, CertExpires *time, LastOK}`.
+
+`AttentionLevel` is severity‑ordered, not alphabetical or insertion‑ordered: the listing above is the real
+`iota` order, it is also the sort order for the Attention tile, and `NeedsAttention()` is true from
+`Expiring` upward. The order is therefore load‑bearing and must not be reordered casually.
 
 ## 8.2 Attention rules (the heart of QG‑1)
 
@@ -51,7 +56,9 @@ Evaluate(item, prev, dismissal, now):
   new       := prev == nil ? item.CreatedAt ≥ now-24h : !prev.Contains(item.ID)
   unanswered:= item.Kind ∈ {Issue, PR}
                and item.CreatedAt ≤ now-Grace
-               and (item.LastActivityBy == "" or item.LastActivityBy == item.Author or isBot(item.LastActivityBy))
+               and (item.LastActivityBy == ""
+                    or (item.LastActivityBy == item.Author and item.LastActivityBy != Me)
+                    or isBot(item.LastActivityBy))
   covered   := dismissal != nil and dismissal.UpdatedAt == item.UpdatedAt
   if covered → level = None (age bucket still shown)
   else if new → New; else if unanswered → Unanswered
@@ -62,8 +69,11 @@ Bucket(item.CreatedAt, now) ∈ {<24h, <7d, <30d, ≥30d}
 
 Rules are configurable (`github.grace_period`, `github.stale_after`, `github.me`, `github.bots`).
 Collaborator answers: the GitHub adapter sets `LastActivityBy` from the last comment/review author; the
-domain treats any author ≠ item author as an answer (bots excluded). Collaborator write‑access lookup is a
-later refinement (O‑3‑adjacent), not needed for correctness of "someone reacted".
+domain treats any author ≠ item author as an answer (bots excluded), and additionally treats `Me` replying
+last on an item `Me` authored as an answer (D‑11, `docs/plans/README.md`): if I spoke last on my own item,
+there is nothing on it waiting for me. With `Me` empty this reduces to the previous rule — the opener's own
+bump never counts as an answer. Collaborator write‑access lookup is a later refinement (O‑3‑adjacent), not
+needed for correctness of "someone reacted".
 
 ## 8.3 Configuration (`config/zorgscope.yaml`)
 
@@ -184,8 +194,8 @@ distroless image, `govulncheck` in CI, least‑privilege upstream tokens (read�
 
 ## 8.7 Error handling
 
-* Adapters return typed errors: `ErrRateLimited{ResetAt}`, `ErrAuth`, `ErrTransient`, `ErrPermanent`
-  (`errors.Is`/`As`); never panic on upstream data.
+* Adapters return typed errors: `RateLimitedError{ResetAt}` (unwrapped via `ports.AsRateLimited`), plus
+  sentinels `ErrAuth`, `ErrTransient`, `ErrPermanent` (`errors.Is`/`errors.As`); never panic on upstream data.
 * `ErrAuth` additionally flags the source `auth_failed`, which the app layer turns into an `AUTH FAILED` attention item (FR‑11.3).
 * Scheduler translates errors into `FetchStatus` + backoff; the UI shows "⚠ data from 14:02 · GitHub: 403 rate limited, retry 14:35".
 * HTTP handlers: domain/store errors → 500 with generic page + logged; template errors are impossible at
