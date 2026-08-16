@@ -1,0 +1,16 @@
+{{define "tile_attention"}}<section id="tile-attention" class="tile tile-attention" hx-get="/tiles/attention" hx-trigger="every {{.PollSeconds}}s" hx-swap="outerHTML" aria-live="polite">
+  <header class="tile-head">
+    <h2>Attention <span class="count">{{.View.Attention.Total}}</span></h2>
+    {{if .View.Attention.Rows}}<button class="btn btn-quiet" hx-post="/dismiss-all" hx-target="#tile-attention" hx-swap="outerHTML">dismiss all</button>{{end}}
+  </header>
+  {{if .View.Attention.Rows}}<ul class="rows">
+    {{range .View.Attention.Rows}}<li class="row level-{{.Level}} bucket-{{.Bucket}}">
+      <span class="badge badge-{{.Level}}">{{.Badge}}</span>
+      <a class="row-title" href="{{.URL}}" target="_blank" rel="noopener"><span class="row-source">{{.SourceShort}}{{if .Number}} {{.Number}}{{end}}</span> {{.Title}}</a>
+      <span class="row-meta">{{if .Author}}{{.Author}} · {{end}}{{.Age}}</span>
+      <button class="dismiss" hx-post="/dismiss" hx-vals='{"id": "{{.ID}}", "updated_at": {{.UpdatedAt}}}' hx-target="#tile-attention" hx-swap="outerHTML" aria-label="dismiss {{.Title}}" title="seen">✕</button>
+    </li>{{end}}
+  </ul>
+  {{if .View.Attention.Overflow}}<p class="more">+ {{.View.Attention.Overflow}} more</p>{{end}}
+  {{else}}<p class="empty">Nothing needs your attention 🎉</p>{{end}}
+</section>{{end}}
