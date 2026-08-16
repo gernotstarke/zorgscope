@@ -45,7 +45,7 @@ func (d *Dashboard) EvaluateAll(ctx context.Context) ([]domain.Evaluated, error)
 			label, _ := SourceLabel(st.SourceID)
 			items = append(items, domain.Item{
 				ID: domain.ItemID{SourceID: "watch:auth", ExternalID: st.SourceID}, Kind: domain.KindCredential,
-				Title: "AUTH FAILED: " + label + " — " + st.ErrorMsg, CreatedAt: st.LastError,
+				Title: "AUTH FAILED: " + label, CreatedAt: st.LastError, // error text stays in SourceStatusView.Error (FR-11.3 AC2), not repeated here
 				UpdatedAt: st.LastError.Truncate(24 * time.Hour), // dismissal holds for the day, re-appears next day if still failing
 				Payload:   domain.MustPayload(domain.CredentialPayload{AuthFailed: true, UsedBy: st.SourceID}),
 			})
@@ -98,7 +98,7 @@ func (d *Dashboard) header(now time.Time, loc *time.Location, statuses []domain.
 	for _, st := range statuses {
 		sv := SourceStatusView{ID: st.SourceID, Kind: st.Kind, Healthy: st.Healthy(), AuthFailed: st.AuthFailed, InFlight: st.InFlight, Error: st.ErrorMsg}
 		if !st.LastSuccess.IsZero() {
-			sv.Age = HumanAge(now.Sub(st.LastSuccess))
+			sv.Age = HumanAge(st.DataAge(now))
 			if st.LastSuccess.After(latest) {
 				latest = st.LastSuccess
 			}
@@ -168,6 +168,10 @@ func (d *Dashboard) repos(evs []domain.Evaluated, now time.Time) []RepoCard {
 			}
 		}
 		if run != nil {
+			// DecodePayload's error is deliberately discarded, same convention and same rationale as
+			// domain.Evaluate's WorkflowRun case: a Kind/payload mismatch unmarshals without error
+			// (unknown fields are ignored, the rest is zero), so checking err would not catch the
+			// realistic corruption mode anyway, and a zero payload just falls through to "unknown".
 			p, _ := domain.DecodePayload[domain.WorkflowRunPayload](run.Item)
 			card.Build = BuildView{Workflow: p.WorkflowName, URL: run.Item.URL, Age: HumanAge(now.Sub(run.Item.CreatedAt))}
 			switch {
