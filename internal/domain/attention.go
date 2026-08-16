@@ -13,6 +13,9 @@ type Level int
 const (
 	LevelNone Level = iota
 	LevelAged
+	// LevelStale deliberately sits below LevelExpiring, so NeedsAttention (>= LevelExpiring) never
+	// selects it and its "STALE" badge is currently unreachable — by design, not by accident: FR-2.4
+	// AC2's collapsed stale section is deferred past M1 (D-16, docs/plans/README.md).
 	LevelStale
 	LevelExpiring
 	LevelUnanswered

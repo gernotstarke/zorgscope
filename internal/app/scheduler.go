@@ -219,6 +219,10 @@ func (s *Scheduler) fetch(ctx context.Context, sc *scheduled) error {
 		st.NextRun = done.Add(sc.interval)
 		s.log.Info("fetch complete", "component", componentScheduler, "source_id", id, "status", "ok", "items", len(items), "duration_ms", durationMs)
 	} else {
+		// st.ErrorMsg is unredacted upstream text (flows to SQLite, the header tooltip, /status
+		// JSON). Verified safe for M1's single GitHub adapter by two independent audits; this is a
+		// known structural asymmetry with the logger path (which redacts automatically) deferred to
+		// M2 (D-17, docs/plans/README.md), when three more adapters land on this unguarded side.
 		st.LastError, st.ErrorMsg = done, err.Error()
 		st.AuthFailed = errors.Is(err, ports.ErrAuth)
 		if rl, ok := ports.AsRateLimited(err); ok && rl.ResetAt.After(done) {
