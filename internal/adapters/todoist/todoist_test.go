@@ -152,35 +152,135 @@ func TestFetchMapsTaskFields(t *testing.T) {
 	}
 }
 
-// TestFetchAppliesConfiguredLocation is Ruling 3: a nil Config.Location must be treated as UTC,
-// never as time.Local — but when a location is configured, the end-of-day boundary that decides
-// what counts as "due today" is computed in that zone. Anchoring the clock a few hours into
-// 2026-08-18 UTC keeps the fake's fixed fixture (dated for 2026-08-17T12:00:00Z) exercising the
-// same two tasks, while proving the boundary shifts with the zone rather than staying pinned to
-// UTC midnight.
-func TestFetchAppliesConfiguredLocation(t *testing.T) {
-	loc, err := time.LoadLocation("America/Los_Angeles")
+// todoistServer serves body verbatim (a hand-written JSON tasks array) at the exact path Fetch
+// requests, ignoring query parameters. It exists so tests that need to control a task's exact due
+// value can do so directly, without reshaping internal/fakesources' fixture — that fixture is a
+// contract several other tasks depend on and is not this package's to rewrite for one test.
+func todoistServer(t *testing.T, body string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/rest/v2/tasks" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+}
+
+// TestFetchLocationDiscriminatesDueTodayBoundary is Ruling 3: a nil Config.Location must be
+// treated as UTC, never as time.Local, and when a location IS configured the end-of-day boundary
+// must be computed in that zone rather than in UTC.
+//
+// A prior version of this test used clock=2026-08-18T04:00:00Z / Location=America/Los_Angeles
+// with the shared fixture and asserted len(items)==2 — but an implementation that silently
+// ignores Location and always uses UTC returns the same 2 items on that fixture, so the test
+// could not have caught a regression back to UTC-only. This version picks a due instant that the
+// two implementations genuinely disagree on:
+//
+// clock.Now() = 2026-08-17T12:00:00Z, Location = Asia/Tokyo (UTC+9). "Today" in Tokyo is still
+// August 17th (12:00 UTC = 21:00 JST on the 17th). End of August 17th in Tokyo local time is
+// 2026-08-17T23:59:59.999999999+09:00, which is 2026-08-17T14:59:59.999999999Z — so the Tokyo
+// boundary (start of Aug 18 JST) falls at 2026-08-17T15:00:00Z. A task due at
+// 2026-08-17T18:00:00Z is therefore:
+//   - correct (location-aware) implementation: 18:00Z is AFTER the Tokyo boundary (15:00Z) ->
+//     DROPPED, 0 items.
+//   - buggy (UTC-only) implementation: "today" in UTC is also the 17th, so its boundary is start
+//     of Aug 18 UTC (2026-08-18T00:00:00Z); 18:00Z is BEFORE that -> KEPT, 1 item.
+//
+// A test asserting 0 items therefore fails under the UTC-only implementation and passes only
+// under one that actually threads Location through the boundary calculation.
+func TestFetchLocationDiscriminatesDueTodayBoundary(t *testing.T) {
+	loc, err := time.LoadLocation("Asia/Tokyo")
 	if err != nil {
 		t.Skipf("tzdata unavailable: %v", err)
 	}
 
-	// 2026-08-18T04:00:00Z is 2026-08-17T21:00:00-07:00 — still August 17th in Los Angeles, so
-	// "due today" (2026-08-17) must still be included, even though UTC has already rolled to the
-	// 18th.
-	clock := &ports.FixedClock{T: at(t, "2026-08-18T04:00:00Z")}
-	srv := httptest.NewServer(fakesources.NewServer())
+	const body = `[{"id":"9001","content":"discriminating task","priority":1,
+		"url":"https://todoist.com/showTask?id=9001",
+		"due":{"date":"2026-08-17","datetime":"2026-08-17T18:00:00Z"}}]`
+	srv := todoistServer(t, body)
 	defer srv.Close()
 
 	f := todoist.New(todoist.Config{
 		Token: "x", BaseURL: srv.URL, Filter: "overdue | today", Location: loc,
-	}, srv.Client(), clock)
+	}, srv.Client(), &ports.FixedClock{T: at(t, "2026-08-17T12:00:00Z")})
+
+	res, err := f.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if len(res.Items) != 0 {
+		t.Fatalf("len(items) = %d, want 0 — a task due 2026-08-17T18:00:00Z is past the Tokyo "+
+			"end-of-day boundary (2026-08-17T15:00:00Z) and must be dropped; an implementation "+
+			"that ignores Location and compares against the UTC boundary instead would wrongly "+
+			"keep it", len(res.Items))
+	}
+}
+
+// TestFetchLocationNilDefaultsToUTC is the mirror of the test above: the very same due instant
+// (2026-08-17T18:00:00Z), with the same clock, but Config.Location left nil. Nil must default to
+// UTC (never time.Local — Ruling 3), whose boundary for "today" (2026-08-17, since clock.Now() is
+// 12:00 UTC on the 17th) is 2026-08-18T00:00:00Z. 18:00Z is before that, so the task must be
+// KEPT — the opposite outcome of the Tokyo case above, confirming the boundary genuinely moves
+// with Location rather than the two tests coincidentally agreeing.
+func TestFetchLocationNilDefaultsToUTC(t *testing.T) {
+	const body = `[{"id":"9001","content":"discriminating task","priority":1,
+		"url":"https://todoist.com/showTask?id=9001",
+		"due":{"date":"2026-08-17","datetime":"2026-08-17T18:00:00Z"}}]`
+	srv := todoistServer(t, body)
+	defer srv.Close()
+
+	f := todoist.New(todoist.Config{
+		Token: "x", BaseURL: srv.URL, Filter: "overdue | today",
+	}, srv.Client(), &ports.FixedClock{T: at(t, "2026-08-17T12:00:00Z")})
+
+	res, err := f.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("len(items) = %d, want 1 — with Location nil (UTC), a task due 2026-08-17T18:00:00Z "+
+			"is before the UTC end-of-day boundary (2026-08-18T00:00:00Z) and must be kept", len(res.Items))
+	}
+}
+
+// TestFetchTieBreaksEqualDueAtByExternalID covers Fetch's sort comparator when two tasks share an
+// identical DueAt: sort.Slice is not a stable sort, so a comparator that only compared DueAt
+// (dropping the ExternalID tie-break) would let the two tasks' relative order vary from run to
+// run — on a dashboard that reads as items moving around for no reason between refreshes. The
+// fixture below serves task "9" before task "3" in the JSON array, specifically so that surviving
+// in ExternalID order (todoist:3, then todoist:9) cannot be explained by "the sort just preserved
+// input order" — it can only happen if the ExternalID tie-break actually ran.
+func TestFetchTieBreaksEqualDueAtByExternalID(t *testing.T) {
+	const body = `[
+		{"id":"9","content":"second by id","priority":1,
+		 "url":"https://todoist.com/showTask?id=9",
+		 "due":{"date":"2026-08-17","datetime":"2026-08-17T10:00:00Z"}},
+		{"id":"3","content":"first by id","priority":1,
+		 "url":"https://todoist.com/showTask?id=3",
+		 "due":{"date":"2026-08-17","datetime":"2026-08-17T10:00:00Z"}}
+	]`
+	srv := todoistServer(t, body)
+	defer srv.Close()
+
+	f := todoist.New(todoist.Config{
+		Token: "x", BaseURL: srv.URL, Filter: "overdue | today",
+	}, srv.Client(), &ports.FixedClock{T: at(t, "2026-08-17T12:00:00Z")})
 
 	res, err := f.Fetch(context.Background())
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
 	if len(res.Items) != 2 {
-		t.Fatalf("len(items) = %d, want 2 (overdue + due-today, evaluated in America/Los_Angeles)", len(res.Items))
+		t.Fatalf("len(items) = %d, want 2", len(res.Items))
+	}
+	if !res.Items[0].DueAt.Equal(res.Items[1].DueAt) {
+		t.Fatalf("test setup broken: DueAt values differ (%s vs %s), want identical", res.Items[0].DueAt, res.Items[1].DueAt)
+	}
+	if res.Items[0].ExternalID != "todoist:3" || res.Items[1].ExternalID != "todoist:9" {
+		t.Errorf("ExternalID order = [%s, %s], want [todoist:3, todoist:9] — equal DueAt must "+
+			"tie-break on ExternalID ascending, not on input/fetch order", res.Items[0].ExternalID, res.Items[1].ExternalID)
 	}
 }
 
