@@ -1,6 +1,6 @@
 # ADR-0001: Web application instead of a Wails desktop app
 
-* Status: accepted
+* Status: superseded by ADR-0014
 * Date: 2026-08-16
 * Deciders: Gernot Starke
 * Related: FR-1.1, QG-5, C-2, C-3
@@ -28,6 +28,9 @@ toolchain.
 
 **Chosen option: 1** — the owner dropped the Wails requirement once the conflict was explicit. Backend stays
 100 % Go. Option 3 remains possible later because the core is UI‑agnostic (ADR‑0002), but is YAGNI now.
+
+This outcome was superseded when the owner prioritised always-on detection while reopening native macOS
+and browser clients as equally valid consumers. See [ADR-0014](ADR-0014-flyio-backend-client-neutral-api-runtime-config.md).
 
 ### Consequences
 

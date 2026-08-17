@@ -1,6 +1,6 @@
 # ADR-0007: YAML configuration in the repository, secrets via environment
 
-* Status: accepted
+* Status: superseded by ADR-0014
 * Date: 2026-08-16
 * Deciders: Gernot Starke
 * Related: FR-8.x, QG-4, QS-3.3, QS-4.1, QS-4.3
@@ -29,3 +29,7 @@ image rebuild (CI deploy on push).
 * Good: config is reviewable in git history; adding a repo is a one‑line PR; validation errors name key + line.
 * Bad: production change = deploy (~5 min) — accepted (QS‑4.1 ≤ 10 min). Option 3 rejected as YAGNI for a
   single user; option 2 unreadable for lists.
+
+ADR-0014 replaces this production model with a bootstrap YAML seed, revisioned runtime YAML on the Fly
+volume and an authenticated API. Deployment trust-root secrets stay in the environment; GitHub/Plausible
+provider secrets can be stored in a separate encrypted envelope through write-only routes.

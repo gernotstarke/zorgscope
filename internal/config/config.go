@@ -18,13 +18,11 @@ type Config struct {
 	Snapshot  SnapshotConfig  `yaml:"snapshot"`
 	GitHub    GitHubConfig    `yaml:"github"`
 	Plausible PlausibleConfig `yaml:"plausible"`
-	Todoist   TodoistConfig   `yaml:"todoist"`
-	Feeds     FeedsConfig     `yaml:"feeds"`
 	Watch     WatchConfig     `yaml:"watch"`
 
 	// From environment (never from YAML):
 	Secrets  Secrets `yaml:"-"`
-	AuthMode string  `yaml:"-"` // "passkey" | "dev"
+	AuthMode string  `yaml:"-"` // "token" | "passkey" | "dev"
 	LogLevel string  `yaml:"-"`
 	DataPath string  `yaml:"-"`
 }
@@ -48,7 +46,7 @@ type UIConfig struct {
 }
 
 // KnownTiles are the tile names accepted in ui.tiles.
-var KnownTiles = []string{"attention", "repos", "sites", "todoist", "news", "watch"}
+var KnownTiles = []string{"attention", "repos", "sites", "watch"}
 
 // SnapshotConfig holds the `snapshot` section: the daily snapshot time (HH:MM, resolved into
 // Hour/Minute by Validate) and how many days of snapshots to retain.
@@ -131,40 +129,14 @@ type PlausibleConfig struct {
 	BaseURL      string        `yaml:"base_url"`
 }
 
-// TodoistConfig holds the `todoist` section: whether the source is enabled, polling interval,
-// the task-due horizon in days and the (overridable) API base URL.
-type TodoistConfig struct {
-	Enabled      bool          `yaml:"enabled"`
-	PollInterval time.Duration `yaml:"poll_interval"`
-	HorizonDays  int           `yaml:"horizon_days"`
-	BaseURL      string        `yaml:"base_url"`
-}
-
-// FeedsConfig holds the `feeds` section: whether the source is enabled, polling interval,
-// per-tile item cap, topic grouping and the configured feed sources.
-type FeedsConfig struct {
-	Enabled      bool          `yaml:"enabled"`
-	PollInterval time.Duration `yaml:"poll_interval"`
-	MaxItems     int           `yaml:"max_items"`
-	GroupByTopic bool          `yaml:"group_by_topic"`
-	Sources      []FeedSource  `yaml:"sources"`
-}
-
-// FeedSource is one feed.
-type FeedSource struct {
-	Name     string `yaml:"name"`
-	URL      string `yaml:"url"`
-	Topic    string `yaml:"topic"`
-	MaxItems int    `yaml:"max_items"`
-}
-
 // WatchConfig holds the `watch` section (FR-11.x): whether credential/URL watching is enabled,
 // the default warning horizon in days, manually registered credentials and health-checked URLs.
 type WatchConfig struct {
-	Enabled     bool               `yaml:"enabled"`
-	WarnDays    int                `yaml:"warn_days"`
-	Credentials []CredentialConfig `yaml:"credentials"`
-	URLs        []URLCheckConfig   `yaml:"urls"`
+	Enabled      bool               `yaml:"enabled"`
+	PollInterval time.Duration      `yaml:"poll_interval"`
+	WarnDays     int                `yaml:"warn_days"`
+	Credentials  []CredentialConfig `yaml:"credentials"`
+	URLs         []URLCheckConfig   `yaml:"urls"`
 }
 
 // CredentialConfig is a manually registered expiring credential.
@@ -191,9 +163,10 @@ type URLCheckConfig struct {
 type Secrets struct {
 	GitHubToken     string
 	PlausibleAPIKey string
-	TodoistToken    string
 	SessionSecret   string
 	EnrollToken     string
+	APIToken        string
+	ConfigKey       string
 }
 
 // Default returns the documented defaults; YAML overrides them.
@@ -205,9 +178,7 @@ func Default() Config {
 		GitHub: GitHubConfig{PollInterval: 10 * time.Minute, GracePeriod: 4 * time.Hour, StaleAfter: 30 * 24 * time.Hour,
 			Bots: []string{"[bot]", "dependabot", "renovate"}, Mentions: true, BaseURL: "https://api.github.com"},
 		Plausible: PlausibleConfig{PollInterval: 30 * time.Minute, Order: "visitors", BaseURL: "https://plausible.io"},
-		Todoist:   TodoistConfig{PollInterval: 5 * time.Minute, HorizonDays: 7, BaseURL: "https://api.todoist.com"},
-		Feeds:     FeedsConfig{PollInterval: 30 * time.Minute, MaxItems: 20},
-		Watch:     WatchConfig{Enabled: true, WarnDays: 14},
+		Watch:     WatchConfig{Enabled: true, PollInterval: 15 * time.Minute, WarnDays: 14},
 		AuthMode:  "passkey",
 		LogLevel:  "info",
 		DataPath:  "/data/zorgscope.db",

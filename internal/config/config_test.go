@@ -33,10 +33,10 @@ func TestLoadRepoConfigDefaultsAndOverrides(t *testing.T) {
 	if cfg.Snapshot.Time != "03:00" || cfg.Snapshot.Hour != 3 || cfg.Snapshot.Minute != 0 || cfg.Snapshot.RetentionDays != 30 {
 		t.Fatalf("snapshot defaults: %+v", cfg.Snapshot)
 	}
-	if cfg.UI.TilePollSeconds != 60 || cfg.UI.AttentionCap != 30 || cfg.UI.RefreshMinGapSeconds != 30 || len(cfg.UI.Tiles) != 6 {
+	if cfg.UI.TilePollSeconds != 60 || cfg.UI.AttentionCap != 30 || cfg.UI.RefreshMinGapSeconds != 30 || len(cfg.UI.Tiles) != 4 {
 		t.Fatalf("ui defaults: %+v", cfg.UI)
 	}
-	if !cfg.Watch.Enabled || cfg.Watch.WarnDays != 14 || cfg.Rules().WarnDays != 14 || cfg.Rules().Me != "gernotstarke" {
+	if !cfg.Watch.Enabled || cfg.Watch.PollInterval != 15*time.Minute || cfg.Watch.WarnDays != 14 || cfg.Rules().WarnDays != 14 || cfg.Rules().Me != "gernotstarke" {
 		t.Fatalf("watch/rules: %+v", cfg.Watch)
 	}
 	if cfg.GitHub.BaseURL != "https://api.github.com" {
@@ -45,7 +45,7 @@ func TestLoadRepoConfigDefaultsAndOverrides(t *testing.T) {
 }
 
 func TestLoadRealConfig(t *testing.T) {
-	cfg, err := Load("../../config/zorgscope.yaml", env(map[string]string{"GITHUB_TOKEN": "t", "PLAUSIBLE_API_KEY": "p", "TODOIST_TOKEN": "d", "SESSION_SECRET": strings.Repeat("x", 32), "ENROLL_TOKEN": "e"}))
+	cfg, err := Load("../../config/zorgscope.yaml", env(map[string]string{"GITHUB_TOKEN": "t", "PLAUSIBLE_API_KEY": "p", "SESSION_SECRET": strings.Repeat("x", 32), "ENROLL_TOKEN": "e"}))
 	if err != nil {
 		t.Fatalf("the shipped config must load: %v", err)
 	}
@@ -70,15 +70,24 @@ func TestValidationErrors(t *testing.T) {
 		{"github enabled without token", "server:\n  base_url: http://localhost:8080\ngithub:\n  enabled: true\n  me: x\n  repos: [a/b]\n", map[string]string{"AUTH_MODE": "dev"}, "GITHUB_TOKEN"},
 		{"github enabled without me", "server:\n  base_url: http://localhost:8080\ngithub:\n  enabled: true\n  repos: [a/b]\n", map[string]string{"GITHUB_TOKEN": "t", "AUTH_MODE": "dev"}, "github.me"},
 		{"bad snapshot time", "server:\n  base_url: http://localhost:8080\nsnapshot:\n  time: 25:00\n", map[string]string{"AUTH_MODE": "dev"}, "snapshot.time"},
+		{"unpadded snapshot time", "server:\n  base_url: http://localhost:8080\nsnapshot:\n  time: '3:00'\n", map[string]string{"AUTH_MODE": "dev"}, "snapshot.time"},
+		{"snapshot time trailing text", "server:\n  base_url: http://localhost:8080\nsnapshot:\n  time: '03:00 later'\n", map[string]string{"AUTH_MODE": "dev"}, "snapshot.time"},
 		{"bad timezone", "server:\n  base_url: http://localhost:8080\n  timezone: Mars/Olympus\n", nil, "server.timezone"},
 		{"unknown tile", "server:\n  base_url: http://localhost:8080\nui:\n  tiles: [attention, weather]\n", map[string]string{"AUTH_MODE": "dev"}, "ui.tiles[1]"},
 		{"bad credential date", "server:\n  base_url: http://localhost:8080\nwatch:\n  credentials:\n    - name: x\n      expires: 31.12.2026\n", map[string]string{"AUTH_MODE": "dev"}, "watch.credentials[0].expires"},
 		{"passkey without session secret", "server:\n  base_url: https://zorgscope.fly.dev\n", map[string]string{"AUTH_MODE": "passkey"}, "SESSION_SECRET"},
 		{"unknown key in repo mapping", "server:\n  base_url: http://localhost:8080\ngithub:\n  enabled: true\n  me: x\n  repos:\n    - name: a/b\n      pol_interval: 5m\n", map[string]string{"GITHUB_TOKEN": "t", "AUTH_MODE": "dev"}, "pol_interval"},
 		{"plausible enabled without token", "server:\n  base_url: http://localhost:8080\nplausible:\n  enabled: true\n  sites: [arc42.org]\n", map[string]string{"AUTH_MODE": "dev"}, "PLAUSIBLE_API_KEY"},
-		{"todoist enabled without token", "server:\n  base_url: http://localhost:8080\ntodoist:\n  enabled: true\n", map[string]string{"AUTH_MODE": "dev"}, "TODOIST_TOKEN"},
 		{"bad plausible site", "server:\n  base_url: http://localhost:8080\nplausible:\n  enabled: true\n  sites: [arc42.org/bad]\n", map[string]string{"PLAUSIBLE_API_KEY": "p", "AUTH_MODE": "dev"}, "plausible.sites[0]"},
 		{"malformed PORT", "server:\n  base_url: http://localhost:8080\n", map[string]string{"AUTH_MODE": "dev", "PORT": "abc"}, "PORT"},
+		{"duplicate tile", "server:\n  base_url: http://localhost:8080\nui:\n  tiles: [attention, attention]\n", map[string]string{"AUTH_MODE": "dev"}, "ui.tiles[1]"},
+		{"duplicate repo", "server:\n  base_url: http://localhost:8080\ngithub:\n  enabled: true\n  me: x\n  repos: [a/b, a/b]\n", map[string]string{"GITHUB_TOKEN": "t", "AUTH_MODE": "dev"}, "github.repos[1]"},
+		{"bad github base URL", "server:\n  base_url: http://localhost:8080\ngithub:\n  base_url: github.invalid\n", map[string]string{"AUTH_MODE": "dev"}, "github.base_url"},
+		{"dotted-edge plausible site", "server:\n  base_url: http://localhost:8080\nplausible:\n  sites: [.example.com]\n", map[string]string{"AUTH_MODE": "dev"}, "plausible.sites[0]"},
+		{"watch poll too small", "server:\n  base_url: http://localhost:8080\nwatch:\n  poll_interval: 5s\n", map[string]string{"AUTH_MODE": "dev"}, "watch.poll_interval"},
+		{"reserved credential name", "server:\n  base_url: http://localhost:8080\nwatch:\n  credentials: [{name: 'bad|name', expires: 2027-01-01}]\n", map[string]string{"AUTH_MODE": "dev"}, "watch.credentials[0].name"},
+		{"negative credential warning", "server:\n  base_url: http://localhost:8080\nwatch:\n  credentials: [{name: key, expires: 2027-01-01, warn_days: -1}]\n", map[string]string{"AUTH_MODE": "dev"}, "watch.credentials[0].warn_days"},
+		{"bad expected status", "server:\n  base_url: http://localhost:8080\nwatch:\n  urls: [{name: health, url: 'https://example.com', expect_status: 700}]\n", map[string]string{"AUTH_MODE": "dev"}, "watch.urls[0].expect_status"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

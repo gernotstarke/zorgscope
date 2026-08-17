@@ -243,7 +243,7 @@ func (f *RepoFetcher) mapNode(n gqlNode, isPR bool) domain.Item {
 }
 
 func (f *RepoFetcher) latestRun(ctx context.Context, branch string) (*domain.Item, error) {
-	q := url.Values{"branch": {branch}, "per_page": {"1"}, "exclude_pull_requests": {"true"}}
+	q := url.Values{"branch": {branch}, "per_page": {"10"}, "exclude_pull_requests": {"true"}}
 	var resp runsResponse
 	path := fmt.Sprintf("/repos/%s/%s/actions/runs?%s", url.PathEscape(f.owner), url.PathEscape(f.name), q.Encode())
 	if _, err := f.c.do(ctx, http.MethodGet, path, nil, &resp); err != nil {
@@ -253,6 +253,15 @@ func (f *RepoFetcher) latestRun(ctx context.Context, branch string) (*domain.Ite
 		return nil, nil
 	}
 	r := resp.WorkflowRuns[0]
+	previousConclusion := ""
+	if r.Status != "completed" {
+		for _, previous := range resp.WorkflowRuns[1:] {
+			if previous.Status == "completed" {
+				previousConclusion = previous.Conclusion
+				break
+			}
+		}
+	}
 	created := r.RunStartedAt
 	if created.IsZero() {
 		created = r.CreatedAt
@@ -260,6 +269,7 @@ func (f *RepoFetcher) latestRun(ctx context.Context, branch string) (*domain.Ite
 	return &domain.Item{
 		ID: domain.ItemID{SourceID: f.ID(), ExternalID: fmt.Sprintf("runs/%d", r.ID)}, Kind: domain.KindWorkflowRun,
 		Title: r.Name, URL: r.HTMLURL, CreatedAt: created, UpdatedAt: r.UpdatedAt,
-		Payload: domain.MustPayload(domain.WorkflowRunPayload{RunID: r.ID, WorkflowName: r.Name, Conclusion: r.Conclusion, Status: r.Status, Branch: r.HeadBranch}),
+		Payload: domain.MustPayload(domain.WorkflowRunPayload{RunID: r.ID, WorkflowName: r.Name, Conclusion: r.Conclusion,
+			PreviousConclusion: previousConclusion, Status: r.Status, Branch: r.HeadBranch}),
 	}, nil
 }

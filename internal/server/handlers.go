@@ -13,11 +13,11 @@ import (
 var tileTemplates = map[string]string{"header": "tile_header", "attention": "tile_attention", "repos": "tile_repos"}
 
 func (s *Server) data(r *http.Request, v app.View) pageData {
-	return pageData{View: v, CSRF: csrfToken(r), PollSeconds: s.deps.Cfg.UI.TilePollSeconds}
+	return pageData{View: v, CSRF: csrfToken(r), PollSeconds: s.currentConfig().UI.TilePollSeconds}
 }
 
 func (s *Server) buildView(w http.ResponseWriter, r *http.Request) (app.View, bool) {
-	v, err := s.deps.Dashboard.Build(r.Context())
+	v, err := s.dashboard().Build(r.Context())
 	if err != nil {
 		s.deps.Log.Error("dashboard build failed", "component", componentServer, "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -75,7 +75,7 @@ func (s *Server) handleDismiss(w http.ResponseWriter, r *http.Request) {
 
 // handleDismissAll dismisses every current attention item (FR-2.5).
 func (s *Server) handleDismissAll(w http.ResponseWriter, r *http.Request) {
-	evs, err := s.deps.Dashboard.EvaluateAll(r.Context())
+	evs, err := s.dashboard().EvaluateAll(r.Context())
 	if err == nil {
 		err = app.DismissAll(r.Context(), s.deps.Store, s.deps.Clock, domain.FilterAttention(evs))
 	}
@@ -115,7 +115,7 @@ func (s *Server) handleTileNamed(w http.ResponseWriter, r *http.Request, tmpl st
 // A no-JS browser POST redirects to "/" (303 See Other) instead of landing on a bare text/plain
 // response with no navigation back to the dashboard (§8.5).
 func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
-	n := s.deps.Refresher.TriggerAll()
+	n := s.refresher().TriggerAll()
 	if !isHXRequest(r) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
@@ -155,5 +155,5 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			Error: st.ErrorMsg, NextRun: fmtT(st.NextRun), Items: st.ItemCount, InFlight: st.InFlight, AuthFailed: st.AuthFailed})
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"sources": out, "in_flight": s.deps.Refresher.InFlight()})
+	_ = json.NewEncoder(w).Encode(map[string]any{"sources": out, "in_flight": s.refresher().InFlight()})
 }

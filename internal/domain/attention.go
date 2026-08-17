@@ -157,12 +157,15 @@ func (r Rules) Evaluate(it Item, prev *Snapshot, dis *Dismissal, now time.Time) 
 		}
 	case KindHealthCheck:
 		p, _ := DecodePayload[HealthCheckPayload](it)
-		if !p.OK && p.ConsecutiveFailures >= 2 {
+		switch {
+		case !p.OK && p.ConsecutiveFailures >= 2:
 			raise(LevelDown)
-		} else if p.CertExpires != nil && p.CertExpires.Sub(now) <= r.warnHorizon(0) {
+		case p.CertExpires != nil && p.CertExpires.Before(now):
+			raise(LevelExpired)
+		case p.CertExpires != nil && p.CertExpires.Sub(now) <= r.warnHorizon(0):
 			raise(LevelExpiring)
 		}
-	case KindMention, KindArticle:
+	case KindMention:
 		ev.New = r.IsNew(it, prev, now)
 		if ev.New {
 			raise(LevelNew)
@@ -181,7 +184,7 @@ func (r Rules) Evaluate(it Item, prev *Snapshot, dis *Dismissal, now time.Time) 
 		default:
 			raise(LevelAged)
 		}
-	case KindTask, KindMetricSeries:
+	case KindMetricSeries:
 		// informational only
 	}
 	return ev

@@ -57,8 +57,8 @@ func TestIsUnanswered(t *testing.T) {
 			t.Errorf("%s: got %v want %v", c.name, got, c.want)
 		}
 	}
-	task := Item{Kind: KindTask, CreatedAt: created}
-	if rules.IsUnanswered(task, now0) {
+	metric := Item{Kind: KindMetricSeries, CreatedAt: created}
+	if rules.IsUnanswered(metric, now0) {
 		t.Fatal("only issues and PRs can be unanswered")
 	}
 
@@ -153,9 +153,9 @@ func TestEvaluateOtherKinds(t *testing.T) {
 	if ev := rules.Evaluate(mention, nil, nil, now0); ev.Level != LevelNew {
 		t.Fatalf("fresh mention → New, got %+v", ev)
 	}
-	task := Item{ID: ItemID{"todoist", "t"}, Kind: KindTask, CreatedAt: now0}
-	if ev := rules.Evaluate(task, nil, nil, now0); ev.Level != LevelNone {
-		t.Fatalf("task → None, got %+v", ev)
+	metric := Item{ID: ItemID{"plausible:example.com", "summary"}, Kind: KindMetricSeries, CreatedAt: now0}
+	if ev := rules.Evaluate(metric, nil, nil, now0); ev.Level != LevelNone {
+		t.Fatalf("metric series → None, got %+v", ev)
 	}
 }
 
@@ -198,7 +198,14 @@ func TestEvaluateHealthCheckCertExpiry(t *testing.T) {
 		t.Fatalf("OK, no CertExpires → None, got %+v", ev)
 	}
 
-	// a down check with a soon-expiring cert must still report Down: the `else if` means
+	past := now0.Add(-time.Minute)
+	expired := base
+	expired.Payload = MustPayload(HealthCheckPayload{OK: false, ConsecutiveFailures: 1, CertExpires: &past})
+	if ev := rules.Evaluate(expired, nil, nil, now0); ev.Level != LevelExpired {
+		t.Fatalf("expired certificate → Expired, got %+v", ev)
+	}
+
+	// A down check with a soon-expiring cert must still report Down: the `else if` means
 	// ConsecutiveFailures takes precedence over CertExpires.
 	downAndExpiring := base
 	downAndExpiring.Payload = MustPayload(HealthCheckPayload{OK: false, ConsecutiveFailures: 2, CertExpires: &soon})

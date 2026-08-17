@@ -17,6 +17,8 @@ services:
       ZORGSCOPE_BASE_URL: http://localhost:8080
       GITHUB_BASE_URL: http://fakesources:9090
       GITHUB_TOKEN: fake-token
+      # Deterministic test-only AES-256 key (base64 of 32 bytes). Production uses a Fly secret.
+      ZORGSCOPE_CONFIG_KEY: MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=
       AUTH_MODE: dev
       LOG_LEVEL: info
     volumes:

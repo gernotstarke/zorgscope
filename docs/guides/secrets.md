@@ -1,19 +1,18 @@
 # Secrets and tokens
 
-zorgscope reads all secrets from environment variables (ADR‑0007). Locally they live in `.env` (git‑ignored,
-template `deploy/env.example`); on fly.io set them with `make fly ARGS="secrets set NAME=value"`.
+Deployment secrets come from environment variables (ADR‑0014). GitHub/Plausible credentials can use an
+environment fallback, but their normal production lifecycle is the write-only config API. Locally,
+deployment values live in `.env` (git-ignored, template `deploy/env.example`).
 
 | Variable | Purpose | How to obtain / scope |
 |----------|---------|-----------------------|
-| `GITHUB_TOKEN` | Issues, PRs, workflow runs of monitored repos; notifications for mentions | GitHub → Settings → Developer settings → *Fine‑grained token*: resource owner `arc42` (needs org approval) and `gernotstarke`; repository permissions **Issues: read, Pull requests: read, Actions: read, Metadata: read**; account permission **Notifications: read**. If the fine‑grained token cannot cover the `arc42` org, use a classic token with `repo` (private repo access) + `notifications`. |
-| `PLAUSIBLE_API_KEY` | Stats API v2 | plausible.io → Account settings → API keys → *Stats API* key. One key covers all sites of the account. |
-| `TODOIST_TOKEN` | Read tasks | Todoist → Settings → Integrations → Developer → *API token*. |
-| `SESSION_SECRET` | Signs/authenticates session and challenge cookies | `openssl rand -hex 32`. Rotating it logs every browser out. |
-| `ENROLL_TOKEN` | Gate for enrolling the first passkey (`/enroll?token=…`) | `openssl rand -hex 24`. Rotate after use if you like; needed again only for recovery. |
+| `GITHUB_TOKEN` (optional fallback) / `github_token` API secret | Issues, PRs, Actions and notifications | GitHub fine-grained token with Issues, Pull requests, Actions and Metadata read plus Notifications read; use classic `repo` + `notifications` only when the fine-grained token cannot cover all required owners. |
+| `PLAUSIBLE_API_KEY` (optional fallback) / `plausible_api_key` API secret | Stats API v2 | plausible.io account settings → API keys → Stats API. |
+| `ZORGSCOPE_API_TOKEN` | Bootstrap bearer authentication for every `/api/v1/*` route | At least 32 high-entropy characters, stored in the future macOS client's Keychain/password manager. |
+| `ZORGSCOPE_CONFIG_KEY` | AES-256-GCM master key for API-managed provider secrets | Base64 encoding of exactly 32 random bytes, e.g. `openssl rand -base64 32`; keep a separate backup. |
+| `SESSION_SECRET`, `ENROLL_TOKEN` | Reserved for the future passkey/browser-session mode | Not used by production `AUTH_MODE=token`; generate before enabling passkey mode. |
 | `FLY_API_TOKEN` | Deploy from CI / `make deploy` | fly.io → Tokens → *deploy token* scoped to the app; store as GitHub repository secret. |
 
-Rules: never paste tokens into config files, issues, or commits; the app redacts known secrets from logs
-(QS‑3.3) but you should not rely on that. Tokens are read‑only by construction (C‑6).
-
-Recovery when all passkeys are lost: `make fly ARGS="secrets set ENROLL_TOKEN=$(openssl rand -hex 24)"`, then
-`make fly ARGS="ssh console -C '/zorgscope reset-credentials'"`, then open `/enroll?token=…` again.
+Rules: never paste tokens into YAML, issues or commits. Config GET returns status only for the two provider
+secrets; runtime encryption is not a substitute for least-privilege upstream scopes. Rotating
+`ZORGSCOPE_CONFIG_KEY` requires re-encrypting or resetting managed provider secrets first.

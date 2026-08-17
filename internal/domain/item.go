@@ -18,8 +18,6 @@ const (
 	KindPR           Kind = "pr"
 	KindWorkflowRun  Kind = "workflow_run"
 	KindMention      Kind = "mention"
-	KindTask         Kind = "task"
-	KindArticle      Kind = "article"
 	KindMetricSeries Kind = "metric_series"
 	KindCredential   Kind = "credential"
 	KindHealthCheck  Kind = "health_check"
@@ -75,31 +73,18 @@ type (
 	}
 	// WorkflowRunPayload describes the latest workflow run of a repo.
 	WorkflowRunPayload struct {
-		RunID        int64  `json:"run_id"`
-		WorkflowName string `json:"workflow_name"`
-		Conclusion   string `json:"conclusion"` // success | failure | cancelled | ... | "" while running
-		Status       string `json:"status"`     // completed | in_progress | queued
-		Branch       string `json:"branch"`
+		RunID              int64  `json:"run_id"`
+		WorkflowName       string `json:"workflow_name"`
+		Conclusion         string `json:"conclusion"`                    // success | failure | cancelled | ... | "" while running
+		PreviousConclusion string `json:"previous_conclusion,omitempty"` // last completed run while current run is active
+		Status             string `json:"status"`                        // completed | in_progress | queued
+		Branch             string `json:"branch"`
 	}
 	// MentionPayload describes a notification thread.
 	MentionPayload struct {
 		Reason      string `json:"reason"`
 		Repo        string `json:"repo"`
 		SubjectType string `json:"subject_type"`
-	}
-	// TaskPayload holds Todoist task extras.
-	TaskPayload struct {
-		Project    string    `json:"project"`
-		Priority   int       `json:"priority"` // 1 (highest) .. 4
-		Due        time.Time `json:"due"`
-		DueHasTime bool      `json:"due_has_time"`
-		Recurring  bool      `json:"recurring"`
-	}
-	// ArticlePayload holds feed article extras.
-	ArticlePayload struct {
-		Summary  string `json:"summary"`
-		Topic    string `json:"topic"`
-		FeedName string `json:"feed_name"`
 	}
 	// MetricPage is one top page of a site.
 	MetricPage struct {
@@ -132,6 +117,9 @@ type (
 		OK                  bool       `json:"ok"`
 		ConsecutiveFailures int        `json:"consecutive_failures"`
 		CertExpires         *time.Time `json:"cert_expires,omitempty"`
+		CertIssuer          string     `json:"cert_issuer,omitempty"`
+		HostnameValid       *bool      `json:"hostname_valid,omitempty"`
+		CheckedAt           time.Time  `json:"checked_at"`
 		LastOK              time.Time  `json:"last_ok"`
 	}
 )

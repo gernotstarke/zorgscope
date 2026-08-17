@@ -4,37 +4,39 @@
 
 ```mermaid
 flowchart LR
-    B[Browser] -->|HTTPS zorgscope.fly.dev| E[fly edge / anycast proxy<br/>TLS termination]
+    C[Wails macOS and/or browser client] -->|HTTPS /api/v1 JSON| E[fly edge / anycast proxy<br/>TLS termination]
     E -->|HTTP :8080| M[fly Machine shared-cpu-1x 256 MB<br/>region fra<br/>container: zorgscope]
-    M --- V[(fly Volume 1 GB<br/>/data/zorgscope.db)]
-    M -->|HTTPS| X[GitHub · Plausible · Todoist · feeds]
+    M --- V[(fly Volume 1 GB<br/>SQLite + runtime YAML + encrypted secrets)]
+    M -->|HTTPS / TLS| X[GitHub · Plausible · configured TLS endpoints]
     GA[GitHub Actions] -->|flyctl deploy| M
     SEC[fly secrets] --> M
 ```
 
-* `deploy/fly.toml`: `min_machines_running = 1`, `auto_stop_machines = "off"`, HTTP checks on `/healthz`,
-  mount `/data`, `[env] ZORGSCOPE_CONFIG=/app/config/zorgscope.yaml`.
-* Config file is baked into the image (copied from `config/`), so config changes deploy via CI.
-* Secrets: `GITHUB_TOKEN`, `PLAUSIBLE_API_KEY`, `TODOIST_TOKEN`, `SESSION_SECRET`, `ENROLL_TOKEN` (`fly secrets set`).
-* Image: multi‑stage `deploy/Dockerfile` – `golang:1.26` build (CGO disabled, `-trimpath -ldflags "-s -w"`),
-  final `gcr.io/distroless/static:nonroot`; ~15–20 MB.
-* Cost: one shared‑cpu‑1x + 1 GB volume ≈ 3–4 €/month.
+* `deploy/fly.toml`: `min_machines_running = 1`, `auto_stop_machines = "off"`, HTTP checks on `/readyz`
+  and a volume mounted at `/data`.
+* Runtime configuration persists as `/data/zorgscope.yaml`; encrypted upstream-secret overrides persist
+  as `/data/zorgscope.secrets`. Both are managed through `/api/v1/config`; ordinary changes do not rebuild
+  or deploy the image.
+* Required deployment secrets: `ZORGSCOPE_API_TOKEN` and `ZORGSCOPE_CONFIG_KEY`. The Fly bootstrap seed
+  keeps GitHub/Plausible disabled; set their credentials through the write-only API, then enable them with
+  one complete config PUT. Environment provider tokens remain optional fallback/bootstrap values.
+* Image: multi-stage `deploy/Dockerfile` - `golang:1.26` build (CGO disabled, `-trimpath -ldflags "-s -w"`),
+  final `gcr.io/distroless/static-debian12:nonroot`.
 
 ## 7.2 Local – Docker Compose (`make app`)
 
 `deploy/compose.yml`: service `zorgscope` built from the same Dockerfile, port `8080:8080`, env from `.env`,
-named volume `zorgscope-data:/data`, `AUTH_MODE=dev` default in `env.example` (no passkey locally),
-config mounted read‑only from `./config` so edits are picked up (FR‑8.5).
+named volume `zorgscope-data:/data`, and development bootstrap credentials. Runtime config persists on
+the named volume and is changed through the same API used in production.
 
 ## 7.3 E2E – Docker Compose (`make e2e`)
 
-`deploy/compose.e2e.yml`: services `fakesources` (from `cmd/fakesources`), `zorgscope` (env points all
-adapters at `http://fakesources:9090`, `AUTH_MODE=dev` for content tests + a dedicated passkey test using
-Playwright's virtual authenticator against `AUTH_MODE=passkey`), `playwright`
-(`mcr.microsoft.com/playwright:v1.x-noble`, runs `test/e2e`). Exit code of `playwright` is the make result.
+`deploy/compose.e2e.yml`: services `fakesources`, `zorgscope` (runtime config points adapters at the fake),
+and the current Chromium HTML smoke runner. API-contract and client-specific suites are added with each
+visual client.
 
 ## 7.4 CI – GitHub Actions
 
-`.github/workflows/ci.yml` on push/PR: `lint` → `test` (unit+integration, coverage gate) → `image` (build,
-`govulncheck`) → `e2e` (compose) — each ≤ 10 min. `.github/workflows/deploy.yml` on push to `main` after
-CI success: `flyctl deploy --remote-only` with `FLY_API_TOKEN`. Dependabot for gomod, github‑actions, docker.
+`.github/workflows/ci.yml` on push/PR runs lint, unit/integration/domain tests, docs checks, image build and
+Compose e2e. `.github/workflows/deploy.yml` runs after successful `main` CI (or manual dispatch) and uses
+`flyctl deploy --remote-only` with repository secret `FLY_API_TOKEN`.

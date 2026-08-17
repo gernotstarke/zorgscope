@@ -1,4 +1,4 @@
-# ADR-0004: SQLite via pure‑Go driver as the only persistence
+# ADR-0004: SQLite via pure-Go driver for cached product state
 
 * Status: accepted
 * Date: 2026-08-16
@@ -7,8 +7,9 @@
 
 ## Context and problem statement
 
-State to keep: cached items (re‑creatable), daily snapshots and dismissals (precious for 30 days), fetch
-status, one account with passkey credentials and sessions. Single writer process, single small machine.
+State to keep: cached items (re-creatable), daily snapshots, dismissals and fetch status. Single writer
+process, single small machine. Runtime configuration and provider-secret overrides were later assigned to
+separate volume files by ADR-0014; future passkey credential storage is not decided yet.
 
 ## Considered options
 

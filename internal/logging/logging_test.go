@@ -46,3 +46,14 @@ func TestRedactsSecretInErrorValue(t *testing.T) {
 		t.Fatalf("expected redacted error text in output: %s", out)
 	}
 }
+
+func TestDynamicSecretsAreRedactedAfterRotation(t *testing.T) {
+	var buf bytes.Buffer
+	secrets := NewSecretSet([]string{"old-secret"})
+	log := NewDynamic(&buf, "info", secrets)
+	secrets.Replace([]string{"new-secret"})
+	log.Info("rotated", "value", "new-secret")
+	if strings.Contains(buf.String(), "new-secret") || !strings.Contains(buf.String(), "[REDACTED]") {
+		t.Fatalf("rotated secret was not redacted: %s", buf.String())
+	}
+}

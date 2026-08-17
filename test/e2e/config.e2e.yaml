@@ -10,6 +10,4 @@ github:
   grace_period: 4h
   repos: [arc42/arc42-template, arc42/arc42.org-site]
 plausible: { enabled: false }
-todoist: { enabled: false }
-feeds: { enabled: false }
 watch: { enabled: false }

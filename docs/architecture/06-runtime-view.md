@@ -31,21 +31,23 @@ the `CredentialSink` port so the Watch tile shows zorgscope's own token expiry (
 Items are replaced per source atomically; `first_seen` is preserved for existing ids so "since last visit"
 (FR‑7.4) works. Removed items (closed issues) are deleted from the cache but not from snapshots.
 
-## 6.2 Page load (`GET /`)
+## 6.2 Dashboard read (`GET /api/v1/dashboard`)
 
-1. Middleware: session cookie → user; no session → 302 `/login`.
-2. `DashboardQuery.Build(now)`: for each enabled tile load items from `ItemStore`, previous snapshot from
-   `SnapshotStore`, dismissals, fetch status → `domain.Evaluate` per item → view models (already sorted, capped, bucketed).
-3. Render `page.html` with all tile partials inline (one round trip). Set `ETag` from a hash of view models.
-4. Browser: htmx attributes on each tile start `hx-trigger="every 60s"` → `GET /tiles/{name}` returning only that partial (304 if unchanged).
-5. Update `last_visit_at` in the auth store (throttled to once per minute).
+1. Middleware validates the bootstrap bearer token (later a revocable device credential); invalid requests
+   receive 401 without data.
+2. `DashboardQuery.Build(now)` loads items, previous snapshots, dismissals and fetch status from SQLite,
+   then applies `domain.Evaluate` and produces presentation-ready DTOs.
+3. Encode one versioned JSON response with attention, repositories, Plausible, watch and per-source
+   freshness/error state. Set `ETag` from the effective DTO revision/hash.
+4. `If-None-Match` returns 304 when unchanged. A client may cache the last full response, but the backend
+   remains authoritative.
 
 No upstream call happens on the read path. Target: TTFB ≤ 150 ms (QS‑2.1).
 
 ## 6.3 Dismiss
 
-`POST /dismiss {item_id, updated_at}` (htmx, CSRF token) → `DismissalStore.Put` → returns the re‑rendered
-Attention tile partial. Dismissal covers the item while `item.updated_at == dismissal.updated_at`.
+`POST /api/v1/dismissals {item_id, updated_at}` (authenticated JSON) → `DismissalStore.Put` → 204.
+Dismissal covers the item while `item.updated_at == dismissal.updated_at`.
 
 ## 6.4 Daily snapshot and catch‑up
 
@@ -71,24 +73,45 @@ snapshot whose date < the current snapshot day, so every item stays `NEW` for at
 48 h. If no previous snapshot exists (first day), the rule falls back to `created_at ≥ now − 24 h`.
 Sources without a successful fetch are not snapshotted (an empty snapshot would be noise).
 
-## 6.5 Passkey enrolment and login
+## 6.5 Authentication
 
-Enrolment: `GET /enroll?token=…` → constant‑time compare with `ENROLL_TOKEN` (or existing session) →
-WebAuthn `BeginRegistration` (challenge in short‑lived signed cookie) → browser `navigator.credentials.create`
-→ `POST /enroll/finish` → credential stored → session created.
+The bootstrap implementation validates `Authorization: Bearer <ZORGSCOPE_API_TOKEN>` in constant time
+for all `/api/v1/*` routes. Invalid attempts are safely logged and globally limited to ten per minute;
+valid credentials are checked before the limiter and therefore cannot be locked out by an attacker. The
+token comes only from deployment configuration and is redacted from logs. This is explicitly interim.
 
-Login: `GET /login` → `BeginLogin` (discoverable credentials, no username) → `navigator.credentials.get` →
-`POST /login/finish` → verify, update sign count → session cookie → redirect `/`.
-
-The tiny amount of JS for WebAuthn lives in `web/static/auth.js` (self‑hosted, CSP‑compliant).
+The target flow opens the system browser for WebAuthn/passkey authentication and uses an authorisation
+code plus PKCE to issue a rotating, revocable per-device credential to Wails. A same-origin browser client
+uses the equivalent passkey session. That flow will replace bootstrap auth without changing API resources.
 
 ## 6.6 Manual refresh
 
-`POST /refresh` → `Scheduler.TriggerAll()` (skips sources fetched < 30 s ago) → 202; header polls
-`GET /tiles/header` which shows "refreshing (3/12)…" from `StatusStore.InFlight()`.
+`POST /api/v1/refresh` → `Scheduler.TriggerAll()` (skips sources fetched more recently than the configured
+minimum gap) → 202; clients obtain progress from `/api/v1/status` or the next dashboard response.
 
-## 6.7 Startup
+## 6.7 Runtime configuration update
 
-`main`: load config + env → open SQLite, migrate → build adapters from registry → start scheduler
+1. Authenticated client reads `GET /api/v1/config` and receives non-secret effective values, secret
+   presence flags and revision `r`.
+2. Client sends the complete editable document to `PUT /api/v1/config` with `If-Match: r`; partial PATCH
+   is deliberately unsupported.
+3. Handler decodes strictly and the manager validates the complete candidate. Malformed/unknown JSON
+   returns 400, semantic validation returns 422, and a stale revision returns 409.
+4. Under one mutation lock, the manager atomically writes mode-0600 runtime YAML and asks the runtime to
+   build a replacement source generation. It cancels and drains the old generation only after the new
+   one builds successfully. Activation failure restores the exact prior file/state/revision; success
+   commits the manager state before releasing the lock, so concurrent mutations cannot activate out of
+   order. Removed source rows are filtered from subsequent dashboard reads.
+5. Provider secrets use the same transaction semantics on separate revision-protected PUT/DELETE routes.
+   AES-256-GCM ciphertext is written atomically to a second mode-0600 volume file under
+   `ZORGSCOPE_CONFIG_KEY`; reads expose status only.
+6. Decryption or validation failure fails closed and never falls back from an explicit cleared-secret
+   tombstone to an older environment value.
+
+## 6.8 Startup
+
+`main`: load the bootstrap/runtime manager → require `ZORGSCOPE_API_TOKEN` and
+`ZORGSCOPE_CONFIG_KEY` → decrypt managed provider-secret overrides → validate effective config → open
+SQLite and migrate → build adapters from registry → start scheduler
 (immediate first fetch of every source, staggered) → snapshotter catch‑up → HTTP server → on SIGTERM
 graceful shutdown (stop tickers, wait for in‑flight fetches ≤ 10 s, close DB).

@@ -2,11 +2,13 @@ package server
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -135,6 +137,70 @@ func devAuth(mode string, s *Server) func(http.Handler) http.Handler {
 				return
 			}
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
+		})
+	}
+}
+
+const (
+	authFailureLimit  = 10
+	authFailureWindow = time.Minute
+)
+
+// authFailureLimiter bounds invalid bootstrap-token attempts without ever delaying a request that
+// supplied the correct token. A single global window is intentional for this single-user service:
+// it is bounded in memory and cannot be bypassed by rotating source addresses.
+type authFailureLimiter struct {
+	mu          sync.Mutex
+	windowStart time.Time
+	failures    int
+}
+
+func newAuthFailureLimiter() *authFailureLimiter { return &authFailureLimiter{} }
+
+func (l *authFailureLimiter) allow(now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.windowStart.IsZero() || now.Before(l.windowStart) || now.Sub(l.windowStart) >= authFailureWindow {
+		l.windowStart = now
+		l.failures = 0
+	}
+	if l.failures >= authFailureLimit {
+		return false
+	}
+	l.failures++
+	return true
+}
+
+// apiAuth protects the client-neutral JSON API. Token mode is the deployable bootstrap mechanism
+// for native clients; the token is stored in the macOS Keychain. Browser/passkey sessions can be
+// added behind this boundary without changing the API handlers. Dev mode is permitted only for a
+// localhost base URL by config validation.
+func apiAuth(mode, token string, log *slog.Logger, failures *authFailureLimiter) func(http.Handler) http.Handler {
+	expected := sha256.Sum256([]byte(token))
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-store")
+			if mode == "dev" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if mode == "token" {
+				got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+				actual := sha256.Sum256([]byte(got))
+				if ok && got != "" && subtle.ConstantTimeCompare(actual[:], expected[:]) == 1 {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			if failures != nil && !failures.allow(time.Now()) {
+				log.Warn("api authentication rate limited", "component", componentServer, "remote", r.RemoteAddr, "path", r.URL.Path)
+				w.Header().Set("Retry-After", "60")
+				writeAPIError(w, http.StatusTooManyRequests, "authentication_rate_limited", "too many invalid authentication attempts; retry later")
+				return
+			}
+			log.Warn("api authentication failed", "component", componentServer, "remote", r.RemoteAddr, "path", r.URL.Path)
+			w.Header().Set("WWW-Authenticate", `Bearer realm="zorgscope-api"`)
+			writeAPIError(w, http.StatusUnauthorized, "unauthorized", "a valid API bearer token is required")
 		})
 	}
 }

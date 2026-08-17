@@ -1,6 +1,6 @@
 # ADR-0003: Server‑rendered UI with html/template, htmx and hand‑written CSS
 
-* Status: accepted
+* Status: superseded by ADR-0014; implementation retained as a local-development client
 * Date: 2026-08-16
 * Deciders: Gernot Starke
 * Related: QG-2, QG-5, QG-6, C-2, C-7, FR-1.x
@@ -40,3 +40,6 @@ no preprocessing. Sparklines are inline SVG rendered server‑side.
   template checks being absent → we add a template‑execution test for every partial); richer interactions
   (drag & drop tile ordering) would need more JS later.
 * Options 2/3 rejected: extra toolchain (templ generate / Tailwind / Node) for little benefit at this UI complexity.
+
+ADR-0014 later made the authenticated client-neutral JSON API the product boundary and left the Wails
+versus browser client decision open. The M1 templates remain useful locally but do not define the target UI.

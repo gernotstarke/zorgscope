@@ -27,7 +27,7 @@ func (f *fakeRefresher) InFlight() int   { return 0 }
 func newTestServer(t *testing.T, authMode string) (*httptest.Server, *memstore.Store, *fakeRefresher) {
 	t.Helper()
 	y := "server:\n  base_url: http://localhost:8080\ngithub:\n  enabled: true\n  me: gernotstarke\n  repos: [arc42/arc42-template]\n"
-	env := map[string]string{"GITHUB_TOKEN": "t", "AUTH_MODE": authMode, "SESSION_SECRET": strings.Repeat("s", 32)}
+	env := map[string]string{"GITHUB_TOKEN": "t", "AUTH_MODE": authMode, "SESSION_SECRET": strings.Repeat("s", 32), "ZORGSCOPE_API_TOKEN": strings.Repeat("a", 32)}
 	cfg, err := config.Parse(strings.NewReader(y), func(k string) string { return env[k] })
 	if err != nil {
 		t.Fatal(err)

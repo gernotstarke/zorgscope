@@ -109,6 +109,28 @@ func TestRepoFetcherPaginates(t *testing.T) {
 	}
 }
 
+func TestRunningWorkflowIncludesPreviousCompletedConclusion(t *testing.T) {
+	fs, srv := newFake(t)
+	fs.SetRuns("arc42/arc42-template", []githubfake.Run{
+		{ID: 1001, Name: "build", Status: "completed", Conclusion: "success", Branch: "master", CreatedAt: now0.Add(-time.Hour)},
+		{ID: 1002, Name: "build", Status: "in_progress", Branch: "master", CreatedAt: now0.Add(-time.Minute)},
+	})
+	c := NewClient(srv.Client(), srv.URL, "tok", nil)
+	f, _ := NewRepoFetcher(c, "arc42/arc42-template")
+	items, err := f.Fetch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := byExt(items)["runs/1002"]
+	payload, err := domain.DecodePayload[domain.WorkflowRunPayload](run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload.Status != "in_progress" || payload.Conclusion != "" || payload.PreviousConclusion != "success" {
+		t.Fatalf("running workflow payload = %+v", payload)
+	}
+}
+
 func TestRepoFetcherErrors(t *testing.T) {
 	fs, srv := newFake(t)
 	ctx := context.Background()
@@ -154,6 +176,41 @@ func TestTokenExpiryReported(t *testing.T) {
 	_, _ = f.Fetch(context.Background())
 	if sink.calls != calls {
 		t.Fatal("unchanged expiry must not be re-reported on every request")
+	}
+}
+
+func TestTokenWithoutExpiryIsReportedAndClearsAnOldExpiry(t *testing.T) {
+	fs, srv := newFake(t)
+	sink := &sinkRec{}
+	c := NewClient(srv.Client(), srv.URL, "tok", sink)
+	f, _ := NewRepoFetcher(c, "arc42/arc42-template")
+	if _, err := f.Fetch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if sink.name != TokenCredentialName || sink.exp != nil || sink.calls != 1 {
+		t.Fatalf("header-less token report = %+v", sink)
+	}
+	if _, err := f.Fetch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if sink.calls != 1 {
+		t.Fatal("unchanged no-expiry state must not be re-reported")
+	}
+
+	exp := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	fs.SetTokenExpiry(exp)
+	if _, err := f.Fetch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if sink.exp == nil || !sink.exp.Equal(exp) {
+		t.Fatalf("expiry transition = %+v", sink)
+	}
+	fs.Reset() // reset clears the fake's expiry header while retaining its seeded repository
+	if _, err := f.Fetch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if sink.exp != nil || sink.calls != 3 {
+		t.Fatalf("rotation to header-less token did not clear expiry: %+v", sink)
 	}
 }
 

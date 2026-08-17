@@ -8,5 +8,8 @@
 | [plans/](plans/) | Implementation plans — self‑contained tasks for (cheap) agents | — |
 | [guides/](guides/) | Operational how‑tos | — |
 
+Deployment entry point: [fly.io backend deployment](guides/fly-deployment.md).
+Client integration entry point: [versioned JSON API](guides/api.md).
+
 Conventions: English, Markdown, one topic per file, stable identifiers (`FR-…`, `QS-…`, `C-…`, `ADR-…`)
 so that plans, tests and commits can reference them.

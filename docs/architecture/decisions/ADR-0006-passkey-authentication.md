@@ -7,7 +7,7 @@
 
 ## Context and problem statement
 
-The hosted dashboard shows private data (Todoist, private repo). The owner asked for password‑level
+The hosted dashboard shows private repository and provider data. The owner asked for password-level
 protection at least, ideally 2FA or passkeys, with minimal friction on a page opened dozens of times a day.
 
 ## Considered options
@@ -19,15 +19,14 @@ protection at least, ideally 2FA or passkeys, with minimal friction on a page op
 
 ## Decision outcome
 
-**Chosen option: 1** using `github.com/go-webauthn/webauthn`. Enrolment: `GET /enroll?token=<ENROLL_TOKEN>`
-(constant‑time compare, rate limited, 404 on mismatch) or from an authenticated session (add device).
-Credentials in SQLite; sessions 90 d sliding, revocable on `/account`. RP ID = host of `server.base_url`.
-Local development uses `AUTH_MODE=dev` (only allowed for `http://localhost*`). Recovery: rotate `ENROLL_TOKEN`
-plus `make fly ARGS="ssh console -C '/zorgscope reset-credentials'"` (documented).
+**Chosen target: passkey-backed device authentication.** ADR-0014 introduced a bootstrap bearer token so
+the backend is deployable before this target lands. The final design must support a Wails system-browser
+authorisation flow with PKCE plus a same-origin browser session; concrete enrolment/account routes,
+credential storage and lifetimes remain unimplemented and must be decided with FR-9.2/9.3. Local
+development uses `AUTH_MODE=dev` only with a localhost base URL.
 
 ### Consequences
 
-* Good: phishing‑resistant, no password to store/leak, effectively MFA (device + biometric), one touch to log
-  in, syncs across Apple devices via iCloud Keychain, works in Arc/Vivaldi/Firefox/Safari.
-* Bad: a little JS is unavoidable (`navigator.credentials`); custom‑domain change forces re‑enrolment;
-  requires HTTPS (fly provides). Options 2–4 rejected: weaker or heavier, or add an external dependency.
+* Good: phishing-resistant, no reusable password, and both native and browser clients can share one trust model.
+* Bad: device authorisation and recovery require a separate design; a custom-domain change forces
+  re-enrolment; HTTPS is mandatory. Bootstrap bearer auth remains until this ADR is implemented.

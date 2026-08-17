@@ -368,7 +368,9 @@ func (s *Server) runs(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"message":"Not Found"}`))
 		return
 	}
-	sort.SliceStable(runs, func(i, j int) bool { return runs[i].ID < runs[j].ID })
+	// GitHub returns workflow runs newest first; monotonically increasing run IDs make this fake's
+	// ordering deterministic without relying on identical test timestamps.
+	sort.SliceStable(runs, func(i, j int) bool { return runs[i].ID > runs[j].ID })
 	branch := r.URL.Query().Get("branch")
 	list := make([]any, 0)
 	for _, run := range runs {

@@ -18,10 +18,12 @@ type Source struct {
 
 // Deps is what builders get to construct adapters.
 type Deps struct {
-	Cfg  *config.Config
-	HTTP *http.Client
-	Sink ports.CredentialSink
-	Log  *slog.Logger
+	Cfg         *config.Config
+	HTTP        *http.Client
+	Clock       ports.Clock
+	Sink        ports.CredentialSink
+	Credentials func() []Credential
+	Log         *slog.Logger
 }
 
 // Builder constructs the sources of one kind from config; it returns nothing when the kind is disabled.

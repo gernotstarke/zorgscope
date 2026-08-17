@@ -30,6 +30,7 @@ type Client struct {
 
 	mu           sync.Mutex
 	lastReported string
+	reported     bool
 }
 
 // NewClient creates a client. baseURL is "https://api.github.com" in production, the fake in tests.
@@ -123,14 +124,16 @@ func (c *Client) noteExpiry(h http.Header) {
 		return
 	}
 	v := h.Get(expiryHeader)
-	if v == "" {
-		return
-	}
 	c.mu.Lock()
-	changed := v != c.lastReported
+	changed := !c.reported || v != c.lastReported
 	c.lastReported = v
+	c.reported = true
 	c.mu.Unlock()
 	if !changed {
+		return
+	}
+	if v == "" {
+		c.sink.ReportCredential(TokenCredentialName, nil, "zorgscope")
 		return
 	}
 	for _, layout := range []string{"2006-01-02 15:04:05 MST", "2006-01-02 15:04:05 -0700", time.RFC3339} {

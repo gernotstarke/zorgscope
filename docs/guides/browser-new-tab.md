@@ -1,7 +1,8 @@
-# Using zorgscope as your new‑tab page
+# Using the legacy page locally
 
-zorgscope is a normal URL (`https://zorgscope.fly.dev`, or `http://localhost:8080` locally). No extension is
-required for Vivaldi, Firefox and Safari; Arc has no classic new‑tab page, so use a pinned tab.
+The current server-rendered page is a local-development aid at `http://localhost:8080`; it is not the
+production browser client. Production starts in API bearer-token mode, where HTML routes intentionally
+return 401. Revisit the setup below after a browser client and passkey/session flow have been implemented.
 
 | Browser | How |
 |---------|-----|
@@ -11,5 +12,4 @@ required for Vivaldi, Firefox and Safari; Arc has no classic new‑tab page, so 
 | **Safari** | Settings → General → *New tabs open with: Homepage*, *Homepage:* the URL. |
 | **Chromium/Chrome/Edge/Brave** | Settings → On startup → *Open a specific page* for launch; new‑tab redirect only via extension. |
 
-Tips: after the first passkey login the session cookie lasts 90 days, so a new tab loads instantly without
-prompts. The browser tab title shows the number of attention items, e.g. `(3) zorgscope`.
+Locally, the browser tab title shows the number of attention items, e.g. `(3) zorgscope`.

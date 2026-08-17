@@ -1,0 +1,15 @@
+.git
+.github
+.env
+*.env
+!.env.example
+bin
+coverage
+data
+*.db
+*.db-shm
+*.db-wal
+test/e2e/node_modules
+test/e2e/playwright-report
+test/e2e/test-results
+docs/plans/*.png

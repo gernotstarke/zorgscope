@@ -118,3 +118,60 @@ func TestHumanAgeAndSourceLabel(t *testing.T) {
 		t.Fatalf("fallback label %q", l)
 	}
 }
+
+func TestReloadedDashboardHidesRowsFromRemovedSources(t *testing.T) {
+	ctx := context.Background()
+	st := memstore.New()
+	clk := clock.NewFake(t0)
+	cfg := testConfig(t)
+	removed := "github:former/removed"
+	item := gh("former/removed", "issues/1", domain.KindIssue, "alice", t0.Add(-time.Hour), "", time.Time{})
+	if err := st.ReplaceItems(ctx, removed, []domain.Item{item}, t0); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordStatus(ctx, domain.FetchStatus{SourceID: removed, Kind: "github-repo", LastSuccess: t0}); err != nil {
+		t.Fatal(err)
+	}
+
+	dashboard := NewDashboardForSources(st, clk, cfg, []string{"github:arc42/arc42-template"})
+	view, err := dashboard.Build(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Attention.Total != 0 || len(view.Header.Sources) != 0 {
+		t.Fatalf("removed source leaked into dashboard: attention=%+v sources=%+v", view.Attention, view.Header.Sources)
+	}
+}
+
+func TestDashboardMapsHealthCertificateMetadata(t *testing.T) {
+	ctx := context.Background()
+	st := memstore.New()
+	clk := clock.NewFake(t0)
+	cfg := testConfig(t)
+	expires := t0.Add(10 * 24 * time.Hour)
+	checked := t0.Add(-time.Minute)
+	valid := false
+	item := domain.Item{
+		ID: domain.ItemID{SourceID: "watch:url:app", ExternalID: "status"}, Kind: domain.KindHealthCheck,
+		Title: "app", URL: "https://app.example", CreatedAt: checked, UpdatedAt: checked,
+		Payload: domain.MustPayload(domain.HealthCheckPayload{
+			OK: false, ConsecutiveFailures: 1, CertExpires: &expires, CertIssuer: "CN=Test Issuer",
+			HostnameValid: &valid, CheckedAt: checked,
+		}),
+	}
+	if err := st.ReplaceItems(ctx, item.ID.SourceID, []domain.Item{item}, checked); err != nil {
+		t.Fatal(err)
+	}
+	view, err := NewDashboard(st, clk, cfg).Build(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Watch) != 1 {
+		t.Fatalf("watch = %+v", view.Watch)
+	}
+	got := view.Watch[0]
+	if got.Issuer != "CN=Test Issuer" || got.HostnameValid == nil || *got.HostnameValid ||
+		got.CheckedAt != checked.Format(time.RFC3339) || got.ExpiresAt != expires.Format(time.RFC3339) {
+		t.Fatalf("watch metadata = %+v", got)
+	}
+}

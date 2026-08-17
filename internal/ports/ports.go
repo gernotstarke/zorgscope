@@ -14,8 +14,6 @@ const (
 	KindGitHubRepo       = "github-repo"
 	KindGitHubMentions   = "github-mentions"
 	KindPlausibleSite    = "plausible-site"
-	KindTodoist          = "todoist"
-	KindFeed             = "feed"
 	KindWatchCredentials = "watch-credentials"
 	KindWatchURL         = "watch-url"
 )

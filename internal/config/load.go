@@ -27,6 +27,23 @@ func Load(path string, getenv func(string) string) (*Config, error) {
 
 // Parse decodes YAML from r on top of Default(), applies env, validates.
 func Parse(r io.Reader, getenv func(string) string) (*Config, error) {
+	cfg, err := Decode(r)
+	if err != nil {
+		return nil, err
+	}
+	if err := applyEnv(cfg, getenv); err != nil {
+		return nil, err
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// Decode decodes only the non-secret YAML document on top of Default. Environment overrides and
+// validation are deliberately left to the caller so the persistent config store can merge its
+// encrypted, API-managed secrets before validating enabled sources.
+func Decode(r io.Reader) (*Config, error) {
 	cfg := Default()
 	dec := yaml.NewDecoder(r)
 	dec.KnownFields(true)
@@ -40,14 +57,12 @@ func Parse(r io.Reader, getenv func(string) string) (*Config, error) {
 		}
 		return nil, &ValidationError{Key: yamlErrorKey(err), Msg: err.Error()}
 	}
-	if err := applyEnv(&cfg, getenv); err != nil {
-		return nil, err
-	}
-	if err := cfg.Validate(); err != nil {
-		return nil, err
-	}
 	return &cfg, nil
 }
+
+// ApplyEnv overlays deployment and bootstrap environment values. It is exported for the
+// persistent configuration store; normal callers should use Parse or Load.
+func ApplyEnv(cfg *Config, getenv func(string) string) error { return applyEnv(cfg, getenv) }
 
 func applyEnv(cfg *Config, getenv func(string) string) error {
 	set := func(dst *string, key string) {
@@ -57,16 +72,16 @@ func applyEnv(cfg *Config, getenv func(string) string) error {
 	}
 	set(&cfg.Secrets.GitHubToken, "GITHUB_TOKEN")
 	set(&cfg.Secrets.PlausibleAPIKey, "PLAUSIBLE_API_KEY")
-	set(&cfg.Secrets.TodoistToken, "TODOIST_TOKEN")
 	set(&cfg.Secrets.SessionSecret, "SESSION_SECRET")
 	set(&cfg.Secrets.EnrollToken, "ENROLL_TOKEN")
+	set(&cfg.Secrets.APIToken, "ZORGSCOPE_API_TOKEN")
+	set(&cfg.Secrets.ConfigKey, "ZORGSCOPE_CONFIG_KEY")
 	set(&cfg.AuthMode, "AUTH_MODE")
 	set(&cfg.LogLevel, "LOG_LEVEL")
 	set(&cfg.DataPath, "ZORGSCOPE_DATA")
 	set(&cfg.Server.BaseURL, "ZORGSCOPE_BASE_URL")
 	set(&cfg.GitHub.BaseURL, "GITHUB_BASE_URL")
 	set(&cfg.Plausible.BaseURL, "PLAUSIBLE_BASE_URL")
-	set(&cfg.Todoist.BaseURL, "TODOIST_BASE_URL")
 	if p := getenv("PORT"); p != "" {
 		n, err := strconv.Atoi(p)
 		if err != nil {

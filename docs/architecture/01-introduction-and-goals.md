@@ -1,8 +1,9 @@
 # 1. Introduction and goals
 
-zorgscope is a single‑user web dashboard that aggregates GitHub issues/PRs/CI status, Plausible statistics,
-Todoist tasks and news feeds into tiles, highlighting what needs attention. It is the browser new‑tab page of
-its owner.
+zorgscope is a single-user status system. An always-on fly.io backend aggregates GitHub
+issues/PRs/mentions/Actions status, Plausible statistics, credential/API-key expiry and TLS-certificate
+expiry, highlighting what needs attention. A future Wails macOS client, same-origin browser client, or
+both consume its client-neutral JSON API.
 
 * Requirements overview: [docs/requirements](../requirements/README.md), functional epics E‑1 … E‑11.
 * Quality goals (ordered): QG‑1 reliability of detection, QG‑2 perceived performance, QG‑3 security & low
@@ -15,8 +16,8 @@ its owner.
 | Goal | Consequence |
 |------|-------------|
 | QG‑1 | Detection logic is one pure function set in `internal/domain`, tested exhaustively; every fetch is isolated per source with backoff; failures are first‑class data (`FetchStatus`) shown in the UI. |
-| QG‑2 | Read path never calls upstream: page and tiles render from SQLite cache; background scheduler pre‑fetches; tiny, self‑hosted assets, ETag on fragments. |
-| QG‑3 | Secrets only via env, redacting logger, strict CSP, passkeys, distroless non‑root image, single fly machine, CI deploy. |
-| QG‑4 | Source kinds behind one port (`SourceFetcher`), registry maps YAML sections to adapters; tiles are templates keyed by kind. |
-| QG‑5 | Server‑rendered HTML + progressive enhancement via htmx; responsive CSS grid; no browser‑specific APIs except WebAuthn. |
-| QG‑6 | Design tokens (CSS custom properties), explicit empty/error/stale states, badges with text. |
+| QG‑2 | Read path never calls upstream: `/api/v1/dashboard` is assembled from SQLite; background polling pre-fetches; ETag avoids unchanged transfers. |
+| QG‑3 | Runtime secrets are write-only and encrypted at rest under a Fly-provided master key; deployment trust-root values stay in environment/Fly secrets; redacting logger, TLS, non-root image and one fly machine. |
+| QG‑4 | Source kinds sit behind `SourceFetcher`; runtime instances and all adjustable behaviour are revisioned through `/api/v1/config`; visual clients share one contract. |
+| QG‑5 | Versioned JSON DTOs and contract tests isolate the core from Wails/browser presentation choices. |
+| QG‑6 | API provides explicit empty/error/stale states; each visual client owns a polished, accessible design system. |
