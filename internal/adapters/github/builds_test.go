@@ -2,6 +2,7 @@ package github_test
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -123,5 +124,42 @@ func TestBuildsFetchReportsFailureButKeepsGoodRepos(t *testing.T) {
 	}
 	if len(res.Builds) == 0 {
 		t.Error("builds from the healthy repository must still be returned (QS-1.4)")
+	}
+}
+
+// Review fix round 1, Finding 1: a non-empty workflow_runs array whose entries have no usable
+// run_started_at must not be indistinguishable from AC3's legitimate empty-array case. It must
+// surface as an error naming the repository, not read as a silent, healthy-looking empty tile.
+// internal/fakesources' shared fixtures cannot produce this shape (Ruling in task-6: don't
+// reshape them), so this test drives a small local handler instead.
+func TestUnparseableRunTimestampsIsAnErrorNotAnEmptyTile(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"total_count": 2,
+			"workflow_runs": [
+				{"id": 1, "name": "CI", "status": "completed", "conclusion": "success",
+				 "html_url": "https://example.invalid/1", "run_started_at": "", "updated_at": ""},
+				{"id": 2, "name": "CI", "status": "in_progress", "conclusion": null,
+				 "html_url": "https://example.invalid/2", "run_started_at": "not-a-timestamp", "updated_at": ""}
+			]
+		}`))
+	}))
+	defer srv.Close()
+
+	f := github.NewBuildFetcher(github.Config{
+		Token: "x", RESTBaseURL: srv.URL, Repos: []string{"org/unparseable"},
+	}, srv.Client())
+
+	res, err := f.Fetch(context.Background())
+
+	if err == nil {
+		t.Fatal("want an error when no run has a usable run_started_at")
+	}
+	if !strings.Contains(err.Error(), "org/unparseable") {
+		t.Errorf("error %q must name the repository", err)
+	}
+	if len(res.Builds) != 0 {
+		t.Errorf("len(builds) = %d, want 0 — an unreadable response must not silently yield a build", len(res.Builds))
 	}
 }

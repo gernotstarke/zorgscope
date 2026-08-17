@@ -96,7 +96,10 @@ type runsResponse struct {
 
 // fetchLatestBuild fetches owner/name's workflow runs and reduces them to at most one
 // domain.Build per FR-2.3 AC2/AC3. It returns (nil, nil) when the repository has no runs at all
-// (AC3: not a failure).
+// (AC3: not a failure) — but returns an error, not (nil, nil), when the response has runs that
+// could not be interpreted (e.g. every run_started_at fails to parse): only a genuinely empty
+// workflow_runs array is the legitimate "no CI configured" case; a non-empty array we could not
+// read is a failure, symmetric with the non-200 handling below.
 //
 // The branch query parameter is deliberately omitted (only per_page=10 is sent). The brief's
 // {branch}/{per_page} shape assumes a repository's default branch is known, but nothing in this
@@ -141,8 +144,12 @@ func (f *BuildFetcher) fetchLatestBuild(ctx context.Context, owner, name string)
 
 	newest, newestCompleted := reduceRuns(body.WorkflowRuns)
 	if newest == nil {
-		// Every run failed to parse a timestamp; treat as "nothing usable" rather than guessing.
-		return nil, nil
+		// workflow_runs was non-empty (checked above) but not one entry had a run_started_at
+		// that parsed as RFC 3339. This is not AC3's legitimate "no CI configured" case — the
+		// upstream sent runs, just in a shape we could not read — so, symmetrically with the
+		// non-200 check above, it must surface as an error rather than silently reading as an
+		// empty, healthy-looking tile.
+		return nil, fmt.Errorf("%d workflow run(s) returned but none had a usable run_started_at", len(body.WorkflowRuns))
 	}
 
 	b := &domain.Build{
@@ -156,6 +163,13 @@ func (f *BuildFetcher) fetchLatestBuild(ctx context.Context, owner, name string)
 		if newestCompleted.Conclusion != nil {
 			b.Conclusion = *newestCompleted.Conclusion
 		}
+		// newestCompleted was selected because its run_started_at parsed (reduceRuns requires
+		// that); UpdatedAt is a second, independent timestamp on the same run and can fail to
+		// parse on its own. That is deliberately not promoted to a repository-level error the
+		// way an all-runs-unparseable response is above: the run itself was readable and its
+		// Conclusion is FR-2.3 AC2's substantive field, so a malformed FinishedAt only costs a
+		// display detail — it doesn't call the whole build result into question. FinishedAt is
+		// left zero in that case rather than fabricated.
 		if t, err := time.Parse(time.RFC3339, newestCompleted.UpdatedAt); err == nil {
 			b.FinishedAt = t.UTC()
 		}

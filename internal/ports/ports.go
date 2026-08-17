@@ -48,7 +48,9 @@ type Store interface {
 	// for items that already existed. It returns the number of items stored for source —
 	// len(items) — not the number that are new.
 	ReplaceItems(ctx context.Context, source string, items []domain.Item, now time.Time) (int, error)
-	// UpsertBuilds inserts or updates builds, keyed by repository and workflow.
+	// UpsertBuilds inserts or updates builds, keyed by repository alone: one row per repository.
+	// A repository running several workflows is represented by a single row (the one build this
+	// package's fetchers select per FR-2.3 AC2), not one row per workflow.
 	UpsertBuilds(ctx context.Context, builds []domain.Build, now time.Time) error
 	// UpsertMetrics inserts or updates metrics, keyed by site.
 	UpsertMetrics(ctx context.Context, metrics []domain.Metric, now time.Time) error
