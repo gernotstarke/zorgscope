@@ -103,6 +103,38 @@ func TestFakeFetcherFetchRespectsContextCancellationWhileBlocked(t *testing.T) {
 	}
 }
 
+func TestFakeFetcherFetchRefusesAlreadyCancelledContextWithoutBlock(t *testing.T) {
+	f := &ports.FakeFetcher{Result: ports.FetchResult{Items: []domain.Item{{ExternalID: "1"}}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	type result struct {
+		res ports.FetchResult
+		err error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		res, err := f.Fetch(ctx)
+		resultCh <- result{res, err}
+	}()
+
+	select {
+	case r := <-resultCh:
+		if !errors.Is(r.err, context.Canceled) {
+			t.Fatalf("Fetch() error = %v, want %v", r.err, context.Canceled)
+		}
+		if len(r.res.Items) != 0 || len(r.res.Builds) != 0 || len(r.res.Metrics) != 0 {
+			t.Errorf("Fetch() result = %+v, want zero value", r.res)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Fetch() did not return promptly for an already-cancelled context")
+	}
+
+	if f.CallCount() != 0 {
+		t.Errorf("CallCount() = %d, want 0: a rejected fetch must not count as a call", f.CallCount())
+	}
+}
+
 func TestFixedClockAdvance(t *testing.T) {
 	start := time.Date(2026, 8, 17, 10, 0, 0, 0, time.UTC)
 	c := &ports.FixedClock{T: start}

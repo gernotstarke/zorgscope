@@ -38,7 +38,8 @@ type Store interface {
 	Migrate(ctx context.Context) error
 
 	// ReplaceItems replaces the full set of items for source with items, preserving FirstSeenAt
-	// for items that already existed. It returns the number of items that are new as of now.
+	// for items that already existed. It returns the number of items stored for source —
+	// len(items) — not the number that are new.
 	ReplaceItems(ctx context.Context, source string, items []domain.Item, now time.Time) (int, error)
 	// UpsertBuilds inserts or updates builds, keyed by repository and workflow.
 	UpsertBuilds(ctx context.Context, builds []domain.Build, now time.Time) error

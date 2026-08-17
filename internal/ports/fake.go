@@ -35,9 +35,17 @@ type FakeFetcher struct {
 // Name returns the fetcher's configured source name.
 func (f *FakeFetcher) Name() string { return f.SourceName }
 
-// Fetch increments Calls, then waits on Block if it is non-nil, returning ctx.Err() promptly if
-// the context is cancelled while waiting. Otherwise it returns the configured Result and Err.
+// Fetch first checks ctx.Err(): an already-cancelled context is refused immediately with
+// FetchResult{}, ctx.Err(), and Calls is not incremented, matching a real fetcher (every net/http
+// call fails immediately on a cancelled context) and what Task 15 expects for a request rejected
+// before fetching. Otherwise it increments Calls, then waits on Block if it is non-nil, returning
+// ctx.Err() promptly if the context is cancelled while waiting. Otherwise it returns the
+// configured Result and Err.
 func (f *FakeFetcher) Fetch(ctx context.Context) (FetchResult, error) {
+	if err := ctx.Err(); err != nil {
+		return FetchResult{}, err
+	}
+
 	f.mu.Lock()
 	f.Calls++
 	f.mu.Unlock()
