@@ -21,6 +21,15 @@ import (
 // defaultGraphQLURL is used when Config.BaseURL is empty.
 const defaultGraphQLURL = "https://api.github.com/graphql"
 
+// maxPages bounds how many pages a single connection's pagination loop will follow. 100 pages at
+// 100 nodes per page is 10,000 items — far beyond anything real — so this is a backstop against
+// a misbehaving upstream, not a limit anything legitimate should ever hit. Without it, an
+// upstream that returns hasNextPage: true forever (with a stuck or empty endCursor) would loop
+// without bound: on a scale-to-zero Fly Machine that holds the machine awake and burns the
+// refresh budget (QS-2.5) for as long as the process runs, since nothing today imposes a
+// deadline on Fetch (Task 15 adds one later).
+const maxPages = 100
+
 // Config configures access to GitHub for every fetcher in this package. Task 8 adds a build
 // fetcher that reuses this same Config, so it stays free of anything issue-specific.
 type Config struct {
@@ -105,27 +114,16 @@ type ghConnection struct {
 // separate query (pullRequestsQuery) with their own cursor variable: on GitHub, issues and pull
 // requests paginate independently, so one query sharing a single cursor between the two
 // connections would be wrong, not just inconvenient.
-//
-// PullRequests is declared here (with a fixed, tiny first: 1 and no after variable — it never
-// paginates) purely so the struct has somewhere to decode the sibling connection's data into.
-// The fake's fixed response shape always carries both "issues" and "pullRequests" keys,
-// including nested pageInfo, regardless of what the query text asked for (it dispatches on
-// variables, not query text), and the underlying graphql decoder rejects a JSON key with no
-// matching struct field. Its data is never read; fetchIssues only ever looks at
-// Repository.Issues.
 type issuesQuery struct {
 	Repository struct {
-		Issues       ghConnection `graphql:"issues(states: OPEN, first: 100, after: $after, orderBy: {field: CREATED_AT, direction: ASC})"`
-		PullRequests ghConnection `graphql:"pullRequests(states: OPEN, first: 1)"`
+		Issues ghConnection `graphql:"issues(states: OPEN, first: 100, after: $after, orderBy: {field: CREATED_AT, direction: ASC})"`
 	} `graphql:"repository(owner: $owner, name: $name)"`
 }
 
-// pullRequestsQuery fetches one page of a repository's open pull requests. See issuesQuery for
-// why it also declares Issues (unused, unpaginated).
+// pullRequestsQuery fetches one page of a repository's open pull requests. See issuesQuery.
 type pullRequestsQuery struct {
 	Repository struct {
 		PullRequests ghConnection `graphql:"pullRequests(states: OPEN, first: 100, after: $after, orderBy: {field: CREATED_AT, direction: ASC})"`
-		Issues       ghConnection `graphql:"issues(states: OPEN, first: 1)"`
 	} `graphql:"repository(owner: $owner, name: $name)"`
 }
 
@@ -147,12 +145,17 @@ type ghPageInfo struct {
 }
 
 // fetchIssues fetches every open issue for owner/name, following pageInfo.hasNextPage with the
-// after cursor until exhausted.
+// after cursor until exhausted, bounded by nextAfter's forward-progress check and maxPages.
 func (f *IssueFetcher) fetchIssues(ctx context.Context, owner, name string) ([]domain.Item, error) {
 	var items []domain.Item
 	var after *githubv4.String
+	repo := owner + "/" + name
 
-	for {
+	for page := 0; ; page++ {
+		if page >= maxPages {
+			return items, fmt.Errorf("github: %s: issues pagination did not stop after %d pages", repo, maxPages)
+		}
+
 		var q issuesQuery
 		vars := map[string]interface{}{
 			"owner": githubv4.String(owner),
@@ -167,21 +170,30 @@ func (f *IssueFetcher) fetchIssues(ctx context.Context, owner, name string) ([]d
 			items = append(items, toItem(owner, name, domain.KindIssue, n))
 		}
 
-		if !bool(q.Repository.Issues.PageInfo.HasNextPage) {
+		next, done, err := nextAfter(after, q.Repository.Issues.PageInfo, repo)
+		if err != nil {
+			return items, err
+		}
+		if done {
 			return items, nil
 		}
-		cursor := q.Repository.Issues.PageInfo.EndCursor
-		after = &cursor
+		after = next
 	}
 }
 
 // fetchPullRequests fetches every open pull request for owner/name, following
-// pageInfo.hasNextPage with the after cursor until exhausted.
+// pageInfo.hasNextPage with the after cursor until exhausted, bounded by nextAfter's
+// forward-progress check and maxPages.
 func (f *IssueFetcher) fetchPullRequests(ctx context.Context, owner, name string) ([]domain.Item, error) {
 	var items []domain.Item
 	var after *githubv4.String
+	repo := owner + "/" + name
 
-	for {
+	for page := 0; ; page++ {
+		if page >= maxPages {
+			return items, fmt.Errorf("github: %s: pull request pagination did not stop after %d pages", repo, maxPages)
+		}
+
 		var q pullRequestsQuery
 		vars := map[string]interface{}{
 			"owner": githubv4.String(owner),
@@ -196,12 +208,33 @@ func (f *IssueFetcher) fetchPullRequests(ctx context.Context, owner, name string
 			items = append(items, toItem(owner, name, domain.KindPR, n))
 		}
 
-		if !bool(q.Repository.PullRequests.PageInfo.HasNextPage) {
+		next, done, err := nextAfter(after, q.Repository.PullRequests.PageInfo, repo)
+		if err != nil {
+			return items, err
+		}
+		if done {
 			return items, nil
 		}
-		cursor := q.Repository.PullRequests.PageInfo.EndCursor
-		after = &cursor
+		after = next
 	}
+}
+
+// nextAfter computes the cursor for the next page from pageInfo, given the cursor prev that was
+// just sent to fetch the page pageInfo came from. It reports done = true when there is no next
+// page. When the upstream claims another page exists but the cursor has not actually moved —
+// empty, or identical to what was just sent — it returns an error naming repo instead of
+// looping: an unmoving cursor with hasNextPage true is the one shape of misbehaviour that would
+// otherwise loop forever, since nothing today imposes a deadline on Fetch (QS-2.5; Task 15 adds
+// one later).
+func nextAfter(prev *githubv4.String, pageInfo ghPageInfo, repo string) (after *githubv4.String, done bool, err error) {
+	if !bool(pageInfo.HasNextPage) {
+		return nil, true, nil
+	}
+	cursor := pageInfo.EndCursor
+	if cursor == "" || (prev != nil && cursor == *prev) {
+		return nil, false, fmt.Errorf("github: %s: pagination cursor did not advance (hasNextPage true, endCursor %q)", repo, string(cursor))
+	}
+	return &cursor, false, nil
 }
 
 // externalIDPrefix returns the ExternalID prefix for kind: "issue" or "pr". Issue and

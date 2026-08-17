@@ -25,8 +25,15 @@ type FetchResult struct {
 type SourceFetcher interface {
 	// Name identifies the source, e.g. for logging and for recording source health.
 	Name() string
-	// Fetch retrieves the source's current state. It returns an error rather than a partial
-	// FetchResult on failure.
+	// Fetch retrieves the source's current state. On a partial failure (e.g. one repository of
+	// several erroring) it may return the items it did successfully fetch together with a
+	// non-nil error, rather than discarding them. A caller must not store such a partial
+	// result: Store.ReplaceItems deletes rows absent from the incoming set, so storing a
+	// partial GitHub result would delete every item belonging to the repository that failed —
+	// and when that repository recovered, its items would come back with a fresh
+	// FirstSeenAt and be shown as NEW. A transient upstream error would then manufacture a
+	// screen of false new items, exactly what the first-seen invariant exists to prevent. A
+	// non-nil error therefore means: do not call ReplaceItems with this result.
 	Fetch(ctx context.Context) (FetchResult, error)
 }
 
