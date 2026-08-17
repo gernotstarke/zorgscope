@@ -58,10 +58,12 @@
 ## Task 1: Repository skeleton, Docker and make infrastructure
 
 **Files:**
+
 - Create: `go.mod`, `cmd/zorgscope/main.go`, `cmd/zorgscope/main_test.go`, `deploy/Dockerfile`, `deploy/compose.yml`, `deploy/fly.toml`, `deploy/env.example`, `.dockerignore`, `.golangci.yml`, `config/zorgscope.yaml`
 - Modify: `Makefile`, `README.md`, `.gitignore`
 
 **Interfaces:**
+
 - Consumes: nothing
 - Produces: a binary that serves `GET /healthz` returning `200` and the body `ok`; `make backend`, `make test`, `make lint`, `make check`, `make db-shell` targets
 
@@ -102,7 +104,7 @@ Expected: FAIL — `undefined: newMux` (and first `go.mod` errors until Step 3 c
 
 `go.mod`:
 
-```
+```text
 module github.com/gernotstarke/zorgscope
 
 go 1.26
@@ -399,10 +401,12 @@ git commit -m "feat(infra): repository skeleton, Docker, make and Fly configurat
 ## Task 2: Configuration loading
 
 **Files:**
+
 - Create: `internal/config/config.go`, `internal/config/config_test.go`, `internal/config/testdata/valid.yaml`, `internal/config/testdata/bad-interval.yaml`
 - Modify: `go.mod` (add `gopkg.in/yaml.v3`)
 
 **Interfaces:**
+
 - Consumes: `config/zorgscope.yaml` from Task 1
 - Produces:
 
@@ -585,9 +589,11 @@ git commit -m "feat(config): YAML plus environment secrets with field-naming val
 ## Task 3: Domain model and the new-detection rule
 
 **Files:**
+
 - Create: `internal/domain/item.go`, `internal/domain/item_test.go`, `internal/domain/build.go`, `internal/domain/metric.go`, `internal/domain/metric_test.go`, `internal/domain/source.go`
 
 **Interfaces:**
+
 - Consumes: nothing
 - Produces:
 
@@ -822,9 +828,11 @@ git commit -m "feat(domain): items, new-detection, sorting and metric change (FR
 ## Task 4: Ports
 
 **Files:**
+
 - Create: `internal/ports/ports.go`, `internal/ports/fake.go`
 
 **Interfaces:**
+
 - Consumes: `internal/domain`
 - Produces:
 
@@ -928,10 +936,12 @@ git commit -m "feat(ports): SourceFetcher, Store, Notifier and Clock (QS-5.1)"
 This is the task that makes `NEW` correct, so it gets the most test weight.
 
 **Files:**
+
 - Create: `internal/adapters/libsql/store.go`, `internal/adapters/libsql/store_test.go`, `internal/adapters/libsql/migrate.go`, `internal/adapters/libsql/migrations/0001_initial.sql`
 - Modify: `go.mod` (add `github.com/tursodatabase/libsql-client-go`)
 
 **Interfaces:**
+
 - Consumes: `ports.Store` from Task 4, `domain` from Task 3
 - Produces: `func Open(url, authToken string) (*Store, error)`, `*Store` implementing `ports.Store`
 
@@ -1261,9 +1271,11 @@ git commit -m "feat(store): libSQL store with the first-seen invariant and refre
 Written before the adapters so that each adapter can be developed against it (FR‑9.2).
 
 **Files:**
+
 - Create: `cmd/fakesources/main.go`, `cmd/fakesources/main_test.go`, `cmd/fakesources/testdata/github-issues.json`, `cmd/fakesources/testdata/github-runs.json`, `cmd/fakesources/testdata/plausible-aggregate.json`, `cmd/fakesources/testdata/todoist-tasks.json`
 
 **Interfaces:**
+
 - Consumes: nothing
 - Produces: an HTTP server on `:9090` serving `POST /graphql`, `GET /repos/{owner}/{repo}/actions/runs`, `GET /api/v1/stats/aggregate`, `GET /rest/v2/tasks`, plus the control routes `POST /_control/add-issue` and `POST /_control/fail?source=github&status=500`
 
@@ -1349,10 +1361,12 @@ git commit -m "feat(fakes): fixture-backed GitHub, Plausible and Todoist stand-i
 ## Task 7: GitHub issues and pull requests adapter
 
 **Files:**
+
 - Create: `internal/adapters/github/issues.go`, `internal/adapters/github/issues_test.go`
 - Modify: `go.mod` (add `github.com/shurcooL/githubv4`, `golang.org/x/oauth2`)
 
 **Interfaces:**
+
 - Consumes: `ports.SourceFetcher`, `ports.FetchResult`, `domain.Item`, `cmd/fakesources`
 - Produces:
 
@@ -1478,9 +1492,11 @@ git commit -m "feat(github): open issues and PRs over GraphQL with pagination (F
 ## Task 8: GitHub Actions build status
 
 **Files:**
+
 - Create: `internal/adapters/github/builds.go`, `internal/adapters/github/builds_test.go`
 
 **Interfaces:**
+
 - Consumes: Task 7's `Config`
 - Produces: `func NewBuildFetcher(cfg Config, hc *http.Client) *BuildFetcher` with `Name() = "github-builds"` and a `Fetch` returning `FetchResult{Builds: …}`
 
@@ -1536,9 +1552,11 @@ git commit -m "feat(github): Actions build status per repository (FR-2.3)"
 ## Task 9: Plausible adapter
 
 **Files:**
+
 - Create: `internal/adapters/plausible/plausible.go`, `internal/adapters/plausible/plausible_test.go`
 
 **Interfaces:**
+
 - Produces: `func New(cfg Config, hc *http.Client) *Fetcher` with `Config{APIKey, BaseURL string; Sites []string}`, `Name() = "plausible"`, `Fetch` returning `FetchResult{Metrics: …}`
 
 - [ ] **Step 1: Write the failing tests**
@@ -1605,9 +1623,11 @@ git commit -m "feat(plausible): 7- and 30-day visitors and pageviews with compar
 ## Task 10: Todoist adapter
 
 **Files:**
+
 - Create: `internal/adapters/todoist/todoist.go`, `internal/adapters/todoist/todoist_test.go`
 
 **Interfaces:**
+
 - Produces: `func New(cfg Config, hc *http.Client, clock ports.Clock) *Fetcher` with `Config{Token, BaseURL, Filter string}`, `Name() = "todoist"`
 
 - [ ] **Step 1: Write the failing tests**
@@ -1668,9 +1688,11 @@ git commit -m "feat(todoist): overdue and due-today tasks (FR-4.1)"
 ## Task 11: The refresh runner
 
 **Files:**
+
 - Create: `internal/refresh/runner.go`, `internal/refresh/runner_test.go`
 
 **Interfaces:**
+
 - Consumes: `ports.Store`, `ports.SourceFetcher`, `ports.Clock`, `ports.FakeFetcher`
 - Produces:
 
@@ -1856,10 +1878,12 @@ git commit -m "feat(refresh): single-flight refresh run with per-source transact
 ## Task 12: Web server, authentication and security headers
 
 **Files:**
+
 - Create: `internal/web/server.go`, `internal/web/auth.go`, `internal/web/auth_test.go`, `internal/web/templates/layout.html`, `internal/web/templates/login.html`, `internal/web/static/app.css`
 - Modify: `cmd/zorgscope/main.go`
 
 **Interfaces:**
+
 - Consumes: `ports.Store`, `refresh.Runner`, `config.Config`
 - Produces:
 
@@ -2027,9 +2051,11 @@ git commit -m "feat(web): token sign-in, derived session cookie and security hea
 ## Task 13: Dashboard assembly in the domain
 
 **Files:**
+
 - Create: `internal/domain/dashboard.go`, `internal/domain/dashboard_test.go`
 
 **Interfaces:**
+
 - Produces:
 
 ```go
@@ -2138,10 +2164,12 @@ git commit -m "feat(domain): dashboard assembly with per-tile new counts and fre
 ## Task 14: Dashboard rendering
 
 **Files:**
+
 - Create: `internal/web/dashboard.go`, `internal/web/dashboard_test.go`, `internal/web/templates/dashboard.html`, `internal/web/templates/tiles/{github,builds,sites,tasks}.html`, `internal/web/static/htmx.min.js`
 - Modify: `internal/web/server.go`, `internal/web/static/app.css`
 
 **Interfaces:**
+
 - Consumes: `domain.BuildDashboard`, `ports.Store`
 - Produces: `GET /`, `GET /tile/{name}`, `POST /seen`, `POST /refresh`
 
@@ -2242,10 +2270,12 @@ git commit -m "feat(web): tiled dashboard with NEW badges and mark-all-seen (FR-
 ## Task 15: The refresh endpoints
 
 **Files:**
+
 - Create: `internal/web/refresh.go`, `internal/web/refresh_test.go`
 - Modify: `internal/web/server.go`
 
 **Interfaces:**
+
 - Produces: `POST /api/refresh` (bearer) and `POST /refresh` (session)
 
 - [ ] **Step 1: Write the failing tests**
@@ -2326,10 +2356,12 @@ git commit -m "feat(web): cron and user refresh endpoints (FR-5.1, FR-5.2, QS-2.
 ## Task 16: Documentation pages
 
 **Files:**
+
 - Create: `internal/web/docs.go`, `internal/web/docs_test.go`, `internal/web/templates/docs.html`, `internal/web/templates/docs_index.html`
 - Modify: `go.mod` (add `github.com/yuin/goldmark`), `internal/web/server.go`
 
 **Interfaces:**
+
 - Produces: `GET /docs` and `GET /docs/{category}/{page}`, both unauthenticated
 
 - [ ] **Step 1: Write the failing tests**
@@ -2406,10 +2438,12 @@ git commit -m "feat(web): render requirements, decisions and concepts at /docs (
 ## Task 17: Slack notifications
 
 **Files:**
+
 - Create: `internal/adapters/slack/slack.go`, `internal/adapters/slack/slack_test.go`
 - Modify: `internal/refresh/runner.go`, `cmd/zorgscope/main.go`
 
 **Interfaces:**
+
 - Produces: `func New(webhookURL string, hc *http.Client) *Notifier` implementing `ports.Notifier`
 
 - [ ] **Step 1: Write the failing tests**
@@ -2462,10 +2496,12 @@ git commit -m "feat(slack): notify once per newly seen issue or PR (FR-6.1)"
 ## Task 18: CI, deployment and the cron trigger
 
 **Files:**
+
 - Modify: `.github/workflows/ci.yml`, `.github/workflows/deploy.yml`
 - Create: `docs/concepts/operations.md`
 
 **Interfaces:**
+
 - Consumes: everything
 - Produces: green CI and a deployed app
 
@@ -2521,6 +2557,7 @@ git commit -m "feat(ops): CI, Fly deployment and the cron-job.org trigger (FR-9.
 ## Task 19: Decisions and concepts
 
 **Files:**
+
 - Create: `docs/decisions/README.md`, `docs/decisions/0001…0008-*.md`, `docs/decisions/adr-template.md`, `docs/concepts/security-and-tokens.md`, `docs/concepts/data-storage.md`, `docs/concepts/configuration.md`
 
 - [ ] **Step 1: Write the eight decision records**

@@ -1,62 +1,30 @@
-# zorgscope runtime configuration (non-secret). Schema: docs/architecture/08-crosscutting-concepts.md §8.3
-# Upstream secrets may be bootstrapped from environment variables and then managed through the
-# authenticated config API. Deployment/authentication secrets remain environment-only.
-server:
-  base_url: https://zorgscope.fly.dev
-  port: 8080
-  timezone: Europe/Berlin
+# Non-secret configuration (FR-8.1). Secrets come from the environment only — see deploy/env.example.
+# This file is baked into the image; CONFIG_PATH points at it.
 
-ui:
-  tile_poll_seconds: 60
-  attention_cap: 30
-  tiles: [attention, repos, sites, watch]
+timezone: Europe/Berlin
 
-snapshot:
-  time: "03:00"
-  retention_days: 30
+refresh:
+  # What cron-job.org is configured to. Used for the freshness display; changing it here does not
+  # change the schedule — change it in both places (see docs/concepts/configuration.md).
+  interval: 15m
+  # How old a source's data may be before its tile is shown as stale.
+  stale_after: 45m
 
 github:
-  enabled: true
-  me: gernotstarke
-  poll_interval: 10m
-  grace_period: 4h
-  stale_after: 720h
-  bots: ["[bot]", "dependabot", "renovate"]
-  mentions: true
+  login: gernotstarke
   repos:
     - arc42/arc42.org-site
-    - arc42/arc42.de-site
-    - arc42/arc42-template
-    - arc42/docs.arc42.org-site
-    - arc42/quality.arc42.org-site
-    - arc42/faq.arc42.org-site
-    - gernotstarke/esabuch.de-site
-    - gernotstarke/gernotstarke.de-site
+    - arc42/quality.arc42.org
+    - gernotstarke/zorgscope
 
 plausible:
-  enabled: false          # set its API key through the config API before enabling
-  poll_interval: 30m
-  order: visitors
   sites:
     - arc42.org
-    - arc42.de
-    - docs.arc42.org
     - quality.arc42.org
-    - faq.arc42.org
-    - esabuch.de
-    - gernotstarke.de
 
-watch:
-  enabled: true
-  poll_interval: 15m
-  warn_days: 14
-  credentials: []          # add entries like:
-  # - name: status.arc42.org GitHub token
-  #   expires: 2026-12-31
-  #   used_by: status.arc42.org
-  #   url: https://github.com/settings/tokens
-  urls:
-    - name: status.arc42.org
-      url: https://status.arc42.org
-      expect_status: 200
-      poll_interval: 15m
+todoist:
+  filter: "overdue | today"
+
+notifications:
+  slack:
+    enabled: false

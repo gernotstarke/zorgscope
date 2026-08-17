@@ -1,47 +1,30 @@
+# Scale to zero (C-3, ADR-0003). Nothing runs between requests: the machine is started by a visitor
+# or by the cron-job.org ping to POST /api/refresh, and stopped again when idle. The ping doubles as
+# the warmer that keeps an ordinary visit off the cold-start path (QS-2.4).
 app = "zorgscope"
 primary_region = "fra"
-kill_signal = "SIGTERM"
-kill_timeout = "15s"
 
 [build]
-  dockerfile = "deploy/Dockerfile"
+  dockerfile = "Dockerfile"
 
 [env]
-  AUTH_MODE = "token"
-  LOG_LEVEL = "info"
   PORT = "8080"
-  ZORGSCOPE_BASE_URL = "https://zorgscope.fly.dev"
-  ZORGSCOPE_CONFIG = "/app/config/fly.bootstrap.yaml"
-  ZORGSCOPE_RUNTIME_CONFIG = "/data/zorgscope.yaml"
-  ZORGSCOPE_SECRET_STORE = "/data/zorgscope.secrets"
-  ZORGSCOPE_DATA = "/data/zorgscope.db"
-
-[[mounts]]
-  source = "zorgscope_data"
-  destination = "/data"
+  CONFIG_PATH = "/config/zorgscope.yaml"
+  LOG_LEVEL = "info"
 
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = "off"
-  auto_start_machines = false
-  min_machines_running = 1
-  processes = ["app"]
-
-  [http_service.concurrency]
-    type = "requests"
-    soft_limit = 50
-    hard_limit = 100
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
 
   [[http_service.checks]]
-    grace_period = "10s"
+    grace_period = "5s"
     interval = "30s"
     method = "GET"
+    path = "/healthz"
     timeout = "5s"
-    path = "/readyz"
-
-[processes]
-  app = "/app/bin"
 
 [[vm]]
   size = "shared-cpu-1x"

@@ -1,0 +1,29 @@
+# Architecture decisions
+
+Decisions are recorded in [MADR](https://adr.github.io/madr/) format, one file per decision, numbered
+and never renumbered. A decision that is later reversed gets a new record that supersedes the old one;
+the old record stays, because the reasoning is the point.
+
+| # | Decision | File | Status |
+|---|----------|------|--------|
+| 0001 | Go modular monolith with a hexagonal core | `0001-go-modular-monolith.md` | planned |
+| 0002 | Server-rendered `html/template` plus htmx, no JavaScript build | `0002-server-rendered-htmx.md` | planned |
+| 0003 | Fly.io scaled to zero, refreshed by an external cron trigger | `0003-fly-scale-to-zero-external-cron.md` | planned |
+| 0004 | Turso and libSQL for persistence, `libsql-server` locally | `0004-turso-libsql.md` | planned |
+| 0005 | Embedded SQL migrations rather than a schema tool | `0005-embedded-sql-migrations.md` | planned |
+| 0006 | First-seen versus last-visit as the definition of "new" | `0006-first-seen-versus-last-visit.md` | planned |
+| 0007 | Token sign-in with a session cookie derived from the token | `0007-token-sign-in-derived-cookie.md` | planned |
+| 0008 | Docker and make as the only local toolchain | `0008-docker-and-make-only.md` | planned |
+
+The records themselves are written in Task 19 of the
+[implementation plan](../superpowers/plans/2026-08-17-zorgscope-v1.md); the decisions they document
+are already made and are described in the
+[design](../superpowers/specs/2026-08-17-zorgscope-reset-design.md).
+
+The previous decision set (ADR‑0001…0014 under the former `docs/architecture/decisions/`) was removed
+on 2026-08-17 rather than superseded one by one. It described an always-on machine with a persistent
+volume, an in-process scheduler, daily snapshots, per-item dismissals, a runtime configuration API and
+passkey authentication — a system that no longer exists in any part. Its reasoning survives in git
+history.
+
+Use [`adr-template.md`](adr-template.md) for new records.

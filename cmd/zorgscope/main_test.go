@@ -1,50 +1,29 @@
 package main
 
 import (
-	"errors"
-	"os"
-	"path/filepath"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
-// TestRunReturnsConfigErrForMissingConfigFile covers the review finding for §8.7: a missing or
-// misconfigured ZORGSCOPE_CONFIG path — the most likely operator mistake in a container with a bad
-// mount — must be reported the same way as a bad YAML file (main's exit(2) branch), not fall
-// through to the generic exit(1) path. config.Load fails and returns before run() does any other
-// work (no store, no server, no goroutines), so calling run() directly here is side-effect free.
-func TestRunReturnsConfigErrForMissingConfigFile(t *testing.T) {
-	missing := filepath.Join(t.TempDir(), "does-not-exist.yaml")
-	t.Setenv("ZORGSCOPE_CONFIG", missing)
+// FR-9.4 AC2: liveness must answer without authentication and without touching upstreams.
+func TestHealthz(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 
-	err := run()
-	if err == nil {
-		t.Fatal("expected an error for a missing config file")
+	newMux().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	var ce *configErr
-	if !errors.As(err, &ce) {
-		t.Fatalf("expected *configErr, got %T: %v", err, err)
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("expected errors.Is(err, os.ErrNotExist) to hold through configErr's Unwrap, got: %v", err)
+	if got := rec.Body.String(); got != "ok" {
+		t.Fatalf("body = %q, want %q", got, "ok")
 	}
 }
 
-// TestRunReturnsConfigErrForInvalidConfig covers the other configErr source: a config.ValidationError
-// (here, an unknown YAML key) must still reach main's exit(2) branch with its precise "key: message"
-// text intact, unchanged by wrapping it in configErr.
-func TestRunReturnsConfigErrForInvalidConfig(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "bad.yaml")
-	if err := os.WriteFile(path, []byte("bogus_top_level_key: true\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("ZORGSCOPE_CONFIG", path)
-
-	err := run()
-	if err == nil {
-		t.Fatal("expected an error for an invalid config file")
-	}
-	var ce *configErr
-	if !errors.As(err, &ce) {
-		t.Fatalf("expected *configErr, got %T: %v", err, err)
+func TestLogLevelFallsBackToInfo(t *testing.T) {
+	t.Setenv("LOG_LEVEL", "not-a-level")
+	if got := logLevel().String(); got != "INFO" {
+		t.Errorf("logLevel() = %s, want INFO", got)
 	}
 }
