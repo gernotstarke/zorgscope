@@ -1,117 +1,92 @@
 # 4. Functional requirements
 
-Organised as epics (E‑x) with user stories (FR‑x). Each story has acceptance criteria (AC) that a test can
-verify. Priority: **M** must (v1), **S** should, **C** could, **W** won't (now).
+Epics (E‑x) with user stories (FR‑x) and acceptance criteria (AC) a test can check.
+Priority: **M** must (v1), **S** should (v2), **W** won't.
 
-"The user" is always Gernot (S‑1). "Attention item" is defined in the [glossary](07-glossary.md).
+"The user" is always Gernot (S‑1). Terms in *italics* are defined in the [glossary](06-glossary.md).
 
 ---
 
-## E‑1 Client-neutral dashboard API
+## E‑1 The dashboard
 
 | Id | Prio | Story | Acceptance criteria |
 |----|------|-------|---------------------|
-| FR‑1.1 | M | As a visual client I obtain the complete current dashboard immediately, so that no upstream request delays presentation. | AC1 Authenticated `GET /api/v1/dashboard` returns one presentation-ready JSON snapshot from SQLite only. AC2 The response contains `generated_at`, per-source freshness/error state, attention, repositories, Plausible sites and watch entries. AC3 Stable identifiers and explicit schema version make the contract usable by Wails and browser clients. |
-| FR‑1.2 | M | As the user I see information grouped and scannable in any supported client. | AC1 The API exposes sections for Attention, Repositories, Sites and Watch; no Todoist or News section. AC2 Each section has explicit content, empty, stale and error states. AC3 Layout is a client concern; no domain rule depends on tiles or HTML. |
-| FR‑1.3 | M | As a client I keep the view current without losing cached content. | AC1 The dashboard supports `ETag`/`If-None-Match` and a configurable client polling hint. AC2 A later event stream may signal invalidation but never carries the sole copy of state. AC3 A backend refresh failure retains the last successful content and its error/freshness metadata. |
-| FR‑1.4 | M | As the user I can trigger an immediate refresh of all sources. | AC1 Authenticated `POST /api/v1/refresh` enqueues every enabled source, respects the configured minimum interval and returns 202. AC2 Subsequent dashboard/status responses expose refresh progress. |
-| FR‑1.5 | S | As the user I want light and dark visual appearances. | AC1 Each implemented visual client follows the OS appearance without a flash of the wrong theme. |
-| FR‑1.6 | C | As the user I want to reorder or hide dashboard sections. | The order and visibility are runtime configuration exposed through E-8; each client applies them appropriately. |
+| FR‑1.1 | M | As the user I open one page and see everything at once, so that a glance is enough. | AC1 The dashboard is a grid of *tiles*: GitHub items, builds, site statistics, tasks. AC2 It renders from stored data only; opening it contacts no upstream service. AC3 The header carries the zorgscope logo and the time of the last successful *refresh run*. |
+| FR‑1.2 | M | As the user I see immediately what arrived since my last visit. | AC1 Every item whose *first seen* time is later than the user's *last visit* time carries a `NEW` badge. AC2 Each tile shows how many of its items are new. AC3 The browser tab title is prefixed with the total new count when it is greater than zero. |
+| FR‑1.3 | M | As the user I can declare everything seen. | AC1 One "mark all seen" action sets the last-visit time to now. AC2 After it, no item carries `NEW` until something newer arrives. AC3 The action requires an authenticated session and works without JavaScript. |
+| FR‑1.4 | M | As the user I notice when a tile's data is stale or its source is failing. | AC1 Each tile states the age of its data. AC2 A source that failed on the last refresh shows a warning with the error text and the time of its last success. AC3 A failing source never blanks the tile; the last known content stays visible. |
+| FR‑1.5 | M | As the user I want the page to work in light and dark appearance. | AC1 The page follows the operating-system appearance with no flash of the wrong theme. AC2 Colour is never the only carrier of meaning. |
+| FR‑1.6 | S | As the user I want the page to update while it is open. | AC1 Tiles refresh their fragment by htmx polling at a configured interval. AC2 Polling never counts as a visit for FR‑1.2. |
 
-## E‑2 GitHub attention (core, G‑1)
-
-| Id | Prio | Story | Acceptance criteria |
-|----|------|-------|---------------------|
-| FR‑2.1 | M | As the user I see every **open issue and PR** of every monitored repository, so that I have the full picture. | AC1 For each configured repo all open issues and PRs (any author) are fetched incl. number, title, url, author, created, updated, labels, comment count, last comment author & time, draft flag (PR), review decision (PR). AC2 Pagination is handled (repos with > 100 open items). |
-| FR‑2.2 | M | As the user I see items that are **new** since the previous snapshot highlighted, so that I never miss them. | AC1 An item is *new* iff its id is absent from the previous daily snapshot of that source (see E‑7). AC2 New items carry a `NEW` badge and are sorted first within their age bucket. AC3 On the very first run nothing is marked new except items younger than 24 h. |
-| FR‑2.3 | M | As the user I see items that are **unanswered**, so that contributors get a quick reaction. | AC1 An open issue/PR is *unanswered* iff it has no comment/review from a human other than its author **and** it is older than the configured grace period (default 4 h). AC2 Activity by the configured "me" login counts as an answer even on self-authored items; comments by the opener or configured bot patterns do not. AC3 Badge `UNANSWERED`, colour distinct from `NEW`. |
-| FR‑2.4 | M | As the user I see the **age** of each item at a glance. | AC1 Age buckets: `< 24 h`, `< 7 d`, `< 30 d`, `≥ 30 d`; each with its own colour token. AC2 Items with no activity for ≥ 30 d are additionally marked `STALE` and listed in a collapsed section. |
-| FR‑2.5 | M | As the user I see one **Attention section** aggregating everything that needs me across all repos, so that I look in one place. | AC1 API data contains all items with level `new` or `unanswered` plus mentions/review requests (FR‑2.6), grouped by repo or flat (config), newest first. AC2 Each item includes repo, number, title, author, age, semantic badges and dismissal identity. AC3 Empty state carries "Nothing needs your attention". AC4 Response count is capped (default 30) with overflow count/link. |
-| FR‑2.6 | M | As the user I see **mentions and review requests** addressed to me anywhere on GitHub, so that requests outside the monitored repos are not lost. | AC1 GitHub notifications with reason `mention`, `review_requested`, `assign`, `author`(replies) for the configured login are fetched and shown as attention items with source "GitHub mentions". AC2 Deduplicated against items already present from monitored repos. |
-| FR‑2.7 | M | As the user I can **dismiss** an attention item or the current attention set ("seen"), so that highlights disappear before the next snapshot. | AC1 Authenticated `POST /api/v1/dismiss` with item id and `updated_at` stores a dismissal. AC2 A dismissed item loses its attention state and leaves Attention. AC3 If meaningful item state changes, the dismissal expires. AC4 `POST /api/v1/dismiss-all` dismisses the complete attention set returned by the current configuration. |
-| FR‑2.8 | S | As the user I want to filter Attention to issues only, PRs only or one repo. | Client-side state; no backend configuration mutation required. |
-| FR‑2.9 | C | As the user I want to see my own open PRs' review status. | Included in FR‑2.1 data (`reviewDecision`), rendered as small icon. |
-
-## E‑3 Repository overview and CI status
+## E‑2 GitHub issues, pull requests and builds (G‑1)
 
 | Id | Prio | Story | Acceptance criteria |
 |----|------|-------|---------------------|
-| FR‑3.1 | M | As the user I see one card per monitored repository with open counts, so that I know where activity is. | AC1 Card shows: short name (link), open issues, open PRs, count of new, count of unanswered. AC2 Cards ordered by attention count desc, then name. |
-| FR‑3.2 | M | As the user I see the **build status** of each repository, so that broken site builds are noticed. | AC1 Latest completed workflow run on the default branch: conclusion (success/failure/cancelled/…), workflow name, finished‑at age; rendered as green/red/grey dot with tooltip and link. AC2 A run in progress is shown as pulsing dot with the previous conclusion. AC3 Failure counts as an attention item (`BUILD FAILED`) once per run id. |
+| FR‑2.1 | M | As the user I see every open issue and pull request of the configured repositories. | AC1 For each configured repository all open issues and PRs are fetched with number, title, URL, author, `created_at`, `updated_at` and — for PRs — the draft flag. AC2 Repositories with more than one page of open items are fetched completely. AC3 Private repositories are included when the token grants access. |
+| FR‑2.2 | M | As the user I see how old each item is and when it last moved. | AC1 Each item shows its age from `created_at` and the age of its last update. AC2 Items are sorted new first, then by last update descending. |
+| FR‑2.3 | M | As the user I see whether each repository builds. | AC1 The latest completed GitHub Actions run on the default branch is shown per repository with its conclusion, workflow name and finishing time. AC2 A run in progress is shown as such next to the previous conclusion. AC3 A repository without workflows shows no build state rather than an error. |
+| FR‑2.4 | S | As the user I see mentions and review requests addressed to me anywhere on GitHub. | AC1 Notifications with reason `mention`, `review_requested` or `assign` for the configured login appear as items. AC2 They are deduplicated against items already present from the configured repositories. |
 
-## E‑4 Site statistics (Plausible)
-
-| Id | Prio | Story | Acceptance criteria |
-|----|------|-------|---------------------|
-| FR‑4.1 | M | As the user I see visitors and pageviews for each configured site for the last 7 and 30 days, so that I notice trends. | AC1 Per site: visitors 7 d, visitors 30 d, pageviews 30 d, each with % change vs previous period (↑/↓, colour). AC2 A daily‑visitors sparkline for the last 30 days. |
-| FR‑4.2 | S | As the user I see the top pages of each site (last 7 days). | AC1 Top 3 pages by visitors with counts, expandable to 10. |
-| FR‑4.3 | S | As the user I want site tiles ordered by 7‑day visitors desc. | AC1 Ordering configurable: by visitors, by config order. |
-| FR‑4.4 | C | As the user I want a combined "all arc42 sites" total. | Sum row when ≥ 2 sites share a group label in config. |
-
-## E‑5 Todoist — retired
+## E‑3 Site statistics (G‑2)
 
 | Id | Prio | Story | Acceptance criteria |
 |----|------|-------|---------------------|
-| FR‑5.1 | W | Todoist due-task aggregation. | **Removed from scope on 2026-08-16.** Identifier retained; no adapter, API representation or client section shall be built. |
-| FR‑5.2 | W | Todoist overdue highlighting. | **Removed from scope on 2026-08-16.** |
-| FR‑5.3 | W | Complete / reschedule from zorgscope. | Remains explicitly out of scope. |
+| FR‑3.1 | M | As the user I see how the configured sites are visited. | AC1 Per site: visitors and pageviews for the last 7 and the last 30 days. AC2 Each figure carries its change against the preceding period of equal length, as a percentage with direction. AC3 Sites are listed in configuration order. |
+| FR‑3.2 | W | Top pages, sparklines, per-source breakdowns. | Deliberately out of scope; Plausible's own dashboard is one click away. |
 
-## E‑6 News feeds — retired
-
-| Id | Prio | Story | Acceptance criteria |
-|----|------|-------|---------------------|
-| FR‑6.1 | W | RSS/Atom aggregation. | **Removed from scope on 2026-08-16.** Identifier retained; no adapter, API representation or client section shall be built. |
-| FR‑6.2 | W | Feed keyword filters. | **Removed from scope on 2026-08-16.** |
-| FR‑6.3 | W | Feed topic grouping. | **Removed from scope on 2026-08-16.** |
-| FR‑6.4 | W | LLM summarisation / ranking. | Remains explicitly out of scope. |
-
-## E‑7 New‑detection, snapshots and dismissals (cross‑cutting)
+## E‑4 Tasks (G‑3)
 
 | Id | Prio | Story | Acceptance criteria |
 |----|------|-------|---------------------|
-| FR‑7.1 | M | As the system I take a **daily snapshot** per source of all item ids currently present, so that "new since yesterday" is well‑defined. | AC1 Snapshot time configurable (default 03:00, timezone configurable, default Europe/Berlin). AC2 If the app was down at snapshot time, the snapshot is taken at next start (catch‑up), at most one per calendar day. AC3 Snapshots are retained for a configurable number of days (default 30) and pruned. |
-| FR‑7.2 | M | As the system I define **new** as "present now, absent in the most recent snapshot older than the current one" and this rule is identical for issues, PRs, mentions and workflow runs. | AC1 Implemented once in the domain package, covered by property-style tests (see QS-1.x). |
-| FR‑7.3 | M | As the user I want dismissals to survive restarts and to expire when an item changes (see FR‑2.7). | AC1 Persisted in SQLite. AC2 Dismissal keyed by (source, external id, updated‑at). |
-| FR‑7.4 | S | As the user I want to see what changed since I last looked, in addition to the daily snapshot. | Client-owned follow-up: each visual client records its own last-open time and derives this highlight from stable item timestamps; background API polling must not count as a human visit. |
+| FR‑4.1 | M | As the user I see the Todoist tasks that need attention today. | AC1 Tasks that are overdue or due today are shown with content, project, due date and priority. AC2 Overdue tasks are distinguished from those due today and listed first. AC3 Tasks due later, and tasks without a due date, are not shown. |
+| FR‑4.2 | W | Completing or rescheduling tasks from zorgscope. | Out of scope; zorgscope only reads. |
 
-## E‑8 Runtime configuration and extensibility (QG-4)
+## E‑5 Refresh and new-detection (QG‑1)
 
 | Id | Prio | Story | Acceptance criteria |
 |----|------|-------|---------------------|
-| FR‑8.1 | M | As the user I can read and change **every runtime-configurable property** through the visual client, so that no source or presentation change needs a deploy. | AC1 Authenticated `GET /api/v1/config` returns the complete non-secret runtime configuration and metadata (`revision`, `schema_version`, effective/default values). AC2 Authenticated `PUT /api/v1/config` atomically replaces the complete editable document; partial PATCH is deliberately unsupported. AC3 Runtime sections cover GitHub (login, repositories, mentions, intervals, grace/stale/bot rules and API base), Plausible (sites, intervals/order and API base), snapshots (time/timezone/retention), watch (credential metadata, TLS endpoints, warning days/intervals), and client presentation hints (order, visibility, attention cap, polling hint, refresh minimum gap). AC4 Malformed/unknown JSON returns 400 and semantic validation returns a structured 422 naming the field; the previous revision remains active. AC5 Optimistic concurrency via `If-Match`/revision rejects lost updates with 409. |
-| FR‑8.2 | M | As the user I can set or rotate upstream secrets through the same configuration API without ever reading them back. | AC1 `PUT /api/v1/config/secrets/{github_token\|plausible_api_key}` sets/replaces a value and `DELETE` clears it; GET config returns only configured/source status for those two secrets. AC2 Values are AES-256-GCM encrypted before persistence in a 0600 file on the Fly volume using deployment secret `ZORGSCOPE_CONFIG_KEY`; plaintext exists only transiently in process memory. AC3 Each secret operation requires the current configuration revision and returns the effective revision; an actual state change creates a new one. AC4 Validation prevents enabling a source without its credential and prevents clearing a credential while that source is enabled; unrelated disabled sources require no secret. |
-| FR‑8.3 | M | As the operator I can disable any source kind without removing its config. | AC1 `enabled: false` stops fetching and omits that source's cached rows/cards from API sections. |
-| FR‑8.4 | S | As a developer I can add a new **kind** of source by implementing one interface and registering it. | AC1 One `SourceFetcher` adapter, config schema fragment, response mapping and fake are sufficient; no client-specific business rule is required. |
-| FR‑8.5 | M | As the user I expect accepted configuration changes to take effect safely at runtime. | AC1 The backend persists a new revision and rebuilds the source scheduler/dashboard without restart. AC2 Removed/disabled sources stop after any in-flight fetch and their cached rows disappear from API views. AC3 Runtime YAML and encrypted provider secrets survive process/deployment restarts on the Fly volume. |
-| FR‑8.6 | M | As the operator I keep deployment-only values outside runtime configuration. | AC1 Listen port, database path, public base URL, `ZORGSCOPE_CONFIG_KEY`, bootstrap `ZORGSCOPE_API_TOKEN`, auth mode and platform/logging controls are environment/Fly settings and are not mutable through `/api/v1/config`. AC2 Config GET may show non-secret effective deployment metadata as read-only; deployment secret values and even their presence are never exposed. AC3 Documentation explicitly classifies every property as runtime or deployment-only. |
+| FR‑5.1 | M | As the system I refresh all sources when an external scheduler asks me to. | AC1 `POST /api/refresh` with the correct bearer secret fetches every enabled source and stores the result. AC2 A wrong or missing secret returns 401 and fetches nothing. AC3 The response reports per source how many items were stored and which sources failed. AC4 One failing source never prevents the others from being stored. |
+| FR‑5.2 | M | As the user I can trigger a refresh myself from the page. | AC1 An authenticated refresh action on the dashboard runs the same refresh. AC2 It is rejected while another refresh is in flight, rather than running twice. |
+| FR‑5.3 | M | As the system I record when each item was first seen, so that "new" is well defined. | AC1 On first storage of an item its *first seen* time is the time of that refresh run. AC2 Later refreshes update the item's content but never its first-seen time. AC3 An item that disappears upstream and returns later is treated as new again. |
+| FR‑5.4 | M | As the system I record every refresh run, so that the dashboard can be honest about freshness. | AC1 Each run stores its start time, duration, trigger (`cron`, `user`), per-source outcome and error text. AC2 The dashboard shows the time of the last run that succeeded for the tile's source. |
+| FR‑5.5 | M | As the operator I want a refresh interrupted mid-way to leave consistent data. | AC1 Each source commits its own transaction; a machine stopped between sources loses only the sources not yet fetched. AC2 A partial run is recorded as failed for the sources it did not reach. |
 
-## E‑9 Authentication and client sessions
-
-| Id | Prio | Story | Acceptance criteria |
-|----|------|-------|---------------------|
-| FR‑9.1 | M | As a bootstrap client I authenticate every `/api/v1/*` request, so that private status and configuration never become public. | AC1 Initial implementation accepts a constant-time-checked bearer token supplied only as Fly secret/environment. AC2 Missing/invalid credentials return 401 without data. AC3 TLS is mandatory in production and auth failures are rate limited and logged without token material. |
-| FR‑9.2 | S | As the user I enrol passkeys and authorise individual native/browser clients. | Planned device-authorisation flow: external browser performs WebAuthn; native clients use PKCE and receive revocable per-device credentials. Detailed acceptance criteria will supersede the bootstrap scheme before implementation. |
-| FR‑9.3 | S | As the user I can list and revoke client sessions/devices. | Planned with FR-9.2; each device is independently revocable and stored token material is hashed/encrypted as appropriate. |
-| FR‑9.4 | M | Local development does not require production passkey infrastructure. | AC1 A dedicated development token works only for localhost/test configuration; production rejects development auth mode. |
-| FR‑9.5 | W | Password + TOTP as fallback. | Not planned; passkey-backed device authentication is preferred. |
-
-## E‑10 Operations and observability
+## E‑6 Notifications (G‑4)
 
 | Id | Prio | Story | Acceptance criteria |
 |----|------|-------|---------------------|
-| FR‑10.1 | M | As the operator I see per-source health through the API. | AC1 Authenticated `GET /api/v1/status` lists each source with last success, last error, next run and item count. AC2 `GET /healthz` (liveness, unauthenticated, no data) and `GET /readyz` (ready when deployment config loaded, DB open and runtime config readable). |
-| FR‑10.2 | M | As the operator I get structured logs. | AC1 JSON logs (slog), level configurable, secrets redacted, request logs with duration and status. |
-| FR‑10.3 | M | As the operator I run everything locally with `make app`. | AC1 `make app` builds the image, starts app + SQLite volume, prints URL. AC2 `make test`, `make lint`, `make e2e`, `make deploy` work with only Docker + make installed. |
-| FR‑10.4 | M | As the operator I want CI to run lint, tests, e2e and deploy on `main`. | AC1 GitHub Actions workflow per [ADR‑0010](../architecture/decisions/ADR-0010-testing-strategy.md); deploy needs `FLY_API_TOKEN` repo secret. |
-| FR‑10.5 | S | As the operator I want the SQLite database backed up. | AC1 fly volume daily snapshots enabled; `make fly ARGS="ssh sftp get …"` recipe documented. |
-| FR‑10.6 | C | Slack notification for new attention items. | `Notifier` port; adapter later. |
+| FR‑6.1 | S | As the user I am told in Slack when a new issue or pull request appears. | AC1 A refresh run posts one message per newly first-seen GitHub item to the configured Slack webhook. AC2 Each item is announced at most once, also across restarts and repeated runs. AC3 A Slack failure is recorded but never fails the refresh run. |
+| FR‑6.2 | S | As the user I can be notified by email instead of, or in addition to, Slack. | AC1 The same notification content is deliverable by a second notifier without changing the refresh logic. |
+| FR‑6.3 | W | Notifications about traffic changes. | Deferred; revisit once the statistics have been watched for a while. |
 
-## E‑11 Credential expiry and health watch (G‑6)
+## E‑7 Documentation in the product (G‑6)
 
 | Id | Prio | Story | Acceptance criteria |
 |----|------|-------|---------------------|
-| FR‑11.1 | M | As the operator I register credentials and API keys with expiry metadata, so that I am warned before they break an app. | AC1 Runtime config contains `{name, expires, warn_days, used_by, url}`; provider values needed by zorgscope use the separate write-only secret routes. AC2 Watch API data is sorted by remaining days; `EXPIRING` when `remaining <= warn_days`, `EXPIRED` when past. AC3 Both are dismissable attention items keyed to the expiry date. |
-| FR‑11.2 | M | As the operator I want zorgscope's **own** GitHub token expiry detected automatically, so that the service does not silently go dark. | AC1 The GitHub adapter reads the `GitHub-Authentication-Token-Expiration` response header on every call and stores the date as a synthetic credential "zorgscope GitHub token". AC2 Same rules as FR‑11.1 (warn >= 14 d). AC3 If the header is absent (non-expiring token) the entry shows "no expiry". |
-| FR‑11.3 | M | As the user I see **authentication failures** of any source immediately, so that a revoked/expired token is noticed the same hour. | AC1 An `ErrAuth` (401/403 non-rate-limit) sets source status `auth_failed` and creates `AUTH FAILED: <source>` once per failure streak. AC2 API data carries semantic danger status, safe error detail and age of last good data. |
-| FR‑11.4 | M | As the operator I register TLS endpoints, so that certificate expiry cannot surprise me. | AC1 Runtime config accepts `{name, url, expect_status, expect_body_contains, poll_interval}`; URL includes any non-default port and the watch-level `warn_days` controls certificate warnings. AC2 HTTPS checks never disable verification and report the served leaf certificate's `not_after`, issuer, hostname-verification result and last check. AC3 Expiring/expired certificates and endpoints that fail twice consecutively are attention items; the running fetcher retains last-known certificate metadata through transient errors. |
-| FR‑11.5 | C | Automatic listing of fine‑grained PATs granted to the `arc42` org (`GET /orgs/arc42/personal-access-tokens`) with their expiry. | Needs org‑admin token; optional later. |
+| FR‑7.1 | M | As a reader I can read zorgscope's requirements, decisions and concepts in the running system. | AC1 `/docs` lists requirements, decisions and concepts. AC2 Each page renders the Markdown from the repository. AC3 The pages need no authentication. |
+| FR‑7.2 | M | As a reader I always find my way from the dashboard to the documentation. | AC1 A footer on every page links to `/docs`. AC2 Links between documents resolve inside the rendered site. |
+
+## E‑8 Configuration and access
+
+| Id | Prio | Story | Acceptance criteria |
+|----|------|-------|---------------------|
+| FR‑8.1 | M | As the operator I configure what is watched in one YAML file. | AC1 The file lists GitHub repositories and login, Plausible sites, Todoist filter, the refresh interval and the notification settings. AC2 It contains no secret values. AC3 An invalid file aborts start-up with a message naming the offending field, rather than starting half-configured. |
+| FR‑8.2 | M | As the operator I supply every secret through the environment. | AC1 GitHub token, Plausible key, Todoist token, Slack webhook, the refresh secret and the session token come from environment variables (Fly secrets in production). AC2 A source whose secret is absent is disabled, and says so on the dashboard, instead of failing every refresh. AC3 No secret value is ever logged or rendered. |
+| FR‑8.3 | M | As the user I sign in once per browser. | AC1 An unauthenticated browser request to the dashboard is redirected to a sign-in page, not answered with a bare 401. AC2 Submitting the configured token issues a signed, HttpOnly, SameSite=Lax session cookie; the token itself is never stored in the browser. AC3 The cookie's signing key derives from the token, so changing the token invalidates every session. AC4 Failed sign-ins are rate-limited and logged without the submitted value. |
+| FR‑8.4 | S | As the operator I edit the configuration in the browser instead of in the file. | AC1 A configuration page reads and writes the same settings; secrets remain environment-only and are shown only as configured or missing. |
+
+## E‑9 Operations (G‑5)
+
+| Id | Prio | Story | Acceptance criteria |
+|----|------|-------|---------------------|
+| FR‑9.1 | M | As the operator I run the whole system locally with Docker and make. | AC1 `make backend` starts the backend and a local libsql-server against `.env`. AC2 `make client` opens the browser at the local backend and reports clearly when nothing answers. AC3 `make test`, `make lint`, `make check` need only Docker and make. |
+| FR‑9.2 | M | As the operator I develop without touching the real upstream services. | AC1 A fake-sources server serves GitHub, Plausible and Todoist responses from fixtures. AC2 Pointing the API base URLs at it produces a fully populated dashboard. |
+| FR‑9.3 | M | As the operator I deploy and inspect production from make. | AC1 `make fly-deploy`, `fly-status`, `fly-logs`, `fly-secrets`, `fly-ssh` work through the containerised flyctl. AC2 `make db-shell` opens a SQL shell against the local database and `make db-migrate` applies migrations. |
+| FR‑9.4 | M | As the operator I see structured logs and a health endpoint. | AC1 Logs are JSON via `log/slog`, level configurable, secrets redacted. AC2 `GET /healthz` answers without authentication and without touching upstreams. |
+| FR‑9.5 | M | As the operator I want CI to check every push. | AC1 GitHub Actions runs lint, tests and the documentation lint. AC2 A push to `main` deploys to Fly. |
+
+## Explicitly out of scope
+
+News and RSS feeds, "unanswered" detection, per-item dismissals, daily snapshots, credential and TLS
+expiry watching, passkey authentication, a native or Wails client, and a write-capable public JSON API.
+Some of these existed in the previous requirement set and were removed on 2026-08-17.

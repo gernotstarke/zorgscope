@@ -2,37 +2,29 @@
 
 ## Vision
 
-> One glance at zorgscope tells Gernot everything that needs his attention today — and nothing that
-> doesn't, regardless of which supported client he uses.
+One page that answers "does anything need me right now?" — open it, glance, close it. zorgscope
+collects what is scattered over GitHub, Plausible and Todoist, marks what is new since the last look,
+and costs almost nothing to run.
 
-zorgscope is a **single-user, read-mostly status service** with an always-on backend on fly.io and one or
-more visual clients. It aggregates GitHub activity and Actions status, Plausible statistics, and expiry
-information for credentials/API keys and TLS certificates. It exists because this information is spread
-over many pages and notifications, and important changes can otherwise go unnoticed for days.
+## Goals
 
-## Business goals
+| Id | Goal |
+|----|------|
+| G‑1 | The user sees open issues and pull requests of the configured GitHub repositories, with build status, and recognises at a glance which of them are new. |
+| G‑2 | The user sees visitor numbers of the configured Plausible sites and how they moved. |
+| G‑3 | The user sees the Todoist tasks that are overdue or due today. |
+| G‑4 | The user is notified out-of-band when something interesting appears, without having to open the page. |
+| G‑5 | Running zorgscope costs at most a euro a month and needs no routine maintenance. |
+| G‑6 | The repository is readable as a worked example of req42 requirements and MADR decisions; the running system serves that documentation. |
 
-| Id | Goal | Rationale / measure |
-|----|------|---------------------|
-| G‑1 | **Never miss a new issue, PR, mention or review request** in the monitored repositories | Every such item is visibly highlighted until acknowledged; contributors receive a first reaction fast (target: within one working day). |
-| G‑2 | **Compress** the daily status check of repositories, builds, sites and expiries into one pleasing visual client | One client replaces the regularly visited GitHub, Actions, Plausible and credential/certificate pages. |
-| G‑3 | **Configurable in minutes**: adding or changing a repository, site, credential or TLS endpoint must not require code changes or a deploy | Every runtime property is editable through the authenticated configuration API and takes effect after validation. |
-| G‑4 | Serve as a **showcase for solid, agent‑friendly software engineering**: strict separation of concerns, tests on every layer, CI, documented decisions | The repo can be handed to an unfamiliar (human or LLM) developer who can add a source from the docs alone. |
-| G‑5 | **Cheap and low‑maintenance**: one small cloud machine, no manual operations, no local toolchain beyond Docker + make | Hosting cost in the single‑digit‑euro range per month; zero recurring ops tasks. |
-| G‑6 | **Never be surprised by an expiring or broken credential** — for zorgscope itself and for other apps the owner runs (e.g. status.arc42.org) | Every registered credential shows its remaining validity; warnings appear ≥ 14 days ahead; authentication failures of any source are highlighted immediately. |
+## Quality goals
 
-## Top quality goals (ordered)
+| Id | Quality goal | Why |
+|----|--------------|-----|
+| QG‑1 | **Correctness of "new"** — an item is marked new exactly while the user has not seen it. | A dashboard that cries wolf, or silently hides something, is worse than no dashboard. |
+| QG‑2 | **Speed** — the page is usable within a moment of opening, even after the machine has been asleep. | It is opened many times a day, for seconds at a time. |
+| QG‑3 | **Frugality** — hosting and storage stay inside the free/cheap tiers. | The value of the tool does not justify a subscription. |
+| QG‑4 | **Confidentiality** — upstream tokens never leave the backend and never appear in output. | The tokens grant write access to private repositories. |
+| QG‑5 | **Maintainability** — small, testable units; the domain has no infrastructure dependencies. | The system is built and extended largely by LLM agents working from this documentation. |
 
-Detailed scenarios in [chapter 5](05-quality-requirements.md).
-
-| Rank | Id | Quality goal | One‑liner |
-|------|----|--------------|-----------|
-| 1 | QG‑1 | **Reliability of detection** | New / unanswered items are detected correctly and completely; failures are visible, never silent. |
-| 2 | QG‑2 | **Perceived performance** | A client shows meaningful cached content in < 1 s; upstream work never blocks reads. |
-| 3 | QG‑3 | **Security & low operating cost** | Upstream secrets never leak; stored secrets are encrypted at rest; one tiny always-on service needs no routine operations. |
-| 4 | QG‑4 | **Flexibility of sources and clients** | Runtime configuration is client-neutral; new source instances need no code or deploy; new clients use the same API. |
-| 5 | QG‑5 | **Client compatibility** | The API supports a future macOS Wails client and an optional same-origin browser client without client-specific domain logic. |
-| 6 | QG‑6 | **Visual quality & usability** | Supported visual clients are calm, structured and highly pleasing; attention and failure states are unmistakable. |
-
-Non-goals: multi-tenancy, team features, Todoist, news feeds, writing to upstream providers, and choosing
-the final visual client technology in this increment.
+G‑4 is priority **S** (v2); every other goal is **M** (v1).
