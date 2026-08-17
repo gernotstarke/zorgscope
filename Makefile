@@ -10,6 +10,10 @@ PORT           ?= 8080
 GO_IMAGE       ?= golang:1.26
 LINT_IMAGE     ?= golangci/golangci-lint:v2.12.0
 FLY_IMAGE      ?= flyio/flyctl:latest
+FLY_PLATFORM   ?= linux/amd64
+FLY_APP        ?= zorgscope
+FLY_CONFIG     ?= deploy/fly.toml
+FLY_CONFIG_DIR ?= $(HOME)/.fly
 COMPOSE        := docker compose -f deploy/compose.yml
 COMPOSE_E2E    := docker compose -f deploy/compose.e2e.yml
 GOCACHE_VOL    := $(APP)-gocache
@@ -20,12 +24,19 @@ GO_RUN          = docker run --rm -t \
                     -v "$(CURDIR)":/src -w /src \
                     -v $(GOMOD_VOL):/go/pkg/mod -v $(GOCACHE_VOL):/root/.cache/go-build \
                     -e CGO_ENABLED=$(CGO_ENABLED) $(GO_IMAGE)
+# The scratch-based flyctl image has no HOME, so point it at the mounted host config explicitly.
+FLY_DOCKER_ARGS = --platform "$(FLY_PLATFORM)" \
+                    -v "$(CURDIR)":/src -w /src \
+                    -e FLY_API_TOKEN -e FLY_CONFIG_DIR=/fly-config \
+                    -v "$(FLY_CONFIG_DIR)":/fly-config
+FLY_RUN          = docker run --rm -i $(FLY_DOCKER_ARGS) $(FLY_IMAGE)
+FLY_RUN_IT       = docker run --rm -it $(FLY_DOCKER_ARGS) $(FLY_IMAGE)
 
 .DEFAULT_GOAL := help
 
 .PHONY: help
 help: ## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-19s\033[0m %s\n", $$1, $$2}'
 
 # ---------------------------------------------------------------- run
 .PHONY: app zorgscope
@@ -87,11 +98,36 @@ build: ## Build static binaries into ./bin
 image: ## Build the production container image
 	docker build -f deploy/Dockerfile -t $(APP):local .
 
-.PHONY: deploy fly
-deploy: ## Deploy to fly.io (uses FLY_API_TOKEN from env or ~/.fly)
-	docker run --rm -it -v "$(CURDIR)":/src -w /src -e FLY_API_TOKEN -v "$(HOME)/.fly":/root/.fly $(FLY_IMAGE) deploy --config deploy/fly.toml
-fly: ## Run an arbitrary flyctl command: make fly ARGS="status"
-	docker run --rm -it -v "$(CURDIR)":/src -w /src -e FLY_API_TOKEN -v "$(HOME)/.fly":/root/.fly $(FLY_IMAGE) $(ARGS)
+.PHONY: deploy fly-login fly-whoami fly-validate fly-deploy fly-status fly-checks fly-logs
+.PHONY: fly-releases fly-volumes fly-secrets fly-secrets-import fly-ssh fly
+fly-login: ## Authenticate flyctl in Docker; saves the session under ~/.fly
+	$(FLY_RUN_IT) auth login
+fly-whoami: ## Show the Fly account used by local make targets
+	$(FLY_RUN) auth whoami
+fly-validate: ## Strictly validate deploy/fly.toml for FLY_APP
+	$(FLY_RUN) config validate --strict --app "$(FLY_APP)" --config "$(FLY_CONFIG)"
+fly-deploy: fly-validate ## Validate and deploy FLY_APP with Fly's remote builder
+	$(FLY_RUN) deploy --remote-only --app "$(FLY_APP)" --config "$(FLY_CONFIG)"
+deploy: fly-deploy ## Alias for `make fly-deploy`
+fly-status: ## Show the Fly app and Machine status
+	$(FLY_RUN) status --app "$(FLY_APP)"
+fly-checks: ## Show deployed liveness and readiness check results
+	$(FLY_RUN) checks list --app "$(FLY_APP)"
+fly-logs: ## Stream production logs until interrupted
+	$(FLY_RUN) logs --app "$(FLY_APP)"
+fly-releases: ## List recent production releases
+	$(FLY_RUN) releases --app "$(FLY_APP)"
+fly-volumes: ## List persistent volumes and attachment state
+	$(FLY_RUN) volumes list --app "$(FLY_APP)"
+fly-secrets: ## List secret names and deployment status; never values
+	$(FLY_RUN) secrets list --app "$(FLY_APP)"
+fly-secrets-import: ## Import NAME=VALUE secrets from stdin, not arguments
+	$(FLY_RUN) secrets import --app "$(FLY_APP)"
+fly-ssh: ## Open an interactive console on the Fly Machine
+	$(FLY_RUN_IT) ssh console --app "$(FLY_APP)"
+fly: ## Run any non-interactive flyctl command with ARGS="..."
+	@test -n "$(ARGS)" || { echo 'usage: make fly ARGS="apps list"'; exit 2; }
+	$(FLY_RUN) $(ARGS)
 
 .PHONY: clean
 clean: ## Remove build output, caches and local data

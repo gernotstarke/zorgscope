@@ -1,15 +1,19 @@
 # Deploy the zorgscope backend to fly.io
 
 This guide creates the single always-on backend, its persistent state/config volume and deployment secrets.
-Replace `<app>` and `<org>` with your Fly values; the configured app name must also match
-`deploy/fly.toml` or be supplied with `--app`.
+Replace `<app>` and `<org>` with your Fly values. All flyctl commands are wrapped by Make and Docker; no
+host flyctl installation is required. `FLY_APP` defaults to `zorgscope`. If it is overridden, the app name
+and public URL in `deploy/fly.toml` must be changed to match before validation or deployment.
 
 ## 1. Create the app and volume
 
 ```sh
-fly auth login
-fly apps create <app> --org <org>
-fly volumes create zorgscope_data --app <app> --region fra --size 1
+make fly-whoami
+# Only when whoami reports no session:
+make fly-login
+make fly ARGS="apps create <app> --org <org>"
+make fly-validate FLY_APP=<app>
+make fly ARGS="volumes create zorgscope_data --app <app> --region fra --size 1"
 ```
 
 The volume name and mount path must match `deploy/fly.toml` (SQLite, runtime YAML and encrypted provider
@@ -25,13 +29,17 @@ Generate two independent high-entropy values locally:
   Back it up securely: losing it makes stored GitHub/Plausible secrets undecryptable. Never reuse the API
   token as this key. Its value must be base64 encoding of exactly 32 bytes (`openssl rand -base64 32`).
 
-Set them without committing values:
+Import them from standard input without placing values in command arguments or the shell history. For
+example, export a temporary `NAME=VALUE` file from a password manager, make it owner-readable only, then
+run:
 
 ```sh
-fly secrets set --app <app> \
-  ZORGSCOPE_API_TOKEN='<generated-api-token>' \
-  ZORGSCOPE_CONFIG_KEY='<generated-config-key>'
+make fly-secrets-import FLY_APP=<app> < /secure/temporary/zorgscope-fly.env
+make fly-secrets FLY_APP=<app>
 ```
+
+The input file contains unquoted `ZORGSCOPE_API_TOKEN=...` and `ZORGSCOPE_CONFIG_KEY=...` lines. Delete it
+after importing if the password manager cannot stream the values directly. Never commit it.
 
 The Fly seed at `config/fly.bootstrap.yaml` deliberately starts GitHub and Plausible disabled, so the
 service can become ready with only those two deployment secrets. `GITHUB_TOKEN` and `PLAUSIBLE_API_KEY`
@@ -40,13 +48,20 @@ remain optional environment fallbacks, but new installations should manage them 
 ## 3. Deploy and verify
 
 ```sh
-fly deploy --app <app> --config deploy/fly.toml
-fly status --app <app>
+make fly-deploy FLY_APP=<app>
+make fly-status FLY_APP=<app>
+make fly-checks FLY_APP=<app>
+make fly-volumes FLY_APP=<app>
 curl --fail "https://<app>.fly.dev/healthz"
+curl --fail "https://<app>.fly.dev/readyz"
 curl --fail \
   -H 'Authorization: Bearer <generated-api-token>' \
   "https://<app>.fly.dev/api/v1/config"
 ```
+
+Use `make fly-logs FLY_APP=<app>` for startup/deployment diagnosis and `make fly-releases FLY_APP=<app>`
+to inspect release history. The first deployment must also prove that the non-root process can create the
+SQLite and managed-config files on the mounted `/data` Fly volume; stop if the logs show a permission error.
 
 The first config response supplies revision `r`. Set each provider credential without reading it back:
 
@@ -72,6 +87,6 @@ Create a Fly deploy token scoped to the app or organisation and store it as the 
 secret `FLY_API_TOKEN`. The deploy workflow consumes this credential; it is not an application runtime
 secret and must not be added through `/api/v1/config`.
 
-After the workflow is enabled, pushes to its deployment branch run the same `fly deploy` against
-`deploy/fly.toml`. Keep `ZORGSCOPE_API_TOKEN` and `ZORGSCOPE_CONFIG_KEY` only in Fly secrets (and their
-secure backups), never in GitHub Actions variables or repository files.
+After the workflow is enabled and this work reaches `main`, successful CI runs invoke the same remote
+deployment against `deploy/fly.toml`. Keep `ZORGSCOPE_API_TOKEN` and `ZORGSCOPE_CONFIG_KEY` only in Fly
+secrets (and their secure backups), never in GitHub Actions variables or repository files.

@@ -137,41 +137,50 @@ A local authenticated production-image smoke test also passed using temporary cr
 `/data`; the temporary container was removed afterward. Package coverage at handover included server
 79.6%, watch 89.8%, config 83.1%, app 85.1%, GitHub 85.5%, Plausible 82.3% and domain 98.5%.
 
-`flyctl config validate --strict` has not run successfully because flyctl required an authenticated Fly
-session. The configuration was checked against current Fly documentation, but remote validation and an
-actual deployment remain required.
+`make fly-whoami` now succeeds as `gernot.starke@innoq.com`. The account has the `personal` organisation;
+its current app list does not contain `zorgscope`. Strict remote validation has therefore not run against
+that app, and no actual deployment has taken place.
 
-## Why remote provisioning stopped
+## Current remote state
 
-The attempted flyctl container had no authenticated session and `fly auth whoami` prompted for login.
-The temporary container was stopped. No external Fly state was changed.
+Authentication is resolved. The Dockerized flyctl image has no `HOME`, so the original Make wrapper could
+not find the valid host session even though `~/.fly/config.yml` existed. The wrapper now explicitly sets
+`FLY_CONFIG_DIR` to the mounted host config, and the account identity was verified without changing Fly
+state.
 
-Provisioning also needs two user-controlled choices/assets that must not be invented or stored in the
-repository:
+The following Fly resources still do not exist: the `zorgscope` application, its volume, runtime secrets,
+Machines and releases. Provisioning still needs user-controlled secret values that must not be invented or
+stored in the repository:
 
-1. the Fly organisation and available app name;
-2. the Fly access/deploy credential plus secure backups of the API token and configuration encryption key.
+1. the bootstrap API token and configuration encryption key, with secure backups;
+2. an app-scoped deploy token for the GitHub Actions `FLY_API_TOKEN` secret.
 
 ## Exact next-session deployment sequence
 
 Use [the Fly deployment guide](../guides/fly-deployment.md) as the command reference. In order:
 
-1. Confirm this branch and commit, then authenticate with `fly auth login` or provide a suitably scoped
-   `FLY_API_TOKEN` to flyctl.
-2. Choose the Fly organisation and app name. If the name is not `zorgscope`, update
+1. Confirm this branch and commit, then run `make fly-whoami`. Use `make fly-login` only if the existing
+   session no longer works.
+2. Confirm the app name in the `personal` organisation. If the name is not `zorgscope`, update
    [deploy/fly.toml](../../deploy/fly.toml) before deployment.
-3. Create the app in the chosen organisation.
-4. Run `flyctl config validate --strict -a <app> -c deploy/fly.toml` while authenticated.
-5. Create one 1 GB `zorgscope_data` volume in `fra` for that app.
+3. Create it with `make fly ARGS="apps create <app> --org personal"`.
+4. Run `make fly-validate FLY_APP=<app>`.
+5. Create one 1 GB volume with
+   `make fly ARGS="volumes create zorgscope_data --app <app> --region fra --size 1"`.
 6. Generate two independent secrets:
    - an API bearer token of at least 32 random characters;
    - a configuration key with `openssl rand -base64 32`.
 7. Back up the configuration key in a password manager before setting it. Losing it makes managed
    provider credentials unreadable even if the volume survives.
-8. Set `ZORGSCOPE_API_TOKEN` and `ZORGSCOPE_CONFIG_KEY` as Fly application secrets.
-9. Deploy with `fly deploy --app <app> --config deploy/fly.toml`.
-10. Check `/healthz` for liveness, `/readyz` for config/DB readiness, authenticated `/api/v1/status` and
-    `/api/v1/config`, Fly logs and volume attachment.
+8. Import `ZORGSCOPE_API_TOKEN` and `ZORGSCOPE_CONFIG_KEY` with
+   `make fly-secrets-import FLY_APP=<app>` from a secure stdin source, then verify their names with
+   `make fly-secrets FLY_APP=<app>`.
+9. Run `make fly-deploy FLY_APP=<app>`; it performs strict validation first.
+10. Run `make fly-status FLY_APP=<app>`, `make fly-checks FLY_APP=<app>` and
+    `make fly-volumes FLY_APP=<app>`. Check `/healthz` for liveness, `/readyz` for config/DB readiness,
+    authenticated `/api/v1/status` and `/api/v1/config`, and use `make fly-logs FLY_APP=<app>` for
+    diagnosis. Explicitly confirm that UID 65532 can create SQLite/config files under the mounted `/data`;
+    Fly mounts can hide ownership baked into the image, so this remains a first-deployment risk.
 11. Read the current config revision. Set `github_token` through its secret PUT route, read the new
     revision, then set `plausible_api_key` if required.
 12. Send one complete config PUT to add repositories/sites/watches and enable only sources whose

@@ -11,8 +11,9 @@ deployment values live in `.env` (git-ignored, template `deploy/env.example`).
 | `ZORGSCOPE_API_TOKEN` | Bootstrap bearer authentication for every `/api/v1/*` route | At least 32 high-entropy characters, stored in the future macOS client's Keychain/password manager. |
 | `ZORGSCOPE_CONFIG_KEY` | AES-256-GCM master key for API-managed provider secrets | Base64 encoding of exactly 32 random bytes, e.g. `openssl rand -base64 32`; keep a separate backup. |
 | `SESSION_SECRET`, `ENROLL_TOKEN` | Reserved for the future passkey/browser-session mode | Not used by production `AUTH_MODE=token`; generate before enabling passkey mode. |
-| `FLY_API_TOKEN` | Deploy from CI / `make deploy` | fly.io → Tokens → *deploy token* scoped to the app; store as GitHub repository secret. |
+| `FLY_API_TOKEN` | Token-mode access for CI and the Fly Make targets | Create an app-scoped deploy token for GitHub Actions. Local `make fly-*` commands can instead use the authenticated session under `~/.fly`. |
 
 Rules: never paste tokens into YAML, issues or commits. Config GET returns status only for the two provider
 secrets; runtime encryption is not a substitute for least-privilege upstream scopes. Rotating
 `ZORGSCOPE_CONFIG_KEY` requires re-encrypting or resetting managed provider secrets first.
+Use `make fly-secrets-import` to send deployment secrets over stdin; do not put secret values in `ARGS`.

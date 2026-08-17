@@ -23,7 +23,10 @@ make app        # build + run in Docker, then open http://localhost:8080
 make test       # unit + integration tests (in Docker)
 make lint       # go vet + golangci-lint (in Docker)
 make e2e        # Playwright end-to-end tests against fake sources (Docker Compose)
-make deploy     # deploy to fly.io (flyctl in Docker)
+make fly-whoami # verify the Fly account used by the Dockerized flyctl
+make fly-deploy # validate and deploy to fly.io with the remote builder
+make fly-status # inspect the deployed app and Machines
+make fly-logs   # stream production logs
 make help       # all targets
 ```
 
