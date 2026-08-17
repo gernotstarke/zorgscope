@@ -58,6 +58,21 @@ func TestLoadRequiresAppToken(t *testing.T) {
 	}
 }
 
+// TestLoadRejectsUnknownField guards against a misspelled top-level key (e.g. "githbu" instead of
+// "github") being silently dropped, which would leave that source unconfigured with no error.
+func TestLoadRejectsUnknownField(t *testing.T) {
+	_, err := config.Load("testdata/unknown-key.yaml", env(map[string]string{
+		"ZORGSCOPE_TOKEN": strings.Repeat("t", 32),
+		"REFRESH_SECRET":  strings.Repeat("r", 32),
+	}))
+	if err == nil {
+		t.Fatal("want an error for an unknown top-level key")
+	}
+	if !strings.Contains(err.Error(), "githbu") {
+		t.Errorf("error %q must name the offending field", err)
+	}
+}
+
 // TestLoadRealConfigFile guards against the loader rejecting the config the app actually ships
 // with — config/zorgscope.yaml is baked into the production image, so a mismatch here would only
 // surface as a start-up failure in production.

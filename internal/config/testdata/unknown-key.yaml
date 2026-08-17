@@ -1,0 +1,14 @@
+timezone: Europe/Berlin
+refresh:
+  interval: 15m
+  stale_after: 45m
+githbu:
+  login: someone
+  repos: [org/one, org/two]
+plausible:
+  sites: [example.org]
+todoist:
+  filter: "overdue | today"
+notifications:
+  slack:
+    enabled: false

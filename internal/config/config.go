@@ -4,11 +4,13 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
 	"regexp"
 	"time"
+	_ "time/tzdata" // the distroless runtime image (deploy/Dockerfile) ships no /usr/share/zoneinfo
 
 	"gopkg.in/yaml.v3"
 )
@@ -104,7 +106,9 @@ func Load(path string, env func(string) string) (Config, error) {
 	}
 
 	var fc fileConfig
-	if err := yaml.Unmarshal(data, &fc); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&fc); err != nil {
 		return Config{}, fmt.Errorf("parsing %s: %w", path, err)
 	}
 
