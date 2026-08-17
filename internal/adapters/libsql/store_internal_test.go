@@ -68,6 +68,21 @@ func TestSQLTimeRoundTrip(t *testing.T) {
 	}
 }
 
+// sqlTime only ever writes "Z", but a row repaired by hand or written by a later migration could
+// carry an offset. Everything must still read back in UTC.
+func TestParseTimeConvertsAnOffsetToUTC(t *testing.T) {
+	got, err := parseTime("2026-08-17T12:00:00+02:00")
+	if err != nil {
+		t.Fatalf("parseTime: %v", err)
+	}
+	if got.Location() != time.UTC {
+		t.Errorf("location = %v, want UTC", got.Location())
+	}
+	if want := time.Date(2026, 8, 17, 10, 0, 0, 0, time.UTC); !got.Equal(want) || got.Hour() != 10 {
+		t.Errorf("parseTime = %v, want %v", got, want)
+	}
+}
+
 // The lease compares expiry timestamps as strings, which only works because sqlTime always emits
 // the same fixed-width UTC layout.
 func TestSQLTimeOrdersLexicographically(t *testing.T) {

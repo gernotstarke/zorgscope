@@ -114,8 +114,11 @@ const itemColumns = `
 
 // ReplaceItems makes the stored items of one source exactly items: it upserts every item,
 // preserving the first_seen_at of rows that already existed, and deletes the rows of that source
-// that items no longer contains. Other sources are untouched (FR-5.5 AC1). It returns how many of
-// the items were seen for the first time, i.e. how many rows were inserted rather than updated.
+// that items no longer contains. Other sources are untouched (FR-5.5 AC1).
+//
+// It returns the number of items now stored for source — len(items) — not the number that are new.
+// That count becomes source_state.item_count, which answers "how much does this source hold?"; how
+// many of them are new is domain.CountNew's question, answered against first_seen_at.
 //
 // Everything happens in one transaction, so a failed refresh leaves the previous set intact
 // rather than a half-replaced one.
@@ -126,19 +129,15 @@ func (s *Store) ReplaceItems(ctx context.Context, source string, items []domain.
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// The ids already stored for this source answer two questions in one round trip: which
-	// incoming items are new, and which stored rows have gone away.
+	// The ids already stored for this source, read inside the transaction, are what deleteAbsent
+	// subtracts the incoming ones from.
 	known, err := storedIDs(ctx, tx, source)
 	if err != nil {
 		return 0, err
 	}
 
 	present := make(map[string]bool, len(items))
-	newCount := 0
 	for _, it := range items {
-		if !known[it.ExternalID] && !present[it.ExternalID] {
-			newCount++
-		}
 		present[it.ExternalID] = true
 		if _, err := tx.ExecContext(ctx, upsertItemSQL, upsertArgs(it, source, now)...); err != nil {
 			return 0, fmt.Errorf("upsert %s/%s: %w", source, it.ExternalID, err)
@@ -150,7 +149,7 @@ func (s *Store) ReplaceItems(ctx context.Context, source string, items []domain.
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("commit: %w", err)
 	}
-	return newCount, nil
+	return len(items), nil
 }
 
 // upsertArgs lays out one item in the order upsertItemSQL expects. The item's own FirstSeenAt is
@@ -683,7 +682,9 @@ func sqlTime(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
-// parseTime is the inverse of sqlTime.
+// parseTime is the inverse of sqlTime. It converts to UTC rather than trusting the stored offset:
+// sqlTime only ever writes "Z", but a row repaired by hand or written by a future migration could
+// carry +02:00, and the package guarantees that everything reads back in UTC.
 func parseTime(s string) (time.Time, error) {
 	if s == "" {
 		return time.Time{}, nil
@@ -692,7 +693,7 @@ func parseTime(s string) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, fmt.Errorf("parse time %q: %w", s, err)
 	}
-	return t, nil
+	return t.UTC(), nil
 }
 
 // parseInto parses each stored string into the time it belongs to, failing on the first bad one.

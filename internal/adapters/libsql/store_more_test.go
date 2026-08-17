@@ -9,9 +9,12 @@ import (
 	"github.com/gernotstarke/zorgscope/internal/domain"
 )
 
-// The ports.Store contract: ReplaceItems returns how many items are new as of now, which is what
-// the refresh service counts to decide whether to notify (FR-6.1).
-func TestReplaceItemsCountsOnlyTheNewOnes(t *testing.T) {
+// The ports.Store contract: ReplaceItems returns how many items the source now holds — len(items)
+// — and not how many of them are new. The refresh runner writes that number to
+// source_state.item_count, so a second refresh of an unchanged source must still report its full
+// size rather than zero. How many are new is a question about first_seen_at, answered by
+// domain.CountNew.
+func TestReplaceItemsReturnsTheStoredCount(t *testing.T) {
 	s, ctx := newStore(t), context.Background()
 	t1, t2 := at("2026-08-17T10:00:00Z"), at("2026-08-17T11:00:00Z")
 
@@ -20,15 +23,23 @@ func TestReplaceItemsCountsOnlyTheNewOnes(t *testing.T) {
 		t.Fatalf("ReplaceItems: %v", err)
 	}
 	if n != 2 {
-		t.Errorf("new count on an empty store = %d, want 2", n)
+		t.Errorf("stored count on an empty store = %d, want 2", n)
 	}
 
+	// One item survives and one is new: the source still holds two, so the answer is still 2.
 	n, err = s.ReplaceItems(ctx, "github", []domain.Item{item("1", "a"), item("3", "c")}, t2)
 	if err != nil {
 		t.Fatalf("ReplaceItems: %v", err)
 	}
-	if n != 1 {
-		t.Errorf("new count = %d, want 1: only item 3 had not been seen before", n)
+	if n != 2 {
+		t.Errorf("stored count = %d, want 2: the count is what the source holds, not what is new", n)
+	}
+	if got := mustItems(t, s, ctx); len(got) != n {
+		t.Errorf("ReplaceItems returned %d but the store holds %d items", n, len(got))
+	}
+
+	if n, err = s.ReplaceItems(ctx, "github", nil, t2); err != nil || n != 0 {
+		t.Errorf("ReplaceItems(nil) = %d, %v; want 0, nil", n, err)
 	}
 }
 
@@ -55,10 +66,19 @@ func TestReplaceItemsWithNoItemsClearsTheSource(t *testing.T) {
 }
 
 // A repository with hundreds of items must not run into SQLite's variable limit, in either
-// direction: many rows written, then nearly all of them deleted at once.
+// direction: many rows written, then nearly all of them deleted at once. This is the path the
+// chunked IN-delete takes, and the todoist row is here because it is also the only test that
+// reaches that delete with another source present: the scoping test replaces github with an
+// unchanged item set, so nothing is absent and no delete statement is issued at all (FR-5.5 AC1).
 func TestReplaceItemsHandlesMoreItemsThanTheParameterLimit(t *testing.T) {
 	s, ctx := newStore(t), context.Background()
 	t1, t2 := at("2026-08-17T10:00:00Z"), at("2026-08-17T11:00:00Z")
+
+	td := item("t1", "task")
+	td.Source, td.Kind = "todoist", domain.KindTask
+	if _, err := s.ReplaceItems(ctx, "todoist", []domain.Item{td}, t1); err != nil {
+		t.Fatalf("ReplaceItems(todoist): %v", err)
+	}
 
 	const many = 500
 	items := make([]domain.Item, 0, many)
@@ -72,15 +92,25 @@ func TestReplaceItemsHandlesMoreItemsThanTheParameterLimit(t *testing.T) {
 	}
 	t.Logf("wrote %d items in %s (QS-2.5 budgets a whole refresh at 30s)", many, time.Since(start))
 
-	if got := mustItems(t, s, ctx); len(got) != many {
-		t.Fatalf("len(items) = %d, want %d", len(got), many)
+	if got := mustItems(t, s, ctx); len(got) != many+1 {
+		t.Fatalf("len(items) = %d, want %d", len(got), many+1)
 	}
 	// 499 rows go away at once, which is past the 400-placeholder chunk size.
 	if _, err := s.ReplaceItems(ctx, "github", items[:1], t2); err != nil {
 		t.Fatalf("ReplaceItems(1 item): %v", err)
 	}
-	if got := mustItems(t, s, ctx); len(got) != 1 {
-		t.Fatalf("len(items) = %d, want 1 after the bulk delete", len(got))
+	got := mustItems(t, s, ctx)
+	if len(got) != 2 {
+		t.Fatalf("len(items) = %d, want 2 after the bulk delete: one github row and the todoist row", len(got))
+	}
+	survived := false
+	for _, it := range got {
+		if it.Source == "todoist" && it.ExternalID == "t1" {
+			survived = true
+		}
+	}
+	if !survived {
+		t.Errorf("the todoist row did not survive github's bulk delete (FR-5.5 AC1): %v", got)
 	}
 }
 
@@ -212,6 +242,10 @@ func TestRecordSourceOKAfterErrorKeepsBoth(t *testing.T) {
 
 // The lease is what stops two Fly machines refreshing at once (QS-1.7), so it has to hold across
 // connections, not just within one *Store.
+//
+// This is not a race test: it proves that one connection pool sees another's lease, and that the
+// holder checks behave. Exclusivity under a genuine tie rests on AcquireRefreshLease being a
+// single INSERT … ON CONFLICT … WHERE statement — the database decides, not this test.
 func TestRefreshLeaseHoldsAcrossConnections(t *testing.T) {
 	a, ctx := newStore(t), context.Background()
 	b := newStore(t) // a second connection; newStore truncates, so take the lease afterwards
