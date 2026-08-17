@@ -56,3 +56,9 @@ linters:
       - path: "_test\\.go"
         linters:
           - gosec
+      # Test helpers read best as must<Thing>(t, subject, ctx, …): the thing under test comes
+      # first and the context after it. That is a test-readability choice, not an API.
+      - path: "_test\\.go"
+        text: "context-as-argument"
+        linters:
+          - revive
