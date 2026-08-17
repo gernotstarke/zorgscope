@@ -30,12 +30,19 @@ const defaultGraphQLURL = "https://api.github.com/graphql"
 // deadline on Fetch (Task 15 adds one later).
 const maxPages = 100
 
-// Config configures access to GitHub for every fetcher in this package. Task 8 adds a build
-// fetcher that reuses this same Config, so it stays free of anything issue-specific.
+// Config configures access to GitHub for every fetcher in this package. BaseURL and RESTBaseURL
+// are deliberately two separate fields, not one repurposed field: BaseURL is the GraphQL
+// endpoint IssueFetcher talks to (an httptest URL in tests already ends in "/graphql"), while
+// RESTBaseURL is the API root BuildFetcher (Task 8) builds
+// "{RESTBaseURL}/repos/{owner}/{repo}/actions/runs" on top of. Task 12 wires both from
+// config.GitHub.BaseURL — but they name different things on GitHub's real API surface
+// (api.github.com/graphql vs. api.github.com), so collapsing them into one field would force one
+// of the two fetchers to mangle it back into shape.
 type Config struct {
-	Token   string
-	BaseURL string   // "" -> https://api.github.com/graphql
-	Repos   []string // "owner/name"
+	Token       string
+	BaseURL     string   // "" -> https://api.github.com/graphql (GraphQL endpoint, IssueFetcher)
+	RESTBaseURL string   // "" -> https://api.github.com (REST API root, BuildFetcher)
+	Repos       []string // "owner/name"
 }
 
 // IssueFetcher fetches open issues and open pull requests for the repositories in Config, over
