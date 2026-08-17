@@ -40,10 +40,14 @@ type ghBody struct {
 	} `json:"data"`
 }
 
+// graphqlQuery sends a query mentioning both issues and pullRequests — the shape Task 7's initial,
+// non-continuation query uses — so callers get both connections back. Tests exercising the
+// query-text dispatch itself live in github_graphql_dispatch_test.go, with their own query text.
 func graphqlQuery(t *testing.T, base, owner, name, after string) ghBody {
 	t.Helper()
 	payload := map[string]any{
-		"query": "query { repository(owner: $owner, name: $name) { issues { nodes { number } } } }",
+		"query": "query { repository(owner: $owner, name: $name) { " +
+			"issues { nodes { number } } pullRequests { nodes { number } } } }",
 		"variables": map[string]string{
 			"owner": owner,
 			"name":  name,

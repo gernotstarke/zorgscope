@@ -13,9 +13,16 @@ var controlSources = map[string]bool{"github": true, "plausible": true, "todoist
 
 // handleControlFail serves POST /_control/fail?source={github|plausible|todoist}&status={code}
 // with an optional repo={owner}/{name}. Once called, subsequent requests to that source return
-// the given status. When repo is present, only that repository fails and every other repository
-// (or, for plausible, every other site) keeps working — Task 7 relies on this to assert that one
-// bad repository does not lose the others.
+// the given status. When repo is present, only that target fails and every other target keeps
+// working — Task 7 relies on this to assert that one bad repository does not lose the others.
+//
+// repo is named for its GitHub use (an "owner/name" repository) because that is the case the
+// Task 6 brief specifies verbatim and Task 7's test posts literally (repo=org/bad); it is kept
+// as-is rather than renamed. It is really a generic "which target on this source" parameter,
+// though: shouldFailLocked keys github's failures by repository, but plausible has no repository
+// concept, so a plausible caller passes a site_id in the same repo parameter (e.g.
+// /_control/fail?source=plausible&repo=example.com&status=502) to scope the failure to one site.
+// todoist has neither concept, so repo is ignored for it and only a source-wide failure applies.
 func (s *server) handleControlFail(w http.ResponseWriter, r *http.Request) {
 	source := r.URL.Query().Get("source")
 	if !controlSources[source] {

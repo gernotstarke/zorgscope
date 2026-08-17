@@ -78,6 +78,14 @@ func (s *server) shouldFailLocked(source, target string) (status int, fail bool)
 
 // resetLocked reloads every fixture fresh and clears every injected failure. Caller must hold mu
 // (or, at construction, be the only goroutine with access to s).
+//
+// Its two callers report the same error differently on purpose: NewServer (above) panics, because
+// there it means a fixture embedded at build time is broken — a programming error the process
+// cannot serve anything sensible around, so failing fast at startup is correct. handleControlReset
+// (control.go) instead returns 500 to its caller: by then the server has been serving fine, a
+// request is in flight, and crashing the whole process over one control call would take every
+// other in-progress test down with it. The condition is identical; when in the request lifecycle
+// it is discovered decides whether panicking is a favour or a liability.
 func (s *server) resetLocked() error {
 	repos, runs, tasks, err := loadFixtures()
 	if err != nil {

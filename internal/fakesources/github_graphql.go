@@ -3,6 +3,7 @@ package fakesources
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 // pageSize is the fixed page size the GraphQL handler serves — 100 nodes per connection per
@@ -14,9 +15,10 @@ const pageSize = 100
 // (org/paged) and is easy to assert against in a test.
 const nextCursor = "cursor-1"
 
-// graphqlRequest is the shape Task 7's client sends. The query text itself is ignored — this
-// fake decides what to return purely from variables, honouring exactly the two names Task 7 is
-// told to send (owner, name) plus the pagination cursor (after).
+// graphqlRequest is the shape Task 7's client sends. variables.owner and variables.name (plus the
+// pagination cursor, variables.after) decide which repository and page to serve. The query text
+// itself is otherwise not interpreted — it is only inspected for the two connection names, to
+// decide which of them to include in the response (see handleGraphQL).
 type graphqlRequest struct {
 	Query     string `json:"query"`
 	Variables struct {
@@ -29,11 +31,17 @@ type graphqlRequest struct {
 // graphqlResponse is shaped exactly as shurcooL/githubv4 unmarshals it:
 // data.repository.issues.nodes[] and data.repository.pullRequests.nodes[], each connection
 // carrying pageInfo.hasNextPage and pageInfo.endCursor. This shape is the contract with Task 7.
+//
+// Issues and PullRequests are pointers so that omitempty can drop a connection entirely from the
+// JSON when the query did not ask for it — shurcooL/graphql's decoder is strict, and a response
+// key with no corresponding struct field is a decode error, not something ignored. A zero-value
+// (non-pointer) ghConnection is never "empty" to encoding/json, so a value field would always be
+// serialised even if the caller never populated it.
 type graphqlResponse struct {
 	Data struct {
 		Repository struct {
-			Issues       ghConnection `json:"issues"`
-			PullRequests ghConnection `json:"pullRequests"`
+			Issues       *ghConnection `json:"issues,omitempty"`
+			PullRequests *ghConnection `json:"pullRequests,omitempty"`
 		} `json:"repository"`
 	} `json:"data"`
 }
@@ -50,10 +58,18 @@ type ghPageInfo struct {
 	EndCursor   string `json:"endCursor"`
 }
 
-// handleGraphQL serves POST /graphql. It ignores the query text and decides what to return from
-// variables.owner and variables.name — when either is absent (the brief's own test posts
-// {"query":"{}"} with no variables at all), it serves the org/repo fixture. variables.after
-// selects the page: absent or empty means page 1, "cursor-1" means page 2.
+// handleGraphQL serves POST /graphql. variables.owner and variables.name decide the repository —
+// when either is absent (the brief's own test posts {"query":"{}"} with no variables at all), it
+// serves the org/repo fixture. variables.after selects the page: absent or empty means page 1,
+// "cursor-1" means page 2.
+//
+// Which connections the response carries is decided by inspecting the query text for the
+// substrings "issues" and "pullRequests" — not by parsing GraphQL, which a fake has no need to
+// do. Querying only "issues" gets a response with no "pullRequests" key at all, and the mirror
+// for "pullRequests" alone; querying both, or neither (as the brief's own test does), returns
+// both. This matters because shurcooL/graphql's decoder is strict about unexpected fields: if
+// this fake always returned both connections, an adapter query that asked for only one of them
+// would fail to decode, forcing every query to declare a connection it never reads.
 func (s *server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 	var req graphqlRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -76,16 +92,51 @@ func (s *server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 
 	fx := s.githubRepos[repo] // nil (zero value) for an unconfigured repo: served as empty.
 
+	wantIssues, wantPRs := connectionsRequested(req.Query)
+
 	var resp graphqlResponse
-	if fx != nil {
-		resp.Data.Repository.Issues = paginate(fx.Issues, req.Variables.After)
-		resp.Data.Repository.PullRequests = paginate(fx.PullRequests, req.Variables.After)
-	} else {
-		resp.Data.Repository.Issues = ghConnection{Nodes: []ghIssue{}}
-		resp.Data.Repository.PullRequests = ghConnection{Nodes: []ghIssue{}}
+	if wantIssues {
+		c := paginateOrEmpty(fx, req.Variables.After, true)
+		resp.Data.Repository.Issues = &c
+	}
+	if wantPRs {
+		c := paginateOrEmpty(fx, req.Variables.After, false)
+		resp.Data.Repository.PullRequests = &c
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// connectionsRequested reports which of the two connections a query text asks for, by looking
+// for the substrings "issues" and "pullRequests" ("issues" never occurs inside "pullRequests",
+// so a plain Contains is unambiguous here). Mentioning only one connection serves only that one;
+// mentioning both, or neither — the brief's own {"query":"{}"} test mentions neither — serves
+// both, which is the safe default for a query this fake did not recognise.
+func connectionsRequested(query string) (wantIssues, wantPRs bool) {
+	mentionsIssues := strings.Contains(query, "issues")
+	mentionsPRs := strings.Contains(query, "pullRequests")
+
+	switch {
+	case mentionsIssues && !mentionsPRs:
+		return true, false
+	case mentionsPRs && !mentionsIssues:
+		return false, true
+	default: // both mentioned, or neither
+		return true, true
+	}
+}
+
+// paginateOrEmpty pages fx's issues (issues=true) or pull requests (issues=false) after cursor
+// after. A nil fx (an unconfigured repository) is served as an empty connection rather than an
+// error.
+func paginateOrEmpty(fx *ghRepoFixture, after string, issues bool) ghConnection {
+	if fx == nil {
+		return ghConnection{Nodes: []ghIssue{}}
+	}
+	if issues {
+		return paginate(fx.Issues, after)
+	}
+	return paginate(fx.PullRequests, after)
 }
 
 // paginate slices nodes into the page named by after: "" (or any value other than nextCursor)
