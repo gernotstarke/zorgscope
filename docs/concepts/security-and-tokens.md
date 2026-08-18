@@ -76,11 +76,18 @@ both the bearer check on `/api/refresh` and the cookie signature check, so that 
 takes the same time regardless of how many leading bytes matched — an ordinary `==` on secret bytes
 does not have this property and is exactly the kind of timing side-channel `subtle` exists to close.
 
-Failed sign-ins are planned to be rate-limited by an in-memory token bucket keyed by client IP, 10
-failures per 15 minutes. It is deliberately in-memory rather than a Turso-backed table: the machine
-stops when idle (ADR‑0003), so a persistent counter would add a database write to every failed
-attempt for no real security benefit against an attacker who can simply wait out a machine restart
-to reset an in-memory bucket anyway.
+Failed sign-ins are rate-limited by an in-memory token bucket keyed by client IP. It is deliberately
+in-memory rather than a Turso-backed table: the machine stops when idle (ADR‑0003), so a persistent
+counter would add a database write to every failed sign-in attempt without meaningfully raising the
+cost of a patient attack.
+
+That trade-off is only acceptable because **the rate limiter is not the primary defence — the token's
+entropy is.** `ZORGSCOPE_TOKEN` is a secret to be generated randomly and at full length, never chosen
+by hand; against a token with real entropy, throttling is a courtesy that keeps the logs quiet and the
+machine asleep, not the thing standing between a stranger and the dashboard. The concrete budget and
+window live in `internal/web/auth.go`, where they can be read and changed together with the code that
+enforces them; this page deliberately does not restate them, because it is published unauthenticated
+at `/docs`.
 
 ## What is never logged (QS‑4.3)
 
