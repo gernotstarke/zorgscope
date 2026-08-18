@@ -99,11 +99,18 @@ check-env:
 	  printf '  Both values need at least 32 characters: openssl rand -base64 32\n\n'; exit 1; }
 
 # ---------------------------------------------------------------- database
-.PHONY: db-up db-shell db-reset
+.PHONY: db-up db-shell db-migrate db-reset
 db-up: ## Start only the local libsql-server
 	$(COMPOSE) up -d db
 db-shell: db-up ## Open a SQL shell against the local database
 	docker run --rm -it --network=container:$$($(COMPOSE) ps -q db) $(LIBSQL_SHELL) http://localhost:8080
+db-migrate: db-up ## Apply the schema to the local database (TURSO_URL overrides the target)
+	@# The server migrates on every start-up, so this is for the operator rather than for running
+	@# zorgscope: preparing a fresh Turso database before the first deploy, and confirming the
+	@# schema applied without reading a Machine's logs. Migrate is idempotent.
+	@# Override TURSO_URL and TURSO_AUTH_TOKEN to point it at production instead of the container.
+	$(GO_RUN_DB) sh -c 'TURSO_URL=$${TURSO_URL:-http://localhost:8080} \
+	  TURSO_AUTH_TOKEN=$${TURSO_AUTH_TOKEN:-} go run ./cmd/migrate'
 db-reset: ## Drop the local database and its volume
 	-$(COMPOSE) down -v
 
