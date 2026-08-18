@@ -186,6 +186,10 @@ type tileData struct {
 	Items    []itemView
 	Builds   []buildView
 	Sites    []siteView
+	// HasContent says whether this tile has anything stored to show, whatever its health. A
+	// disabled source holding items is the case that needs it: the tile must say that what is
+	// below is the last stored data rather than pretend nothing was ever fetched.
+	HasContent bool
 }
 
 // timeView is one timestamp rendered twice: an absolute stamp for the <time> element's machine
@@ -296,14 +300,54 @@ func (s *Server) tileData(t domain.Tile, now, lastVisit time.Time) tileData {
 	for _, b := range t.Builds {
 		td.Builds = append(td.Builds, newBuildView(b, now))
 	}
-	for _, site := range t.Sites {
-		td.Sites = append(td.Sites, siteView{
-			Site:  site.Site,
-			Week:  newWindowView(site.Week, 7),
-			Month: newWindowView(site.Month, 30),
-		})
+	if t.Name == "sites" {
+		td.Sites = s.orderedSites(t.Sites)
 	}
+	td.HasContent = len(td.Items) > 0 || len(td.Builds) > 0 || len(td.Sites) > 0
 	return td
+}
+
+// orderedSites lists the sites the sites tile shows in the order configuration names them
+// (FR-3.1 AC3), rather than in whatever order the store happened to return their metrics in — an
+// ORDER BY added to the query, or a driver returning rows differently, would otherwise silently
+// re-order the tile.
+//
+// A configured site that has no metrics at all still gets a row, with both windows reading as
+// missing. Dropping it would be the wrong answer to "I configured this site and cannot see it":
+// the tile would look complete while a site was quietly absent. A site with metrics that
+// configuration does not name — a site removed from the YAML whose rows are still stored — is
+// listed after the configured ones rather than hidden.
+func (s *Server) orderedSites(sites []domain.SiteMetrics) []siteView {
+	byName := make(map[string]domain.SiteMetrics, len(sites))
+	for _, sm := range sites {
+		byName[sm.Site] = sm
+	}
+
+	out := make([]siteView, 0, len(sites)+len(s.cfg.Plausible.Sites))
+	done := make(map[string]bool, len(out))
+	for _, name := range s.cfg.Plausible.Sites {
+		if done[name] {
+			continue
+		}
+		done[name] = true
+		out = append(out, newSiteView(name, byName[name]))
+	}
+	for _, sm := range sites {
+		if done[sm.Site] {
+			continue
+		}
+		done[sm.Site] = true
+		out = append(out, newSiteView(sm.Site, sm))
+	}
+	return out
+}
+
+func newSiteView(name string, sm domain.SiteMetrics) siteView {
+	return siteView{
+		Site:  name,
+		Week:  newWindowView(sm.Week, 7),
+		Month: newWindowView(sm.Month, 30),
+	}
 }
 
 func newTimeView(t, now time.Time) timeView {

@@ -1,6 +1,8 @@
-{{/* Overdue and due-today tasks, in the urgency order BuildDashboard produced: new first, then by
-     due date ascending (FR-4.1 AC2). Nothing is re-sorted here — SortItems' recency order would
-     bury a task overdue by a week under one edited five minutes ago. */}}
+{{/* Overdue and due-today tasks, in the urgency order BuildDashboard produced: by due date
+     ascending, overdue first (FR-4.1 AC2). NEW is a badge on this tile, never a rank — a task
+     first seen since the last visit is not more urgent than one overdue by a week. Nothing is
+     re-sorted here either: SortItems' recency order would bury that overdue task under one edited
+     five minutes ago. */}}
 {{define "tile-tasks"}}
 {{if .Items}}
 <ul class="items">

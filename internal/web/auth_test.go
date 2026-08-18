@@ -5,12 +5,15 @@ package web
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -127,6 +130,33 @@ func TestSignInIssuesAHardenedCookie(t *testing.T) {
 	if strings.Contains(c.Value, testToken) {
 		t.Error("the cookie contains the token itself (FR-8.3 AC2)")
 	}
+	// Not merely "the token is not in there verbatim": a cookie carrying base64(ZORGSCOPE_TOKEN)
+	// would pass that and still hand the credential to anything that reads the cookie jar.
+	for name, enc := range map[string]string{
+		"base64url":         base64.RawURLEncoding.EncodeToString([]byte(testToken)),
+		"base64":            base64.StdEncoding.EncodeToString([]byte(testToken)),
+		"base64 unpadded":   base64.RawStdEncoding.EncodeToString([]byte(testToken)),
+		"url-encoded":       url.QueryEscape(testToken),
+		"hex-ish uppercase": strings.ToUpper(testToken),
+	} {
+		if strings.Contains(c.Value, enc) {
+			t.Errorf("the cookie carries the token as %s (FR-8.3 AC2)", name)
+		}
+	}
+	// What it does carry is an expiry and a signature over it, and nothing else: the payload
+	// decodes to exactly the session's expiry timestamp.
+	encPayload, _, _ := strings.Cut(c.Value, ".")
+	payload, err := base64.RawURLEncoding.DecodeString(encPayload)
+	if err != nil {
+		t.Fatalf("the cookie payload is not base64url: %v", err)
+	}
+	exp, err := strconv.ParseInt(string(payload), 10, 64)
+	if err != nil {
+		t.Fatalf("the cookie payload is not an expiry timestamp: %q", payload)
+	}
+	if want := testNow.Add(sessionTTL).Unix(); exp != want {
+		t.Errorf("cookie expiry = %d, want %d", exp, want)
+	}
 
 	rec = getAs(h, "/", c)
 	if rec.Code != http.StatusOK {
@@ -168,10 +198,20 @@ func TestTamperedCookieIsRejected(t *testing.T) {
 	}
 
 	for name, value := range map[string]string{
-		"tampered signature": payload + "." + flipped,
-		"tampered payload":   "A" + payload[1:] + "." + sig,
-		"no signature":       payload,
-		"empty":              "",
+		"tampered signature":       payload + "." + flipped,
+		"tampered payload":         "A" + payload[1:] + "." + sig,
+		"no signature":             payload,
+		"empty":                    "",
+		"extra dots":               payload + "." + sig + "." + sig,
+		"dot only":                 ".",
+		"invalid base64 payload":   "!!not-base64!!." + sig,
+		"invalid base64 signature": payload + ".!!not-base64!!",
+		// A truncated signature still decodes; it is the length that is wrong, and
+		// ConstantTimeCompare of unequal lengths must not be treated as a match.
+		"short signature": payload + "." + sig[:len(sig)-4],
+		"long signature":  payload + "." + sig + "AAAA",
+		// A payload that is not a number cannot be an expiry.
+		"non-numeric payload": base64.RawURLEncoding.EncodeToString([]byte("tomorrow")) + "." + sig,
 	} {
 		t.Run(name, func(t *testing.T) {
 			bad := &http.Cookie{Name: sessionCookieName, Value: value}
@@ -198,6 +238,57 @@ func TestExpiredCookieIsRejected(t *testing.T) {
 	clock.Advance(sessionTTL + time.Minute)
 	if got := getAs(h, "/", c); got.Code != http.StatusSeeOther {
 		t.Errorf("GET / with an expired cookie = %d, want 303", got.Code)
+	}
+}
+
+// Credential independence, as a property of the route table rather than of a list of paths
+// (QS-4.1). For every route in the table, the credential its authKind does *not* name is presented
+// and must be refused. A route added by a later task is covered the moment it is declared, which a
+// hand-written list of paths could never be.
+func TestEveryRouteRefusesTheCredentialItsKindDoesNotName(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler()
+	session := cookieNamed(post(h, "/login", url.Values{"token": {testToken}}), sessionCookieName)
+	if session == nil {
+		t.Fatal("no session cookie")
+	}
+
+	for _, rt := range s.routes() {
+		if rt.auth == authPublic {
+			// A public route names no credential, so there is no other one to refuse. That it
+			// is deliberately public is asserted by the test above.
+			continue
+		}
+		t.Run(rt.method+" "+rt.pattern, func(t *testing.T) {
+			req := httptest.NewRequest(rt.method, rt.probePath(), nil)
+			var want int
+			var presented string
+
+			if rt.auth == authBearer {
+				// The session must not open the refresh endpoint: a stolen browser session
+				// must not become a way to hammer the upstream APIs.
+				presented, want = "the session cookie", http.StatusUnauthorized
+				req.AddCookie(session)
+			} else {
+				// The refresh bearer must not open anything the browser uses: cron-job.org
+				// holds the ability to trigger a refresh and nothing else.
+				presented, want = "the refresh bearer", http.StatusUnauthorized
+				req.Header.Set("Authorization", "Bearer "+testSecret)
+				if rt.auth == authSessionPage && rt.method == http.MethodGet {
+					want = http.StatusSeeOther // FR-8.3 AC1: a navigation is redirected
+				}
+			}
+
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != want {
+				t.Errorf("%s %s with %s = %d, want %d — the two credentials are independent",
+					rt.method, rt.probePath(), presented, rec.Code, want)
+			}
+			if rec.Code == http.StatusOK {
+				t.Errorf("%s %s was served with %s", rt.method, rt.probePath(), presented)
+			}
+		})
 	}
 }
 
@@ -228,15 +319,31 @@ func TestRefreshEndpointTakesTheBearerNotTheCookie(t *testing.T) {
 
 func TestBearerDoesNotGrantDashboardAccess(t *testing.T) {
 	h := newTestServer(t).Handler()
-	for _, path := range []string{"/", "/tile/github"} {
+	// The exact answer matters, not merely "not 200": a navigation is redirected to sign-in
+	// (FR-8.3 AC1) and a fragment is refused (a redirect would paint sign-in inside a tile).
+	for path, want := range map[string]int{
+		"/":            http.StatusSeeOther,
+		"/tile/github": http.StatusUnauthorized,
+	} {
 		t.Run(path, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodGet, path, nil)
 			req.Header.Set("Authorization", "Bearer "+testSecret)
 			h.ServeHTTP(rec, req)
-			if rec.Code == http.StatusOK {
-				t.Errorf("GET %s with the refresh bearer = 200; the bearer must not grant "+
-					"dashboard access", path)
+			if rec.Code != want {
+				t.Errorf("GET %s with the refresh bearer = %d, want %d; the bearer must not "+
+					"grant dashboard access", path, rec.Code, want)
+			}
+			body := rec.Body.String()
+			for _, leak := range []string{`class="tiles"`, `id="tile-github"`, "Mark all seen"} {
+				if strings.Contains(body, leak) {
+					t.Errorf("GET %s with the refresh bearer rendered %q", path, leak)
+				}
+			}
+			if rec.Code == http.StatusSeeOther {
+				if got := rec.Header().Get("Location"); got != "/login" {
+					t.Errorf("redirected to %q, want /login", got)
+				}
 			}
 		})
 	}
@@ -435,6 +542,12 @@ func TestSecurityHeaders(t *testing.T) {
 	if csp == "" || strings.Contains(csp, "unsafe-inline") {
 		t.Errorf("CSP = %q, want a policy without unsafe-inline", csp)
 	}
+	// default-src covers neither of these, and the one form on this site submits ZORGSCOPE_TOKEN.
+	for _, directive := range []string{"form-action 'self'", "base-uri 'self'", "frame-ancestors 'none'"} {
+		if !strings.Contains(csp, directive) {
+			t.Errorf("CSP = %q, want it to carry %q (QS-4.4)", csp, directive)
+		}
+	}
 }
 
 func TestSecurityHeadersAreOnEveryResponse(t *testing.T) {
@@ -483,6 +596,400 @@ func TestSignInRedirectsAnAlreadySignedInBrowserToTheDashboard(t *testing.T) {
 		t.Errorf("GET /login while signed in = %d, want 303", rec.Code)
 	}
 }
+
+// QS-4.2: the bearer endpoint drives every upstream call this application makes, so a brute force
+// against REFRESH_SECRET must run out of budget exactly as one against the sign-in form does.
+func TestFailedBearerAttemptsAreRateLimited(t *testing.T) {
+	h := newTestServer(t).Handler()
+
+	attempt := func(header string) int {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/refresh", nil)
+		req.Header.Set("Authorization", header)
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	for i := range signInAttempts {
+		if got := attempt("Bearer guess-" + strconv.Itoa(i)); got != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: status = %d, want 401", i+1, got)
+		}
+	}
+	if got := attempt("Bearer one-guess-too-many"); got != http.StatusTooManyRequests {
+		t.Errorf("status after the budget is spent = %d, want 429 (QS-4.2)", got)
+	}
+	// The credential is checked before the limit is consulted, so the cron service is never
+	// locked out of its own endpoint by someone else's guessing.
+	if got := attempt("Bearer " + testSecret); got != http.StatusOK {
+		t.Errorf("the real bearer after the limit = %d, want 200 (QS-4.2)", got)
+	}
+}
+
+// QS-4.2: a lockout is a lockout for a while, not for as long as the Machine happens to stay up.
+// The limiter's refill runs off the injected clock, so this is the only way to execute it.
+func TestASignInLockoutRecoversAsTheClockAdvances(t *testing.T) {
+	clock := &ports.FixedClock{T: testNow}
+	h := newTestServerWith(t, func(o *Options) { o.Clock = clock }).Handler()
+
+	for i := range signInAttempts {
+		if got := post(h, "/login", url.Values{"token": {"wrong"}}); got.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: status = %d, want 401", i+1, got.Code)
+		}
+	}
+	if got := post(h, "/login", url.Values{"token": {"wrong"}}); got.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", got.Code)
+	}
+
+	clock.Advance(signInWindow)
+	if got := post(h, "/login", url.Values{"token": {"wrong"}}); got.Code != http.StatusUnauthorized {
+		t.Errorf("a failed attempt a whole window later = %d, want 401: the bucket never "+
+			"refilled, so the legitimate user stays locked out until the Machine restarts", got.Code)
+	}
+}
+
+// The refill arithmetic itself, at the resolution the HTTP tests cannot see.
+func TestTheRateLimiterRefillsOverTheWindow(t *testing.T) {
+	l := newRateLimiter(signInAttempts, signInWindow)
+	now := testNow
+
+	for i := range signInAttempts {
+		if !l.allow("client", now) {
+			t.Fatalf("token %d of the initial budget was refused", i+1)
+		}
+	}
+	if l.allow("client", now) {
+		t.Fatal("the budget is not spent after the whole of it was consumed")
+	}
+
+	// A tenth of the window restores exactly one of ten tokens.
+	now = now.Add(signInWindow / 10)
+	if !l.allow("client", now) {
+		t.Error("a tenth of the window restored no token at all")
+	}
+	if l.allow("client", now) {
+		t.Error("a tenth of the window restored more than one token")
+	}
+
+	// A whole window restores the budget, and no more than the budget: an idle client cannot
+	// bank credit for a burst.
+	now = now.Add(signInWindow)
+	for i := range signInAttempts {
+		if !l.allow("client", now) {
+			t.Fatalf("token %d after a full window was refused", i+1)
+		}
+	}
+	if l.allow("client", now) {
+		t.Error("a full window restored more than the configured budget")
+	}
+}
+
+// evictLocked bounds the memory a caller varying its apparent address can make the limiter
+// allocate. What matters is which buckets it drops: a client that has fully recovered loses
+// nothing by being forgotten, whereas forgetting a client that is mid-lockout hands it a fresh
+// budget.
+func TestTheRateLimiterEvictsRecoveredClientsFirst(t *testing.T) {
+	l := newRateLimiter(signInAttempts, signInWindow)
+	now := testNow
+
+	// Three clients that have just spent their budget, and a full map of long-idle ones.
+	live := []string{"live-a", "live-b", "live-c"}
+	for _, key := range live {
+		l.buckets[key] = &bucket{tokens: 0, last: now}
+	}
+	for i := len(live); i < maxTrackedClients; i++ {
+		l.buckets["recovered-"+strconv.Itoa(i)] = &bucket{tokens: 0, last: now.Add(-2 * signInWindow)}
+	}
+
+	if !l.allow("newcomer", now) {
+		t.Fatal("a newcomer was refused although eviction had made room")
+	}
+
+	if n := len(l.buckets); n != len(live)+1 {
+		t.Errorf("after eviction the limiter tracks %d clients, want %d: every recovered bucket "+
+			"should have been dropped and no live one", n, len(live)+1)
+	}
+	for _, key := range live {
+		if _, ok := l.buckets[key]; !ok {
+			t.Errorf("live client %q was evicted while recovered buckets were available", key)
+		}
+		if l.allow(key, now) {
+			t.Errorf("evicting handed live client %q a fresh budget mid-lockout", key)
+		}
+	}
+}
+
+// When every tracked client is live the map must still be bounded, so the least recently seen one
+// goes. That is the documented trade-off: it gives that client the budget waiting out the window
+// would have given it anyway.
+func TestTheRateLimiterDropsTheLeastRecentlySeenWhenAllAreLive(t *testing.T) {
+	l := newRateLimiter(signInAttempts, signInWindow)
+	now := testNow
+
+	for i := range maxTrackedClients {
+		// All within the window, so none has recovered; oldest-0 is the least recently seen.
+		l.buckets["live-"+strconv.Itoa(i)] = &bucket{
+			tokens: 0,
+			last:   now.Add(-signInWindow + time.Duration(i+1)*time.Millisecond),
+		}
+	}
+
+	l.allow("newcomer", now)
+
+	if n := len(l.buckets); n != maxTrackedClients {
+		t.Errorf("the limiter tracks %d clients, want the cap of %d", n, maxTrackedClients)
+	}
+	if _, ok := l.buckets["live-0"]; ok {
+		t.Error("the least recently seen client survived eviction")
+	}
+	if _, ok := l.buckets["live-"+strconv.Itoa(maxTrackedClients-1)]; !ok {
+		t.Error("the most recently seen client was evicted instead")
+	}
+	if _, ok := l.buckets["newcomer"]; !ok {
+		t.Error("the newcomer got no bucket")
+	}
+}
+
+// QS-4.2: Fly-Client-IP is a request header like any other unless Fly's proxy put it there. A
+// process reachable without going through that proxy — over Fly's private 6PN network, in the
+// Compose stack, on a laptop — must ignore it, or one varying string per request buys a fresh
+// budget and the rate limit is gone from both credentials at once.
+func TestClientIPBelievesTheFlyHeaderOnlyBehindFlysProxy(t *testing.T) {
+	behind := newTestServerWith(t, func(o *Options) { o.BehindFlyProxy = boolPtr(true) })
+	off := newTestServerWith(t, func(o *Options) { o.BehindFlyProxy = boolPtr(false) })
+
+	request := func(header string) *http.Request {
+		r := httptest.NewRequest(http.MethodPost, "/login", nil)
+		r.RemoteAddr = "192.0.2.10:41234"
+		if header != "" {
+			r.Header.Set("Fly-Client-IP", header)
+		}
+		return r
+	}
+
+	// A RemoteAddr net/http could not split into host and port is still a stable identity: it
+	// comes from the connection, not from the caller.
+	odd := httptest.NewRequest(http.MethodPost, "/login", nil)
+	odd.RemoteAddr = "a-unix-socket"
+	for name, s := range map[string]*Server{"behind Fly's proxy": behind, "off the proxy": off} {
+		if got := s.clientIP(odd); got != "a-unix-socket" {
+			t.Errorf("%s: clientIP of an address with no port = %q, want %q", name, got, "a-unix-socket")
+		}
+	}
+
+	cases := []struct {
+		name            string
+		header          string
+		wantBehind      string
+		wantOffTheProxy string
+	}{
+		{"a plausible client address", "203.0.113.7", "203.0.113.7", "192.0.2.10"},
+		{"no header at all", "", "192.0.2.10", "192.0.2.10"},
+		{"an unparseable value", "not-an-ip-address", "192.0.2.10", "192.0.2.10"},
+		{"an empty value", " ", "192.0.2.10", "192.0.2.10"},
+		{"an IPv6 address", "2001:db8::1", "2001:db8::1", "192.0.2.10"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := behind.clientIP(request(tc.header)); got != tc.wantBehind {
+				t.Errorf("behind Fly's proxy: clientIP = %q, want %q", got, tc.wantBehind)
+			}
+			if got := off.clientIP(request(tc.header)); got != tc.wantOffTheProxy {
+				t.Errorf("off the proxy: clientIP = %q, want %q — the header must not be "+
+					"believed there (QS-4.2)", got, tc.wantOffTheProxy)
+			}
+		})
+	}
+}
+
+// The same property end to end: off the proxy, varying the header does not buy a fresh budget.
+func TestVaryingTheFlyHeaderCannotEscapeTheRateLimitOffTheProxy(t *testing.T) {
+	h := newTestServerWith(t, func(o *Options) { o.BehindFlyProxy = boolPtr(false) }).Handler()
+
+	attempt := func(i int) int {
+		rec := httptest.NewRecorder()
+		form := url.Values{"token": {"wrong"}}
+		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Fly-Client-IP", "203.0.113."+strconv.Itoa(i))
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	for i := range signInAttempts {
+		if got := attempt(i); got != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: status = %d, want 401", i+1, got)
+		}
+	}
+	if got := attempt(signInAttempts); got != http.StatusTooManyRequests {
+		t.Errorf("status = %d, want 429: a spoofed Fly-Client-IP minted a fresh bucket (QS-4.2)", got)
+	}
+}
+
+// The signal itself: FLY_APP_NAME is set by Fly in every Machine it runs and by nothing else.
+func TestBehindFlyProxyFollowsTheFlyRuntimeEnvironment(t *testing.T) {
+	t.Setenv(flyAppName, "")
+	if behindFlyProxy() {
+		t.Error("behindFlyProxy() is true with FLY_APP_NAME empty")
+	}
+	if s := newTestServer(t); s.trustFlyClientIP {
+		t.Error("a server built outside Fly trusts Fly-Client-IP")
+	}
+
+	t.Setenv(flyAppName, "zorgscope")
+	if !behindFlyProxy() {
+		t.Error("behindFlyProxy() is false with FLY_APP_NAME set")
+	}
+	if s := newTestServer(t); !s.trustFlyClientIP {
+		t.Error("a server built inside a Fly Machine does not trust Fly-Client-IP")
+	}
+}
+
+// QS-4.1: authKind's zero value must be the most restrictive kind, so that a table entry whose
+// auth field an author forgot is refused rather than served to anyone who asks.
+func TestARouteWithNoDeclaredCredentialFailsClosed(t *testing.T) {
+	if authPublic == authKind(0) {
+		t.Fatal("authPublic is authKind's zero value: an omitted auth field would make a route " +
+			"public, which is exactly the mistake the route table exists to prevent (QS-4.1)")
+	}
+
+	s := newTestServer(t)
+	// A route as a future author might write it, having forgotten the credential.
+	forgotten := route{
+		method:  http.MethodGet,
+		pattern: "/forgotten",
+		handler: func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte("the content of a route nobody protected"))
+		},
+	}
+	h := s.wrap(forgotten)
+
+	anonymous := httptest.NewRecorder()
+	h.ServeHTTP(anonymous, httptest.NewRequest(http.MethodGet, "/forgotten", nil))
+	if anonymous.Code == http.StatusOK {
+		t.Errorf("an anonymous request to a route with no declared credential = %d", anonymous.Code)
+	}
+	if strings.Contains(anonymous.Body.String(), "the content of a route nobody protected") {
+		t.Error("a route with no declared credential served its content to an anonymous caller")
+	}
+
+	withSession := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/forgotten", nil)
+	req.AddCookie(cookieNamed(post(s.Handler(), "/login", url.Values{"token": {testToken}}), sessionCookieName))
+	h.ServeHTTP(withSession, req)
+	if withSession.Code == http.StatusOK {
+		t.Errorf("a session request to a route with no declared credential = %d, want a refusal: "+
+			"the zero value must be the most restrictive kind", withSession.Code)
+	}
+}
+
+// Rotating ZORGSCOPE_TOKEN is this product's only sign-out (FR-8.3 AC3), and it cannot reach a
+// page the browser has already stored. Authenticated responses therefore say no-store.
+func TestAuthenticatedResponsesAreNotStoredByTheBrowser(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler()
+	c := cookieNamed(post(h, "/login", url.Values{"token": {testToken}}), sessionCookieName)
+	if c == nil {
+		t.Fatal("no session cookie")
+	}
+
+	for _, rt := range s.routes() {
+		if rt.auth != authSessionPage && rt.auth != authSessionFragment {
+			continue
+		}
+		t.Run(rt.method+" "+rt.pattern, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(rt.method, rt.probePath(), nil)
+			req.AddCookie(c)
+			h.ServeHTTP(rec, req)
+			if got := rec.Header().Get("Cache-Control"); !strings.Contains(got, "no-store") {
+				t.Errorf("Cache-Control = %q, want no-store: a rotated token cannot evict a "+
+					"page the browser kept (FR-8.3 AC3)", got)
+			}
+		})
+	}
+}
+
+// FR-1.3 AC3: "Mark all seen" is a plain form, so a visitor with JavaScript disabled and an
+// expired session sees this 401 body itself. It has to lead somewhere.
+func TestTheUnauthorisedFragmentBodyLeadsBackToSignIn(t *testing.T) {
+	h := newTestServer(t).Handler()
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/seen", nil))
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("POST /seen anonymously = %d, want 401 (QS-4.1)", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("Content-Type = %q, want text/html", ct)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `href="/login"`) {
+		t.Errorf("the 401 body offers no way back to sign-in:\n%s", body)
+	}
+	for _, forbidden := range []string{"<script", "style=", " onclick="} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("the 401 body contains %q, which the CSP forbids (QS-4.4)", forbidden)
+		}
+	}
+}
+
+// GET /static/ must serve files, not an index of everything the binary embeds.
+func TestStaticServesFilesAndNeverAListing(t *testing.T) {
+	h := newTestServer(t).Handler()
+
+	listing := get(h, "/static/")
+	if listing.Code != http.StatusNotFound {
+		t.Errorf("GET /static/ = %d, want 404", listing.Code)
+	}
+	if strings.Contains(listing.Body.String(), "htmx.min.js") {
+		t.Error("GET /static/ listed the embedded assets")
+	}
+	if got := get(h, "/static/no-such-asset.css"); got.Code != http.StatusNotFound {
+		t.Errorf("GET an unknown asset = %d, want 404", got.Code)
+	}
+
+	css := get(h, "/static/app.css")
+	if css.Code != http.StatusOK {
+		t.Fatalf("GET /static/app.css = %d, want 200", css.Code)
+	}
+	if got := css.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/css") {
+		t.Errorf("Content-Type = %q, want text/css", got)
+	}
+}
+
+// QS-4.3: Redact's coverage is derived from config.Secrets by reflection rather than from a list
+// kept by hand, so this fails the moment a new secret field is not covered — including a field
+// that reflection over string fields cannot see.
+func TestRedactCoversEveryFieldOfSecrets(t *testing.T) {
+	var secrets config.Secrets
+	v := reflect.ValueOf(&secrets).Elem()
+	values := make(map[string]string, v.NumField())
+
+	for i := range v.NumField() {
+		name := v.Type().Field(i).Name
+		if v.Field(i).Kind() != reflect.String {
+			t.Fatalf("config.Secrets.%s is not a string, so Redact cannot scrub it. Redaction "+
+				"is the last line of defence for QS-4.3: either make the field a string or "+
+				"teach Redact about its shape.", name)
+		}
+		value := "canary-value-of-" + name
+		v.Field(i).SetString(value)
+		values[name] = value
+	}
+	if len(values) == 0 {
+		t.Fatal("config.Secrets has no fields; this test would prove nothing")
+	}
+
+	for name, value := range values {
+		text := "upstream said: " + value + " is invalid"
+		if got := Redact(secrets, text); strings.Contains(got, value) {
+			t.Errorf("Redact left config.Secrets.%s in %q", name, got)
+		}
+	}
+}
+
+func boolPtr(b bool) *bool { return &b }
 
 // ---------------------------------------------------------------- helpers
 

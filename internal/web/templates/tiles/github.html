@@ -10,7 +10,10 @@
       <a class="item-title" href="{{.URL}}" target="_blank" rel="noopener noreferrer">{{.Title}}</a>
     </p>
     <p class="item-meta">{{.Repo}}{{if .Number}} #{{.Number}}{{end}} · {{.Kind}}{{if .Author}} · {{.Author}}{{end}}</p>
-    <p class="item-meta">opened <time datetime="{{.Created.Absolute}}">{{.Created.Relative}}</time>{{if .Updated.Known}}, updated <time datetime="{{.Updated.Absolute}}">{{.Updated.Relative}}</time>{{end}}</p>
+    {{/* Both stamps are guarded by .Known: a zero timestamp — a stored row whose created_at
+         failed to parse — must read as unknown rather than render <time datetime=""></time>,
+         which is invalid HTML and shows the visitor the word "opened" followed by nothing. */}}
+    <p class="item-meta">{{if .Created.Known}}opened <time datetime="{{.Created.Absolute}}">{{.Created.Relative}}</time>{{else}}opened at an unknown time{{end}}{{if .Updated.Known}}, updated <time datetime="{{.Updated.Absolute}}">{{.Updated.Relative}}</time>{{end}}</p>
   </li>
   {{end}}
 </ul>

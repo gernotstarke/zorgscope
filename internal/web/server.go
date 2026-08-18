@@ -14,14 +14,20 @@ package web
 
 import (
 	"bytes"
+	"compress/gzip"
 	"embed"
 	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
 	"log/slog"
+	"mime"
 	"net/http"
+	"os"
+	"path"
+	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/gernotstarke/zorgscope/internal/config"
@@ -52,16 +58,26 @@ const strictTransportSecurity = "max-age=31536000; includeSubDomains"
 // contentSecurityPolicy carries no 'unsafe-inline' because it does not need to: htmx is vendored
 // under /static and the stylesheet is a file, so there is no inline script or style to allow
 // (QS-4.4).
+// form-action and base-uri are named explicitly because default-src covers neither. The one form
+// on this site submits ZORGSCOPE_TOKEN, so where a form may post to is not a detail: without
+// form-action an injected <form action="https://elsewhere"> would be a working exfiltration route
+// for the credential, and without base-uri an injected <base> would re-point every relative URL on
+// the page, including that form's action.
 const contentSecurityPolicy = "default-src 'self'; img-src 'self' data:; style-src 'self'; " +
-	"script-src 'self'; frame-ancestors 'none'"
+	"script-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'"
 
-// Options are the dependencies of a Server. Clock and Log are optional; the rest are required.
+// Options are the dependencies of a Server. Clock, Log and BehindFlyProxy are optional; the rest
+// are required.
 type Options struct {
 	Config config.Config
 	Store  ports.Store
 	Runner *refresh.Runner
 	Clock  ports.Clock
 	Log    *slog.Logger
+	// BehindFlyProxy says whether Fly's proxy sits in front of this process, which decides
+	// whether the Fly-Client-IP header may be believed (see clientIP). nil means "work it out
+	// from the runtime environment"; the tests set it either way to exercise both paths.
+	BehindFlyProxy *bool
 }
 
 // Server holds the HTTP layer's state: the parsed templates, the session codec, the sign-in and
@@ -74,11 +90,14 @@ type Server struct {
 	log     *slog.Logger
 	pages   map[string]*template.Template
 	tiles   *template.Template
-	static  http.Handler
+	assets  map[string]staticAsset
 	session *sessionCodec
 	signIn  *rateLimiter
 	bearer  *rateLimiter
 	handler http.Handler
+	// trustFlyClientIP is the decision behind clientIP: only a process actually running behind
+	// Fly's proxy may believe the Fly-Client-IP header.
+	trustFlyClientIP bool
 }
 
 // New builds a Server. It fails when a required dependency or credential is missing: a process
@@ -116,23 +135,29 @@ func New(o Options) (*Server, error) {
 		return nil, fmt.Errorf("web: parsing the tile fragments: %w", err)
 	}
 
-	staticDir, err := fs.Sub(embedded, "static")
+	assets, err := loadStatic()
 	if err != nil {
 		return nil, fmt.Errorf("web: static assets: %w", err)
 	}
 
+	trustFly := behindFlyProxy()
+	if o.BehindFlyProxy != nil {
+		trustFly = *o.BehindFlyProxy
+	}
+
 	s := &Server{
-		cfg:     o.Config,
-		store:   o.Store,
-		runner:  o.Runner,
-		clock:   o.Clock,
-		log:     o.Log,
-		pages:   pages,
-		tiles:   tiles,
-		static:  http.StripPrefix("/static/", http.FileServer(http.FS(staticDir))),
-		session: newSessionCodec(o.Config.Secrets.AppToken),
-		signIn:  newRateLimiter(signInAttempts, signInWindow),
-		bearer:  newRateLimiter(signInAttempts, signInWindow),
+		cfg:              o.Config,
+		store:            o.Store,
+		runner:           o.Runner,
+		clock:            o.Clock,
+		log:              o.Log,
+		pages:            pages,
+		tiles:            tiles,
+		assets:           assets,
+		session:          newSessionCodec(o.Config.Secrets.AppToken),
+		signIn:           newRateLimiter(signInAttempts, signInWindow),
+		bearer:           newRateLimiter(signInAttempts, signInWindow),
+		trustFlyClientIP: trustFly,
 	}
 	s.handler = securityHeaders(s.mux())
 	return s, nil
@@ -145,19 +170,25 @@ func (s *Server) Handler() http.Handler { return s.handler }
 // authKind is the credential a route requires.
 type authKind int
 
+// The kinds are ordered most restrictive first, so that authKind's zero value is the most
+// restrictive one and a table entry whose auth field is left out fails closed rather than open. A
+// forgotten field used to mean authPublic, which is the one mistake QS-4.1's structure exists to
+// make impossible.
 const (
-	// authPublic needs no credential: liveness, sign-in, documentation and static assets.
-	authPublic authKind = iota
-	// authSessionPage needs the session cookie and is a browser navigation, so an anonymous GET
-	// is redirected to the sign-in page rather than refused (FR-8.3 AC1).
-	authSessionPage
+	// authBearer needs the REFRESH_SECRET bearer, and never accepts the session cookie: the cron
+	// service holds the ability to trigger a refresh and nothing else. It is the zero value
+	// because it is the credential no browser ever presents.
+	authBearer authKind = iota
 	// authSessionFragment needs the session cookie but is not a navigation — an htmx fragment or
 	// a form action — so an anonymous request is refused with 401. Redirecting an htmx swap would
 	// paint the sign-in page into a tile.
 	authSessionFragment
-	// authBearer needs the REFRESH_SECRET bearer, and never accepts the session cookie: the cron
-	// service holds the ability to trigger a refresh and nothing else.
-	authBearer
+	// authSessionPage needs the session cookie and is a browser navigation, so an anonymous GET
+	// is redirected to the sign-in page rather than refused (FR-8.3 AC1).
+	authSessionPage
+	// authPublic needs no credential: liveness, sign-in, documentation and static assets. It is
+	// deliberately last, so that it can only ever be chosen by naming it.
+	authPublic
 )
 
 // route is one entry of the route table.
@@ -207,19 +238,26 @@ func (s *Server) routes() []route {
 func (s *Server) mux() *http.ServeMux {
 	mux := http.NewServeMux()
 	for _, rt := range s.routes() {
-		var h http.Handler = rt.handler
-		switch rt.auth {
-		case authPublic:
-		case authSessionPage:
-			h = s.requireSession(h, true)
-		case authSessionFragment:
-			h = s.requireSession(h, false)
-		case authBearer:
-			h = s.requireBearer(h)
-		}
-		mux.Handle(rt.method+" "+rt.pattern, h)
+		mux.Handle(rt.method+" "+rt.pattern, s.wrap(rt))
 	}
 	return mux
+}
+
+// wrap puts the credential a route's table entry names in front of its handler. It is the only
+// place a handler is paired with an authKind, which is what lets a test wrap a route of its own —
+// including one whose auth field was left out — and see what the mux would have registered.
+func (s *Server) wrap(rt route) http.Handler {
+	var h http.Handler = rt.handler
+	switch rt.auth {
+	case authPublic:
+	case authSessionPage:
+		h = s.requireSession(h, true)
+	case authSessionFragment:
+		h = s.requireSession(h, false)
+	case authBearer:
+		h = s.requireBearer(h)
+	}
+	return h
 }
 
 // securityHeaders wraps the whole mux, so the headers are on every response — including the 404s
@@ -267,9 +305,153 @@ func (s *Server) handleDocs(w http.ResponseWriter, _ *http.Request) {
 }
 
 // handleStatic serves the embedded assets: the stylesheet and vendored htmx.
+//
+// It answers out of a map built at start-up rather than from an http.FileServer, for three
+// reasons. A path that is not a known asset — including a directory — is a 404 rather than a
+// listing of everything the binary embeds. A traversal cannot be expressed at all, because the
+// path is a map key and never touches a file system. And each compressible asset is held gzipped
+// as well as stored, so QS-2.3's budget is met on the wire (see loadStatic).
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
-	s.static.ServeHTTP(w, r)
+	a, ok := s.assets[path.Clean(strings.TrimPrefix(r.URL.Path, "/static/"))]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+
+	h := w.Header()
+	h.Set("Content-Type", a.contentType)
+	// The response varies by Accept-Encoding even when this particular request did not accept
+	// gzip, so a shared cache must not hand the compressed body to a client that cannot read it.
+	h.Set("Vary", "Accept-Encoding")
+	h.Set("Cache-Control", "public, max-age=3600")
+
+	body := a.stored
+	if a.gzipped != nil && acceptsGzip(r) {
+		h.Set("Content-Encoding", "gzip")
+		body = a.gzipped
+	}
+	h.Set("Content-Length", strconv.Itoa(len(body)))
+	_, _ = w.Write(body)
 }
+
+// acceptsGzip reports whether the client said it can read a gzip-encoded body. A client that did
+// not — a plain curl, a text browser, a proxy that strips the header — still gets the file, just
+// uncompressed.
+func acceptsGzip(r *http.Request) bool {
+	for _, enc := range strings.Split(r.Header.Get("Accept-Encoding"), ",") {
+		name, _, _ := strings.Cut(enc, ";")
+		if strings.EqualFold(strings.TrimSpace(name), "gzip") {
+			return true
+		}
+	}
+	return false
+}
+
+// ---------------------------------------------------------------- static assets
+
+// staticAsset is one embedded file, held in both the encodings this server can hand out.
+type staticAsset struct {
+	contentType string
+	stored      []byte
+	// gzipped is the gzip encoding of stored, or nil when the type does not compress or the
+	// compression did not actually save anything.
+	gzipped []byte
+}
+
+// compressibleStatic are the extensions worth gzipping. Everything else — the PNGs and the ICO of
+// the logo — is already compressed, and gzipping it costs bytes rather than saving them.
+var compressibleStatic = map[string]bool{
+	".css": true, ".js": true, ".svg": true, ".json": true, ".html": true, ".txt": true,
+	".xml": true, ".map": true,
+}
+
+// staticContentTypes pins the types this application actually serves, rather than depending on
+// whatever the container's mime database happens to know. Anything else falls back to
+// mime.TypeByExtension and then to a sniff.
+var staticContentTypes = map[string]string{
+	".css": "text/css; charset=utf-8",
+	".js":  "text/javascript; charset=utf-8",
+	".svg": "image/svg+xml",
+	".png": "image/png",
+	".ico": "image/x-icon",
+}
+
+// loadStatic reads every embedded asset once, at start-up, and pre-computes its gzip encoding.
+//
+// Compressing here rather than per request is what makes gzip free on a machine that scales to
+// zero: the work happens once, on a body that never changes, at the highest compression level —
+// and a cold start pays for it while it is parsing templates anyway. It is also what makes
+// QS-2.3's budget reachable at all. The vendored htmx the requirement itself names is 50 kB
+// stored, which is the whole budget on its own; gzipped it is about a third of that, and QS-2.3's
+// goal — "small enough for a slow connection" — is about what crosses the wire, which is what the
+// browser will ask for with Accept-Encoding: gzip.
+func loadStatic() (map[string]staticAsset, error) {
+	assets := make(map[string]staticAsset)
+	err := fs.WalkDir(embedded, "static", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		body, err := fs.ReadFile(embedded, p)
+		if err != nil {
+			return err
+		}
+		name := strings.TrimPrefix(p, "static/")
+		ext := strings.ToLower(path.Ext(name))
+
+		a := staticAsset{contentType: contentTypeFor(ext, body), stored: body}
+		if compressibleStatic[ext] {
+			gz, err := gzipBytes(body)
+			if err != nil {
+				return err
+			}
+			// Only keep it when it is actually smaller; a tiny file can gzip larger.
+			if len(gz) < len(body) {
+				a.gzipped = gz
+			}
+		}
+		assets[name] = a
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return assets, nil
+}
+
+func contentTypeFor(ext string, body []byte) string {
+	if t, ok := staticContentTypes[ext]; ok {
+		return t
+	}
+	if t := mime.TypeByExtension(ext); t != "" {
+		return t
+	}
+	return http.DetectContentType(body)
+}
+
+func gzipBytes(body []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	zw, err := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := zw.Write(body); err != nil {
+		return nil, err
+	}
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// flyAppName is the environment variable Fly sets in every Machine it runs.
+const flyAppName = "FLY_APP_NAME"
+
+// behindFlyProxy reports whether this process is running on a Fly Machine, and therefore whether
+// Fly's proxy is in front of it. See clientIP for why that decides whether a header may be
+// believed. FLY_APP_NAME is the signal because Fly injects it into the Machine's environment
+// itself: nothing a request carries can set it, and no other way of running this binary — the
+// Compose stack, `go run`, a test — has it.
+func behindFlyProxy() bool { return os.Getenv(flyAppName) != "" }
 
 // ---------------------------------------------------------------- rendering
 
@@ -325,18 +507,21 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, doing string, err 
 // skipped, and the longest values are replaced first so that a secret containing another is not
 // left partly visible.
 func Redact(secrets config.Secrets, text string) string {
-	values := []string{
-		secrets.GitHubToken, secrets.PlausibleKey, secrets.TodoistToken, secrets.SlackWebhook,
-		secrets.AppToken, secrets.RefreshSecret, secrets.TursoAuthToken, secrets.TursoURL,
-	}
-	nonEmpty := values[:0:0]
-	for _, v := range values {
-		if v != "" {
-			nonEmpty = append(nonEmpty, v)
+	// The fields are read by reflection rather than listed here on purpose. A hand-written list
+	// is a second place to remember: a ninth field on config.Secrets would be silently
+	// unredacted, and nothing would fail. Reflection makes "every string field of Secrets" the
+	// definition, so a new secret is covered the moment it is declared.
+	v := reflect.ValueOf(secrets)
+	values := make([]string, 0, v.NumField())
+	for i := range v.NumField() {
+		f := v.Field(i)
+		if f.Kind() != reflect.String || f.String() == "" {
+			continue
 		}
+		values = append(values, f.String())
 	}
-	sort.Slice(nonEmpty, func(i, j int) bool { return len(nonEmpty[i]) > len(nonEmpty[j]) })
-	for _, v := range nonEmpty {
+	sort.Slice(values, func(i, j int) bool { return len(values[i]) > len(values[j]) })
+	for _, v := range values {
 		text = strings.ReplaceAll(text, v, "[redacted]")
 	}
 	return text

@@ -124,6 +124,12 @@ func (s *Server) signedIn(r *http.Request) bool {
 func (s *Server) requireSession(next http.Handler, redirect bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.signedIn(r) {
+			// Rotating ZORGSCOPE_TOKEN is the only sign-out this product has (FR-8.3 AC3), and
+			// a rotation cannot reach a page the browser has already stored. Without no-store
+			// the dashboard — names of repositories, issue titles, task content — stays in the
+			// back-forward cache and in any disk cache after the token is rotated, which is
+			// precisely the state the rotation was performed to end.
+			w.Header().Set("Cache-Control", "no-store")
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -134,8 +140,43 @@ func (s *Server) requireSession(next http.Handler, redirect bool) http.Handler {
 		if r.Header.Get("HX-Request") == "true" {
 			w.Header().Set("HX-Redirect", "/login")
 		}
-		http.Error(w, "Not signed in.", http.StatusUnauthorized)
+		s.unauthorised(w)
 	})
+}
+
+// unauthorisedPage is the body of a 401 on a session route.
+//
+// The status has to stay 401: QS-4.1's table says so, and /tile/{source} is swapped into the page
+// by htmx, which must not paint a sign-in form inside a tile. But POST /seen is a plain browser
+// form (FR-1.3 AC3), so with JavaScript disabled the HX-Redirect above is never read and the
+// visitor is left looking at whatever this body says. A sentence and a link is the difference
+// between an expired session and a dead end.
+const unauthorisedPage = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Sign in · zorgscope</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<main>
+<section class="signin">
+<h1>Not signed in</h1>
+<p>Your session has expired. <a href="/login">Sign in again</a>.</p>
+</section>
+</main>
+</body>
+</html>
+`
+
+func (s *Server) unauthorised(w http.ResponseWriter) {
+	h := w.Header()
+	h.Set("Content-Type", "text/html; charset=utf-8")
+	h.Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusUnauthorized)
+	_, _ = w.Write([]byte(unauthorisedPage))
 }
 
 // requireBearer refuses a request that does not carry REFRESH_SECRET as a bearer token.
@@ -152,7 +193,7 @@ func (s *Server) requireBearer(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		ip := clientIP(r)
+		ip := s.clientIP(r)
 		if !s.bearer.allow(ip, s.clock.Now()) {
 			s.log.Warn("refresh authentication rate-limited", "ip", ip)
 			http.Error(w, "Too many attempts.", http.StatusTooManyRequests)
@@ -196,7 +237,7 @@ func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 	if !s.signIn.allow(ip, s.clock.Now()) {
 		s.log.Warn("sign-in rate-limited", "ip", ip)
 		s.render(w, r, http.StatusTooManyRequests, "login.html", pageData{
@@ -215,18 +256,34 @@ func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 
 // clientIP identifies the caller for rate-limiting purposes.
 //
-// Only Fly-Client-IP is trusted, and only because Fly's proxy sets it itself and overwrites
-// whatever the client sent. X-Forwarded-For is deliberately ignored: it is appended to rather than
-// replaced, so an attacker could mint a fresh identity per request and walk straight past the
-// limit.
-func clientIP(r *http.Request) string {
-	if v := r.Header.Get("Fly-Client-IP"); v != "" {
-		return v
+// Fly-Client-IP is believed only when this process is actually running behind Fly's proxy, which
+// is what trustFlyClientIP records (see behindFlyProxy). The header is trustworthy there and only
+// there: Fly's proxy sets it itself, overwriting whatever the client sent. Anywhere else — the
+// Compose stack, a local `go run`, a Machine reached over Fly's private 6PN network rather than
+// through the proxy — it is just a request header, and believing it would hand every caller a
+// fresh 10-token bucket per request by varying one string. That would remove QS-4.2 from both
+// credentials at once, since the sign-in form and the refresh bearer share this function.
+//
+// X-Forwarded-For is never consulted, under any circumstances: it is appended to rather than
+// replaced, so even behind a trustworthy proxy its left-hand entries are the client's own words.
+//
+// Whatever is taken from the header must parse as an IP address. An unparseable value is not a
+// client identity, and letting one through would make the bucket key attacker-chosen text.
+func (s *Server) clientIP(r *http.Request) string {
+	if s.trustFlyClientIP {
+		if ip := net.ParseIP(strings.TrimSpace(r.Header.Get("Fly-Client-IP"))); ip != nil {
+			return ip.String()
+		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
 	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.String()
+	}
+	// RemoteAddr is written by net/http, not by the caller, so an address that does not parse is
+	// still a stable identity rather than something an attacker chose.
 	return host
 }
 

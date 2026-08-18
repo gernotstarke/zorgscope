@@ -8,10 +8,13 @@
   <header class="tile-head">
     <h2 class="tile-title">{{.Title}}</h2>
     {{if gt .NewCount 0}}<span class="tile-count">{{.NewCount}} new</span>{{end}}
-    <span class="tile-age">{{if .LastOK.Known}}<time datetime="{{.LastOK.Absolute}}">{{.LastOK.Relative}}</time>{{else}}never fetched{{end}}</span>
+    {{/* A disabled source has no last-success time to show, because it is not being fetched at
+         all — but "never fetched" would be a lie above items that were fetched an hour ago and
+         are still stored. It says what is true instead: nothing is being fetched. */}}
+    <span class="tile-age">{{if .LastOK.Known}}<time datetime="{{.LastOK.Absolute}}">{{.LastOK.Relative}}</time>{{else if .Disabled}}not fetching{{else}}never fetched{{end}}</span>
   </header>
   {{if .Disabled}}
-  <p class="notice notice-disabled" role="status">Disabled — no credential is configured for this source.</p>
+  <p class="notice notice-disabled" role="status">Disabled — no credential is configured for this source.{{if .HasContent}} What follows is the data that was stored before it went away.{{end}}</p>
   {{else if .Error}}
   <p class="notice notice-error" role="alert">Failing — {{.Error}} (last success {{if .LastOK.Known}}<time datetime="{{.LastOK.Absolute}}">{{.LastOK.Relative}}</time>{{else}}never{{end}})</p>
   {{else if .Stale}}

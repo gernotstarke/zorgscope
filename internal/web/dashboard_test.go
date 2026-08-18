@@ -4,13 +4,18 @@
 package web
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -180,6 +185,21 @@ func TestTilesPollAtTheConfiguredInterval(t *testing.T) {
 	if !strings.Contains(body, "every 900s") {
 		t.Error("the poll trigger does not follow the configured refresh interval (FR-1.6 AC1)")
 	}
+	// The swap has to be outerHTML: the fragment is a whole <section class="tile">, so htmx's
+	// default innerHTML swap would nest the returned tile inside the existing one on every poll,
+	// duplicating its items and its id, four levels deep after an hour.
+	if !strings.Contains(body, `hx-get="/tile/github" hx-trigger="every 900s" hx-swap="outerHTML"`) {
+		t.Error("the GitHub tile does not replace itself on a poll (FR-1.6 AC1)")
+	}
+	if n := strings.Count(body, `hx-swap="outerHTML"`); n != 4 {
+		t.Errorf("%d of 4 tiles replace themselves on a poll (FR-1.6 AC1)", n)
+	}
+	// And the fragment carries it too, or polling stops after the first swap.
+	fragment := getAuthed(t, dashHandler(t, store), "/tile/github").Body.String()
+	if !strings.Contains(fragment, `hx-swap="outerHTML"`) {
+		t.Error("the tile fragment does not carry its own swap, so the tile stops polling " +
+			"after the first one (FR-1.6 AC1)")
+	}
 }
 
 // FR-1.6 AC2.
@@ -216,8 +236,12 @@ func TestFailingSourceShowsItsErrorAndKeepsContent(t *testing.T) {
 	if !strings.Contains(body, "github: unexpected status 502") {
 		t.Error("the tile does not show the error text (FR-1.4 AC2)")
 	}
-	if !strings.Contains(body, "30 minutes ago") {
-		t.Error("the tile does not show the time of its last success (FR-1.4 AC2)")
+	// As one contiguous string: "30 minutes ago" on its own is equally satisfied by the tile
+	// header's age span, so the whole "(last success …)" clause could be deleted unnoticed.
+	lastSuccess := `(last success <time datetime="` +
+		testNow.Add(-30*time.Minute).UTC().Format(time.RFC3339) + `">30 minutes ago</time>)`
+	if !strings.Contains(body, lastSuccess) {
+		t.Errorf("the failing tile does not state when the source last succeeded (FR-1.4 AC2).\nwant: %s", lastSuccess)
 	}
 	if !strings.Contains(body, "Still visible") {
 		t.Error("a failing source blanked the tile (FR-1.4 AC3)")
@@ -300,22 +324,85 @@ func TestSitesTileShowsBothWindowsWithTheirChange(t *testing.T) {
 	}
 	body := getAuthed(t, dashHandler(t, store), "/tile/sites").Body.String()
 
-	for _, want := range []string{"one.example", "two.example", "120", "400", "500", "1500"} {
+	for _, want := range []string{"one.example", "two.example"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the sites tile does not show %q (FR-3.1 AC1)", want)
 		}
 	}
-	if !strings.Contains(body, "up 20.0%") {
-		t.Error("no upward change on visitors for the 7-day window (FR-3.1 AC2)")
-	}
-	if !strings.Contains(body, "down 20.0%") {
-		t.Error("no downward change on pageviews for the 7-day window (FR-3.1 AC2)")
-	}
-	if !strings.Contains(body, "no baseline") {
-		t.Error("a change with no previous period must say so rather than read as 0% (FR-3.1 AC2)")
+
+	// Each figure is asserted together with the change beside it, as one contiguous string. The
+	// presence of "120", "400", "up 20.0%" and "down 20.0%" somewhere in the body proves nothing:
+	// swapping visitors with pageviews, or the up arm of newChangeView with the down arm, leaves
+	// every one of those strings present while the tile tells the visitor the opposite of the
+	// truth — a growing site reported as shrinking, in words and in colour.
+	for _, want := range []string{
+		// one.example, 7 days: visitors 100 → 120, pageviews 500 → 400.
+		`visitors <b>120</b> <span class="change change-up">up 20.0%</span>`,
+		`pageviews <b>400</b> <span class="change change-down">down 20.0%</span>`,
+		// one.example, 30 days: visitors flat at 500, pageviews 1000 → 1500.
+		`visitors <b>500</b> <span class="change change-flat">no change</span>`,
+		`pageviews <b>1500</b> <span class="change change-up">up 50.0%</span>`,
+		// two.example, 7 days: no preceding period at all, so no percentage exists.
+		`visitors <b>10</b> <span class="change change-unknown">no baseline</span>`,
+		`pageviews <b>20</b> <span class="change change-unknown">no baseline</span>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the sites tile does not pair a figure with its change (FR-3.1 AC1/AC2).\nwant: %s", want)
+		}
 	}
 	if strings.Index(body, "one.example") > strings.Index(body, "two.example") {
 		t.Error("sites are not listed in configuration order (FR-3.1 AC3)")
+	}
+}
+
+// FR-3.1 AC3: "in configuration order". The order has to come from the configuration, not from
+// whatever order the store happened to return the metrics in — so this fixture configures the
+// sites in the opposite order to the one the data arrives in, which is the only way the assertion
+// can fail when the handler ignores the configuration.
+func TestSitesFollowConfigurationOrderRatherThanTheStoresOrder(t *testing.T) {
+	store := &dashStore{
+		metrics: []domain.Metric{
+			{Site: "first-in-the-data.example", WindowDays: 7, Visitors: 1, Pageviews: 2},
+			{Site: "second-in-the-data.example", WindowDays: 7, Visitors: 3, Pageviews: 4},
+		},
+		states: healthyStates(testNow),
+	}
+	s := newTestServerWith(t, func(o *Options) {
+		credentialAllSources(o)
+		o.Config.Plausible.Sites = []string{
+			"second-in-the-data.example",
+			"first-in-the-data.example",
+			"configured-but-never-fetched.example",
+			// A site named twice in the YAML is one site, not two rows.
+			"second-in-the-data.example",
+		}
+		o.Store = store
+	})
+	body := getAuthed(t, s.Handler(), "/tile/sites").Body.String()
+
+	second := strings.Index(body, "second-in-the-data.example")
+	first := strings.Index(body, "first-in-the-data.example")
+	if second < 0 || first < 0 {
+		t.Fatalf("a site is missing from the tile: second=%d first=%d", second, first)
+	}
+	if second > first {
+		t.Error("the sites tile follows the store's order, not the configured one (FR-3.1 AC3)")
+	}
+
+	// A site named in the configuration that has no metrics at all must read as missing rather
+	// than quietly vanish: "I configured this site and cannot see it" needs an answer on the tile.
+	absent := strings.Index(body, "configured-but-never-fetched.example")
+	if absent < 0 {
+		t.Fatal("a configured site with no metrics is not shown at all (FR-3.1 AC3)")
+	}
+	if absent < first {
+		t.Error("the configured order was not preserved for the site with no metrics")
+	}
+	if !strings.Contains(body[absent:], "not available") {
+		t.Error("a configured site with no metrics does not read as missing")
+	}
+	if n := strings.Count(body, "second-in-the-data.example"); n != 1 {
+		t.Errorf("a site configured twice appears %d times, want 1", n)
 	}
 }
 
@@ -420,27 +507,72 @@ func TestUpstreamTextIsEscaped(t *testing.T) {
 	}
 }
 
-// QS-4.4: the Content-Security-Policy carries no 'unsafe-inline', so the page must contain no
-// inline style, no inline script and no inline event handler.
-func TestThePageNeedsNoUnsafeInline(t *testing.T) {
+// inlineEventHandler matches any HTML attribute of the on* family — onclick, onmouseover, onfocus,
+// onsubmit and the rest of them — rather than the three the first version of this test happened to
+// list. The CSP forbids the whole family, so the test has to cover the whole family.
+var inlineEventHandler = regexp.MustCompile(`(?i)\son[a-z]+\s*=`)
+
+// QS-4.4: the Content-Security-Policy carries no 'unsafe-inline', so nothing this application
+// renders may contain an inline style, an inline script or an inline event handler. Every route
+// that produces HTML is swept, not only the dashboard: a fragment is markup the browser applies to
+// the very same document.
+func TestNoRenderedHTMLNeedsUnsafeInline(t *testing.T) {
 	store := &dashStore{
-		items:   []domain.Item{ghItem(1, "An issue", testNow.Add(-time.Hour))},
+		items: []domain.Item{
+			ghItem(1, "An issue", testNow.Add(-time.Hour)),
+			{Source: "todoist", ExternalID: "todoist:1", Kind: domain.KindTask, Title: "A task",
+				URL: "https://todoist.com/showTask?id=1", DueAt: testNow.Add(-time.Hour),
+				Priority: 4, FirstSeenAt: testNow.Add(-time.Hour)},
+		},
 		builds:  []domain.Build{{Repo: "org/repo", Workflow: "CI", Status: "completed", Conclusion: "success"}},
 		metrics: []domain.Metric{{Site: "one.example", WindowDays: 7, Visitors: 1}},
 		states:  healthyStates(testNow),
 	}
-	body := getAuthed(t, dashHandler(t, store), "/").Body.String()
+	h := dashHandler(t, store)
+	c := signIn(t, h)
 
-	for _, forbidden := range []string{`style="`, "<style", " onclick=", " onload=", " onerror="} {
-		if strings.Contains(body, forbidden) {
-			t.Errorf("the page contains %q, which the CSP forbids (QS-4.4)", forbidden)
-		}
+	// Every HTML-producing route: the page, the sign-in form, the documentation, all four tile
+	// fragments, and the body of a 401 on a fragment route.
+	pages := map[string]string{
+		"GET /":            getAs(h, "/", c).Body.String(),
+		"GET /login":       get(h, "/login").Body.String(),
+		"GET /docs":        get(h, "/docs").Body.String(),
+		"GET /tile/github": getAs(h, "/tile/github", c).Body.String(),
+		"GET /tile/builds": getAs(h, "/tile/builds", c).Body.String(),
+		"GET /tile/sites":  getAs(h, "/tile/sites", c).Body.String(),
+		"GET /tile/tasks":  getAs(h, "/tile/tasks", c).Body.String(),
+		"POST /seen (401)": post(h, "/seen", nil).Body.String(),
 	}
-	if n := strings.Count(body, "<script"); n != 1 {
-		t.Errorf("the page has %d script tags, want exactly the vendored htmx one (QS-4.4)", n)
-	}
-	if !strings.Contains(body, `<script src="/static/htmx.min.js"`) {
-		t.Error("the only script must be the vendored htmx file (QS-4.4)")
+	// The sign-in form's error state renders visitor-facing text, so it is swept too.
+	pages["POST /login (rejected)"] = post(h, "/login", url.Values{"token": {"wrong"}}).Body.String()
+
+	for name, body := range pages {
+		t.Run(name, func(t *testing.T) {
+			if body == "" {
+				t.Fatal("no body to inspect")
+			}
+			for _, forbidden := range []string{`style="`, "style='", "<style", "javascript:"} {
+				if strings.Contains(body, forbidden) {
+					t.Errorf("contains %q, which the CSP forbids (QS-4.4)", forbidden)
+				}
+			}
+			if m := inlineEventHandler.FindString(body); m != "" {
+				t.Errorf("contains the inline event handler %q, which the CSP forbids (QS-4.4)", strings.TrimSpace(m))
+			}
+			// Any script at all has to be the vendored htmx file: a full page carries exactly
+			// that one, and a fragment carries none.
+			vendored := strings.Count(body, `<script src="/static/htmx.min.js"`)
+			if n := strings.Count(body, "<script"); n != vendored {
+				t.Errorf("has %d script tags of which %d are the vendored htmx file; the rest "+
+					"would need 'unsafe-inline' (QS-4.4)", n, vendored)
+			}
+			if name == "GET /" && vendored != 1 {
+				t.Errorf("the dashboard links the vendored htmx file %d times, want 1 (QS-4.4)", vendored)
+			}
+			if strings.HasPrefix(name, "GET /tile/") && vendored != 0 {
+				t.Error("a tile fragment carries a script tag (QS-4.4)")
+			}
+		})
 	}
 }
 
@@ -532,6 +664,255 @@ func TestHumanise(t *testing.T) {
 	for _, c := range cases {
 		if got := humanise(c.d); got != c.want {
 			t.Errorf("humanise(%v) = %q, want %q", c.d, got, c.want)
+		}
+	}
+}
+
+// FR-1.2 AC1 on the tasks tile. The badge is the product's core feature — NEW means the item was
+// first seen after the last visit — and it is rendered by a second template, which the GitHub
+// test cannot cover. Deleting the badge from tasks.html must not leave a green suite.
+func TestTasksTileBadgesATaskFirstSeenSinceTheLastVisit(t *testing.T) {
+	store := &dashStore{
+		lastVisit: testNow.Add(-2 * time.Hour),
+		items: []domain.Item{
+			{
+				Source: "todoist", ExternalID: "todoist:1", Kind: domain.KindTask,
+				Title: "Stood there before your last visit", URL: "https://todoist.com/showTask?id=1",
+				DueAt: testNow.Add(3 * time.Hour), Priority: 1,
+				FirstSeenAt: testNow.Add(-72 * time.Hour),
+			},
+			{
+				Source: "todoist", ExternalID: "todoist:2", Kind: domain.KindTask,
+				Title: "Arrived since your last visit", URL: "https://todoist.com/showTask?id=2",
+				DueAt: testNow.Add(6 * time.Hour), Priority: 1,
+				FirstSeenAt: testNow.Add(-time.Hour),
+			},
+		},
+		states: healthyStates(testNow),
+	}
+	body := getAuthed(t, dashHandler(t, store), "/tile/tasks").Body.String()
+
+	if n := strings.Count(body, "NEW"); n != 1 {
+		t.Fatalf("the tasks tile carries %d NEW badges, want exactly 1 (FR-1.2 AC1)", n)
+	}
+	// Which task carries it matters as much as that one does: a badge on the wrong row tells the
+	// visitor the wrong thing. Each rendered item is inspected on its own.
+	for _, item := range strings.Split(body, `<li class="item`)[1:] {
+		hasBadge := strings.Contains(item, `class="badge badge-new">NEW<`)
+		switch {
+		case strings.Contains(item, "Arrived since your last visit") && !hasBadge:
+			t.Error("the task first seen since the last visit carries no NEW badge (FR-1.2 AC1)")
+		case strings.Contains(item, "Stood there before your last visit") && hasBadge:
+			t.Error("a task seen before the last visit carries a NEW badge (FR-1.2 AC1)")
+		}
+	}
+	// And the tile's own count agrees with the badges, so the header can never say "1 new" above
+	// a list in which nothing is marked.
+	if !strings.Contains(body, "1 new") {
+		t.Error("the tasks tile does not state how many of its items are new (FR-1.2 AC2)")
+	}
+}
+
+// FR-1.4 AC1 read together with FR-8.2 AC2: a source disabled for lack of a credential still shows
+// whatever was stored while it had one, so the tile must not claim it was never fetched.
+func TestADisabledSourceHoldingStoredItemsIsHonestAboutTheirAge(t *testing.T) {
+	// The default test options carry no GitHub credential, so the source is disabled.
+	store := &dashStore{
+		items:  []domain.Item{ghItem(1, "Stored while the token still worked", testNow.Add(-time.Hour))},
+		states: healthyStates(testNow),
+	}
+	h := newTestServerWith(t, func(o *Options) { o.Store = store }).Handler()
+	body := getAuthed(t, h, "/tile/github").Body.String()
+
+	if !strings.Contains(body, "Stored while the token still worked") {
+		t.Fatal("the fixture is wrong: the disabled tile shows no stored item")
+	}
+	if strings.Contains(body, "never fetched") {
+		t.Error("a disabled tile above items stamped '1 hour ago' claims the source was never " +
+			"fetched, which is false (FR-1.4 AC1)")
+	}
+	if !strings.Contains(body, "not fetching") {
+		t.Error("a disabled tile does not say that nothing is being fetched (FR-8.2 AC2)")
+	}
+	if !strings.Contains(body, "no credential is configured") {
+		t.Error("a disabled tile no longer says why it is disabled (FR-8.2 AC2)")
+	}
+	if !strings.Contains(body, "stored before it went away") {
+		t.Error("a disabled tile showing stored data does not say that is what it is")
+	}
+}
+
+// FR-2.2 AC1: a stored row whose created_at is zero must read as unknown, not render an empty
+// <time datetime="">, which is invalid HTML and shows the word "opened" followed by nothing.
+func TestAnItemWithoutACreationTimeSaysSo(t *testing.T) {
+	item := ghItem(1, "An issue whose creation time did not survive", testNow.Add(-time.Hour))
+	item.CreatedAt = time.Time{}
+	store := &dashStore{items: []domain.Item{item}, states: healthyStates(testNow)}
+	body := getAuthed(t, dashHandler(t, store), "/tile/github").Body.String()
+
+	if strings.Contains(body, `datetime=""`) {
+		t.Error("a zero timestamp rendered as an empty <time datetime=\"\">")
+	}
+	if !strings.Contains(body, "opened at an unknown time") {
+		t.Error("an item with no creation time does not say so (FR-2.2 AC1)")
+	}
+	// The stamp that is known still renders.
+	if !strings.Contains(body, "updated <time") {
+		t.Error("the update time went missing along with the creation time")
+	}
+}
+
+// FR-1.6 AC1: the poll interval follows the configured refresh interval, but never below a floor.
+// A misconfigured `refresh.interval: 5s` would otherwise turn every open tab into four requests
+// every five seconds against a Machine that is billed for being awake.
+func TestThePollIntervalNeverDropsBelowItsFloor(t *testing.T) {
+	for _, tc := range []struct {
+		interval time.Duration
+		want     int
+	}{
+		{0, minPollSeconds},
+		{time.Second, minPollSeconds},
+		{29 * time.Second, minPollSeconds},
+		{minPollSeconds * time.Second, minPollSeconds},
+		{31 * time.Second, 31},
+		{15 * time.Minute, 900},
+	} {
+		s := newTestServerWith(t, func(o *Options) { o.Config.Refresh.Interval = tc.interval })
+		if got := s.pollSeconds(); got != tc.want {
+			t.Errorf("pollSeconds() with interval %v = %d, want %d", tc.interval, got, tc.want)
+		}
+	}
+
+	// And the floor reaches the page, rather than only the helper.
+	s := newTestServerWith(t, func(o *Options) {
+		credentialAllSources(o)
+		o.Config.Refresh.Interval = 5 * time.Second
+		o.Store = &dashStore{states: healthyStates(testNow)}
+	})
+	body := getAuthed(t, s.Handler(), "/").Body.String()
+	if !strings.Contains(body, "every 30s") {
+		t.Error("a five-second refresh interval was not floored on the page (FR-1.6 AC1)")
+	}
+	if strings.Contains(body, "every 5s") {
+		t.Error("the page polls at the misconfigured five-second interval (FR-1.6 AC1)")
+	}
+}
+
+// QS-2.3, the static half of the budget, measured where the requirement's goal clause points: on
+// the wire. Uncompressed the vendored htmx alone is 50 kB, so the budget is unreachable by
+// construction unless it means transferred bytes — which is what "small enough for a slow
+// connection" is about. Every asset the rendered page links is fetched exactly as a browser would
+// fetch it, with Accept-Encoding: gzip, and what crosses the wire is added up.
+func TestStaticAssetsFitTheirBudgetOnTheWire(t *testing.T) {
+	const budget = 50 * 1024
+
+	h := dashHandler(t, representativeStore())
+	page := getAuthed(t, h, "/").Body.String()
+
+	assets := linkedStaticAssets(page)
+	if len(assets) < 2 {
+		t.Fatalf("found %d static assets on the page (%v); the stylesheet and htmx are both "+
+			"linked, so the extraction is broken", len(assets), assets)
+	}
+
+	total := 0
+	for _, asset := range assets {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, asset, nil)
+		req.Header.Set("Accept-Encoding", "gzip, deflate, br")
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d, want 200", asset, rec.Code)
+		}
+		if got := rec.Header().Get("Content-Encoding"); got != "gzip" {
+			t.Errorf("GET %s: Content-Encoding = %q, want gzip (QS-2.3)", asset, got)
+		}
+		if got := rec.Header().Get("Vary"); !strings.Contains(got, "Accept-Encoding") {
+			t.Errorf("GET %s: Vary = %q, want it to name Accept-Encoding", asset, got)
+		}
+
+		transferred := rec.Body.Len()
+		total += transferred
+		t.Logf("%s: %d bytes on the wire", asset, transferred)
+
+		// What arrives has to be the file itself, not merely something small.
+		stored, err := fs.ReadFile(embedded, "static"+strings.TrimPrefix(asset, "/static"))
+		if err != nil {
+			t.Fatalf("reading the embedded %s: %v", asset, err)
+		}
+		zr, err := gzip.NewReader(bytes.NewReader(rec.Body.Bytes()))
+		if err != nil {
+			t.Fatalf("GET %s: the body is not gzip: %v", asset, err)
+		}
+		decoded, err := io.ReadAll(zr)
+		if err != nil {
+			t.Fatalf("GET %s: decoding the body: %v", asset, err)
+		}
+		if !bytes.Equal(decoded, stored) {
+			t.Errorf("GET %s: the decoded body is not the stored asset", asset)
+		}
+		if transferred >= len(stored) {
+			t.Errorf("GET %s: %d bytes on the wire against %d stored — compression saved nothing",
+				asset, transferred, len(stored))
+		}
+	}
+
+	if total > budget {
+		t.Errorf("the static assets are %d bytes on the wire, budget is %d (QS-2.3)", total, budget)
+	} else {
+		t.Logf("the static assets are %d bytes of the %d-byte wire budget (QS-2.3)", total, budget)
+	}
+}
+
+// A client that does not accept gzip still gets the file. QS-2.3 is about a slow connection, not
+// about refusing to serve a text browser or a curl without the header.
+func TestStaticIsServedUncompressedWhenTheClientCannotAcceptGzip(t *testing.T) {
+	h := newTestServer(t).Handler()
+	stored, err := fs.ReadFile(embedded, "static/app.css")
+	if err != nil {
+		t.Fatalf("reading the embedded stylesheet: %v", err)
+	}
+
+	for _, accept := range []string{"", "identity", "br", "deflate"} {
+		t.Run("Accept-Encoding: "+accept, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/static/app.css", nil)
+			if accept != "" {
+				req.Header.Set("Accept-Encoding", accept)
+			}
+			h.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			if got := rec.Header().Get("Content-Encoding"); got != "" {
+				t.Errorf("Content-Encoding = %q, want none", got)
+			}
+			if !bytes.Equal(rec.Body.Bytes(), stored) {
+				t.Error("the body is not the stored stylesheet")
+			}
+			if got := rec.Header().Get("Vary"); !strings.Contains(got, "Accept-Encoding") {
+				t.Errorf("Vary = %q, want it to name Accept-Encoding: a shared cache must not "+
+					"hand a gzipped body to a client that cannot read it", got)
+			}
+		})
+	}
+
+	// "gzip" has to be matched as an encoding, not as a substring: a q-value or spacing must not
+	// change the answer, and an encoding merely containing the word must not be mistaken for it.
+	for accept, wantGzip := range map[string]bool{
+		"gzip;q=1.0, identity;q=0.5": true,
+		" GZIP ":                     true,
+		"br, gzip":                   true,
+		"x-gzip-not-really":          false,
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/static/app.css", nil)
+		req.Header.Set("Accept-Encoding", accept)
+		h.ServeHTTP(rec, req)
+		if got := rec.Header().Get("Content-Encoding") == "gzip"; got != wantGzip {
+			t.Errorf("Accept-Encoding %q: gzipped = %v, want %v", accept, got, wantGzip)
 		}
 	}
 }
@@ -710,4 +1091,22 @@ func (s *dashStore) SetLastVisit(_ context.Context, t time.Time) error {
 	s.visits = append(s.visits, t)
 	s.lastVisit = t
 	return nil
+}
+
+// linkedStaticAssets returns every /static/ URL the rendered page references, deduplicated and in
+// a stable order. It is derived from the page rather than hard-coded so that an asset added to the
+// layout is measured against the budget without anyone having to remember to add it here.
+func linkedStaticAssets(page string) []string {
+	re := regexp.MustCompile(`/static/[A-Za-z0-9._/-]+`)
+	seen := make(map[string]bool)
+	var out []string
+	for _, match := range re.FindAllString(page, -1) {
+		if seen[match] {
+			continue
+		}
+		seen[match] = true
+		out = append(out, match)
+	}
+	sort.Strings(out)
+	return out
 }
