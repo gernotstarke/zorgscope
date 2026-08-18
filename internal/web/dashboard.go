@@ -128,21 +128,29 @@ func (s *Server) dashboard(ctx context.Context) (domain.Dashboard, error) {
 	if err != nil {
 		return domain.Dashboard{}, fmt.Errorf("reading the last refresh run: %w", err)
 	}
+	// A second read rather than a filter over the first: LastRun is the most recently started run,
+	// so when it failed or is still open the last run that actually worked is not in it at all —
+	// and that time is what FR-1.1 AC3 puts in the header.
+	lastOK, err := s.store.LastSuccessfulRun(ctx)
+	if err != nil {
+		return domain.Dashboard{}, fmt.Errorf("reading the last successful refresh run: %w", err)
+	}
 	lastVisit, err := s.store.LastVisit(ctx)
 	if err != nil {
 		return domain.Dashboard{}, fmt.Errorf("reading the last visit: %w", err)
 	}
 
 	return domain.BuildDashboard(domain.DashboardInput{
-		Now:         s.clock.Now(),
-		LastVisitAt: lastVisit,
-		LastRun:     lastRun,
-		StaleAfter:  s.cfg.Refresh.StaleAfter,
-		Items:       items,
-		Builds:      builds,
-		Metrics:     metrics,
-		States:      states,
-		Disabled:    s.disabledSources(),
+		Now:               s.clock.Now(),
+		LastVisitAt:       lastVisit,
+		LastRun:           lastRun,
+		LastSuccessfulRun: lastOK,
+		StaleAfter:        s.cfg.Refresh.StaleAfter,
+		Items:             items,
+		Builds:            builds,
+		Metrics:           metrics,
+		States:            states,
+		Disabled:          s.disabledSources(),
 	}), nil
 }
 
@@ -238,6 +246,12 @@ type dashboardView struct {
 	// stamp means "succeeded then" and "failed then" (FR-1.1 AC3).
 	LastRun      timeView
 	LastRunState string
+	// LastSuccess is when the last refresh that actually worked finished, and is unknown until
+	// one has. The templates print it beside a running or a failed state — the two states in
+	// which LastRun belongs to some other run than the one that put the data on the page — so
+	// that FR-1.1 AC3's time is on the header whenever it exists, without being said twice when
+	// the latest run is itself the successful one.
+	LastSuccess timeView
 	// LastRunDetail is the run record's per-source outcome, already scrubbed of every configured
 	// secret (QS-4.3). It is quiet on the page and is the only place a blocked Slack webhook
 	// shows up at all.
@@ -383,6 +397,7 @@ func (s *Server) dashboardView(d domain.Dashboard) dashboardView {
 		NewTotal:     d.NewTotal,
 		LastRun:      newTimeView(d.LastRunAt, d.GeneratedAt),
 		LastRunState: string(d.LastRun),
+		LastSuccess:  newTimeView(d.LastSuccessAt, d.GeneratedAt),
 		// The detail is assembled from upstream error text — a source's failure message and the
 		// reason an announcement did not go out — and it is rendered, so it goes through Redact
 		// like every other borrowed string on this page (QS-4.3).

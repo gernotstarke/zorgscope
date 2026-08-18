@@ -144,6 +144,7 @@ func TestNoExportedMethodLeaksTheAuthToken(t *testing.T) {
 		"StartRun":            func() error { _, err := s.StartRun(ctx, "cron", time.Now()); return err },
 		"FinishRun":           func() error { return s.FinishRun(ctx, 1, time.Now(), true, "") },
 		"LastRun":             func() error { _, err := s.LastRun(ctx); return err },
+		"LastSuccessfulRun":   func() error { _, err := s.LastSuccessfulRun(ctx); return err },
 		"MarkNotified":        func() error { return s.MarkNotified(ctx, []string{"k"}, time.Now()) },
 		"UnnotifiedKeys":      func() error { _, err := s.UnnotifiedKeys(ctx, []string{"k"}); return err },
 		"TruncateAll":         func() error { return s.TruncateAll(ctx) },

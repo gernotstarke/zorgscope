@@ -137,16 +137,87 @@ func TestDashboardMakesNoUpstreamRequest(t *testing.T) {
 
 // FR-1.1 AC3.
 func TestHeaderCarriesTheLogoAndTheLastRunTime(t *testing.T) {
-	store := &dashStore{
-		lastRun: domain.RefreshRun{FinishedAt: testNow.Add(-20 * time.Minute), OK: true},
-		states:  healthyStates(testNow),
-	}
+	// The healthy case: the latest run is also the last successful one, so the store answers with
+	// the same run twice — and the header says it once.
+	run := domain.RefreshRun{StartedAt: testNow.Add(-21 * time.Minute),
+		FinishedAt: testNow.Add(-20 * time.Minute), OK: true}
+	store := &dashStore{lastRun: run, lastSuccessfulRun: run, states: healthyStates(testNow)}
 	body := getAuthed(t, dashHandler(t, store), "/").Body.String()
 	if !strings.Contains(body, `class="logo"`) {
 		t.Error("the header carries no logo (FR-1.1 AC3)")
 	}
 	if !strings.Contains(body, "20 minutes ago") {
 		t.Error("the header does not state when the last refresh run finished (FR-1.1 AC3)")
+	}
+	if n := strings.Count(body, "Last successful refresh"); n != 1 {
+		t.Errorf("the header says \"Last successful refresh\" %d times, want 1: when the latest "+
+			"run is the successful one there is only one time to state", n)
+	}
+}
+
+// FR-1.1 AC3, the case the header could not answer while the store only offered the most recently
+// started run: the latest attempt failed, and the time AC3 asks for belongs to an earlier run.
+//
+// Both halves have to be on the page. Naming only the failure leaves the header silent about how
+// old the data being read actually is — the tiles are full of the last good fetch and nothing says
+// when that was — and naming only the success would present a broken refresh as a working one,
+// which is the reading FR-1.1 AC3 exists to forbid.
+func TestHeaderNamesTheLastSuccessfulRunWhenTheLatestOneFailed(t *testing.T) {
+	store := &dashStore{
+		lastRun: domain.RefreshRun{StartedAt: testNow.Add(-6 * time.Minute),
+			FinishedAt: testNow.Add(-5 * time.Minute), OK: false, Detail: "github: fetch: 500"},
+		lastSuccessfulRun: domain.RefreshRun{StartedAt: testNow.Add(-3 * time.Hour),
+			FinishedAt: testNow.Add(-2 * time.Hour), OK: true},
+		states: healthyStates(testNow),
+	}
+	body := getAuthed(t, dashHandler(t, store), "/").Body.String()
+
+	if !strings.Contains(body, "Last refresh failed") || !strings.Contains(body, "5 minutes ago") {
+		t.Error("the header does not say that the latest refresh failed, and when (FR-1.1 AC3)")
+	}
+	if !strings.Contains(body, "last successful refresh") || !strings.Contains(body, "2 hours ago") {
+		t.Error("the header does not state the time of the last successful refresh run although " +
+			"one exists (FR-1.1 AC3)")
+	}
+}
+
+// The same reach-back while a run is open — the state the 409 "a refresh is already running" page
+// is always in. An open run has no finishing time of its own, so without the last successful run
+// the header can say only that something is happening, never how old what is on the screen is.
+func TestHeaderNamesTheLastSuccessfulRunWhileARefreshIsRunning(t *testing.T) {
+	store := &dashStore{
+		lastRun: domain.RefreshRun{StartedAt: testNow.Add(-30 * time.Second)},
+		lastSuccessfulRun: domain.RefreshRun{StartedAt: testNow.Add(-3 * time.Hour),
+			FinishedAt: testNow.Add(-2 * time.Hour), OK: true},
+		states: healthyStates(testNow),
+	}
+	body := getAuthed(t, dashHandler(t, store), "/").Body.String()
+
+	if !strings.Contains(body, "Refreshing now") {
+		t.Error("the header does not say that a refresh is in flight (FR-1.1 AC3)")
+	}
+	if !strings.Contains(body, "last successful refresh") || !strings.Contains(body, "2 hours ago") {
+		t.Error("the header does not state the time of the last successful refresh run while a " +
+			"refresh is running (FR-1.1 AC3)")
+	}
+}
+
+// A store that has never completed a good run has no time to state, and the header must not
+// invent one from the failed attempt it does have.
+func TestHeaderStatesNoSuccessfulRunWhenThereHasNeverBeenOne(t *testing.T) {
+	store := &dashStore{
+		lastRun: domain.RefreshRun{StartedAt: testNow.Add(-2 * time.Minute),
+			FinishedAt: testNow.Add(-time.Minute), OK: false},
+		states: healthyStates(testNow),
+	}
+	body := getAuthed(t, dashHandler(t, store), "/").Body.String()
+
+	if !strings.Contains(body, "Last refresh failed") {
+		t.Error("the header does not say that the refresh failed (FR-1.1 AC3)")
+	}
+	if strings.Contains(body, "successful refresh") {
+		t.Error("the header claims a successful refresh although no run has ever succeeded " +
+			"(FR-1.1 AC3)")
 	}
 }
 
@@ -1062,7 +1133,11 @@ type dashStore struct {
 	metrics   []domain.Metric
 	states    map[string]domain.SourceState
 	lastRun   domain.RefreshRun
-	lastVisit time.Time
+	// lastSuccessfulRun is the store's second answer about runs, and the fixture keeps it
+	// separate from lastRun on purpose: a test that sets only lastRun describes a database whose
+	// latest run is its only one, which is what most of them mean.
+	lastSuccessfulRun domain.RefreshRun
+	lastVisit         time.Time
 	// visits records every SetLastVisit, so a test can assert both that "mark all seen" writes
 	// one and that rendering writes none (FR-1.6 AC2).
 	visits []time.Time
@@ -1080,6 +1155,10 @@ func (s *dashStore) SourceStates(context.Context) (map[string]domain.SourceState
 
 func (s *dashStore) LastRun(context.Context) (domain.RefreshRun, error) {
 	return s.lastRun, s.err
+}
+
+func (s *dashStore) LastSuccessfulRun(context.Context) (domain.RefreshRun, error) {
+	return s.lastSuccessfulRun, s.err
 }
 
 func (s *dashStore) LastVisit(context.Context) (time.Time, error) { return s.lastVisit, s.err }

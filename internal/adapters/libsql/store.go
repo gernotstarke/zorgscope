@@ -702,32 +702,57 @@ func (s *Store) FinishRun(ctx context.Context, id int64, at time.Time, ok bool, 
 	return nil
 }
 
+// runSelect reads one refresh_run row, newest first. The caller appends its own WHERE clause and
+// the LIMIT; the column list is shared so that LastRun and LastSuccessfulRun cannot drift apart in
+// what they read or in the order they scan it.
+const runSelect = `
+SELECT id, COALESCE(started_at,''), COALESCE(finished_at,''), COALESCE("trigger",''),
+       COALESCE(ok,0), COALESCE(detail,'')
+FROM refresh_run `
+
 // LastRun returns the most recently started refresh run. A store that has never run one is not an
 // error: the zero RefreshRun comes back with a nil error, and its StartedAt is the zero time.
 func (s *Store) LastRun(ctx context.Context) (_ domain.RefreshRun, err error) {
 	defer func() { err = s.scrub.clean(err) }()
-	const q = `
-SELECT id, COALESCE(started_at,''), COALESCE(finished_at,''), COALESCE("trigger",''),
-       COALESCE(ok,0), COALESCE(detail,'')
-FROM refresh_run ORDER BY id DESC LIMIT 1`
+	return s.queryRun(ctx, runSelect+`ORDER BY id DESC LIMIT 1`, "last run")
+}
 
+// LastSuccessfulRun returns the most recently finished refresh run that succeeded, or the zero
+// RefreshRun with a nil error when none ever has — the same way LastVisit and LastRun answer
+// "never" (ports.Store).
+//
+// Both halves of the condition are load-bearing. StartRun inserts the row with ok = 0 and an empty
+// finished_at and FinishRun fills both in, so an open run can never satisfy ok = 1 — but a run
+// finished at the zero time would store an empty finished_at beside ok = 1, and a run with no
+// finishing time has no time to put in the header. Requiring both keeps this method's answer one
+// that can always be rendered: a run that is still running is not a successful one.
+func (s *Store) LastSuccessfulRun(ctx context.Context) (_ domain.RefreshRun, err error) {
+	defer func() { err = s.scrub.clean(err) }()
+	return s.queryRun(ctx,
+		runSelect+`WHERE ok = 1 AND COALESCE(finished_at,'') <> '' ORDER BY id DESC LIMIT 1`,
+		"last successful run")
+}
+
+// queryRun reads the single refresh_run row q selects, or the zero RefreshRun when q selects none.
+// what names the row in the error text.
+func (s *Store) queryRun(ctx context.Context, q, what string) (domain.RefreshRun, error) {
 	var (
 		run               domain.RefreshRun
 		started, finished string
 		ok                int
 	)
-	err = s.db.QueryRowContext(ctx, q).Scan(&run.ID, &started, &finished, &run.Trigger, &ok, &run.Detail)
+	err := s.db.QueryRowContext(ctx, q).Scan(&run.ID, &started, &finished, &run.Trigger, &ok, &run.Detail)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.RefreshRun{}, nil
 	}
 	if err != nil {
-		return domain.RefreshRun{}, fmt.Errorf("read last run: %w", err)
+		return domain.RefreshRun{}, fmt.Errorf("read %s: %w", what, err)
 	}
 	run.OK = ok != 0
 	if err := parseInto(map[*time.Time]string{
 		&run.StartedAt: started, &run.FinishedAt: finished,
 	}); err != nil {
-		return domain.RefreshRun{}, fmt.Errorf("last run: %w", err)
+		return domain.RefreshRun{}, fmt.Errorf("%s: %w", what, err)
 	}
 	return run, nil
 }

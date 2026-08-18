@@ -333,6 +333,38 @@ func TestTheLastRunIsReportedWithItsOutcome(t *testing.T) {
 	}
 }
 
+// FR-1.1 AC3: the time the header states is the last *successful* run's, which is a different run
+// from the last one as soon as the latest attempt failed or is still open. The two are reported
+// side by side and neither is derived from the other — the failure keeps its own time, and the
+// success is taken only from the run the store reported as successful.
+func TestTheLastSuccessfulRunIsReportedBesideAFailedLatestRun(t *testing.T) {
+	now := at("2026-08-17T12:00:00Z")
+	failed := domain.RefreshRun{ID: 9, StartedAt: at("2026-08-17T11:58:00Z"),
+		FinishedAt: at("2026-08-17T11:59:00Z")}
+	succeeded := domain.RefreshRun{ID: 7, StartedAt: at("2026-08-17T09:58:00Z"),
+		FinishedAt: at("2026-08-17T10:00:00Z"), OK: true}
+
+	d := domain.BuildDashboard(domain.DashboardInput{
+		Now: now, LastRun: failed, LastSuccessfulRun: succeeded,
+	})
+	if d.LastRun != domain.RunFailed || !d.LastRunAt.Equal(failed.FinishedAt) {
+		t.Errorf("last run = %q at %v, want %q at %v — a failed run keeps its own time",
+			d.LastRun, d.LastRunAt, domain.RunFailed, failed.FinishedAt)
+	}
+	if !d.LastSuccessAt.Equal(succeeded.FinishedAt) {
+		t.Errorf("LastSuccessAt = %v, want %v — the header cannot state the time of the last "+
+			"successful refresh if the dashboard does not carry it (FR-1.1 AC3)",
+			d.LastSuccessAt, succeeded.FinishedAt)
+	}
+
+	// And nothing invents one: a store that has never completed a good run reports none.
+	none := domain.BuildDashboard(domain.DashboardInput{Now: now, LastRun: failed})
+	if !none.LastSuccessAt.IsZero() {
+		t.Errorf("LastSuccessAt = %v with no successful run on record, want the zero time: the "+
+			"failed run must never be presented as the successful one", none.LastSuccessAt)
+	}
+}
+
 // FR-6.1 AC3 has the announcement step record its failure without failing the run, and the run
 // record's detail is where it is recorded. It reaches the dashboard or it reaches nobody: a
 // revoked Slack webhook changes nothing else on the page.

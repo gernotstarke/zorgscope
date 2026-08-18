@@ -26,19 +26,25 @@
     <span class="brand-name">zorgscope</span>
   </a>
   {{with .Dashboard}}
-  {{/* FR-1.1 AC3: the header carries the logo and the time of the last refresh run — the last
-       *successful* one, so the outcome is said in words beside the time and never left to the
-       timestamp alone. A run still in flight has no finishing time and
-       must read as running rather than as never — it is the state the 409 "a refresh is already
-       running" page is always in — and a run that failed says so instead of being offered as a
-       refresh that worked. */}}
+  {{/* FR-1.1 AC3: the header carries the logo and the time of the last *successful* refresh run,
+       so the outcome is said in words beside the time and never left to the timestamp alone. A run
+       still in flight has no finishing time and must read as running rather than as never — it is
+       the state the 409 "a refresh is already running" page is always in — and a run that failed
+       says so instead of being offered as a refresh that worked.
+
+       While a run is in flight, and after one has failed, the latest run is not the one that put
+       the data on the page: the last successful run is named as well, because AC3 asks for that
+       time and it is the only one that says how old what is being read actually is. In the
+       succeeded state the two are the same run, so it is said once. */}}
   <p class="topbar-status status-{{.LastRunState}}">
     {{- if eq .LastRunState "running" -}}
       Refreshing now, started <time datetime="{{.LastRun.Absolute}}">{{.LastRun.Relative}}</time>
+      {{- if .LastSuccess.Known }}; last successful refresh <time datetime="{{.LastSuccess.Absolute}}">{{.LastSuccess.Relative}}</time>{{end -}}
     {{- else if eq .LastRunState "succeeded" -}}
       Last successful refresh <time datetime="{{.LastRun.Absolute}}">{{.LastRun.Relative}}</time>
     {{- else if eq .LastRunState "failed" -}}
       Last refresh failed <time datetime="{{.LastRun.Absolute}}">{{.LastRun.Relative}}</time>
+      {{- if .LastSuccess.Known }}; last successful refresh <time datetime="{{.LastSuccess.Absolute}}">{{.LastSuccess.Relative}}</time>{{end -}}
     {{- else -}}
       No refresh has run yet
     {{- end -}}

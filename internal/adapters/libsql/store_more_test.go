@@ -406,6 +406,86 @@ func TestRunLifecycle(t *testing.T) {
 	}
 }
 
+// LastSuccessfulRun is the store side of FR-1.1 AC3: the header needs the run that actually
+// worked, and LastRun cannot reach it once a later attempt has failed or is still open.
+//
+// The three answers it has to get right are all here: "never" as a zero value and not an error
+// (the convention LastVisit and LastRun follow), an open run passed over because a run that is
+// still running is not a successful one, and — the case that motivated the method — an earlier
+// success found again behind a failed latest run.
+func TestLastSuccessfulRunSkipsFailedAndOpenRuns(t *testing.T) {
+	s, ctx := newStore(t), context.Background()
+	start := at("2026-08-17T10:00:00Z")
+
+	never, err := s.LastSuccessfulRun(ctx)
+	if err != nil {
+		t.Fatalf("LastSuccessfulRun on an empty store: %v", err)
+	}
+	if never.ID != 0 || !never.StartedAt.IsZero() || !never.FinishedAt.IsZero() {
+		t.Errorf("LastSuccessfulRun on an empty store = %+v, want the zero run with a nil error", never)
+	}
+
+	good, err := s.StartRun(ctx, "cron", start)
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	if err := s.FinishRun(ctx, good, start.Add(10*time.Second), true, "github: 12"); err != nil {
+		t.Fatalf("FinishRun: %v", err)
+	}
+	bad, err := s.StartRun(ctx, "cron", start.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	if err := s.FinishRun(ctx, bad, start.Add(70*time.Second), false, "github: 502"); err != nil {
+		t.Fatalf("FinishRun: %v", err)
+	}
+	// A third run finished as successful but at the zero time, which this package stores as the
+	// empty string like every other zero time. It has an outcome and no time to put in the
+	// header, so it is not an answer this method may give: FinishRun records the time it is
+	// handed, and the row it leaves behind is the reason ok = 1 is not the whole condition.
+	zeroTimed, err := s.StartRun(ctx, "cron", start.Add(90*time.Second))
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	if err := s.FinishRun(ctx, zeroTimed, time.Time{}, true, "no finishing time"); err != nil {
+		t.Fatalf("FinishRun: %v", err)
+	}
+	// And a fourth run that is still open, as one is during every refresh: it has neither an
+	// outcome nor a finishing time yet.
+	if _, err := s.StartRun(ctx, "user", start.Add(2*time.Minute)); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+
+	last, err := s.LastRun(ctx)
+	if err != nil {
+		t.Fatalf("LastRun: %v", err)
+	}
+	if !last.Running() {
+		t.Fatalf("LastRun = %+v, want the open run — the fixture is not the one this test needs", last)
+	}
+
+	got, err := s.LastSuccessfulRun(ctx)
+	if err != nil {
+		t.Fatalf("LastSuccessfulRun: %v", err)
+	}
+	if got.ID != good {
+		t.Errorf("LastSuccessfulRun = run %d (%+v), want run %d: neither the failed run, nor the "+
+			"open one, nor the one with no finishing time is a successful refresh",
+			got.ID, got, good)
+	}
+	if got.FinishedAt.IsZero() {
+		t.Error("LastSuccessfulRun answered with a run that has no finishing time; the header " +
+			"has nothing to state (FR-1.1 AC3)")
+	}
+	if !got.OK || got.Trigger != "cron" || got.Detail != "github: 12" {
+		t.Errorf("LastSuccessfulRun = %+v, want the whole row of the successful run", got)
+	}
+	if !got.StartedAt.Equal(start) || !got.FinishedAt.Equal(start.Add(10*time.Second)) {
+		t.Errorf("LastSuccessfulRun times = %v..%v, want %v..%v",
+			got.StartedAt, got.FinishedAt, start, start.Add(10*time.Second))
+	}
+}
+
 func TestMarkNotifiedIsIdempotentAndUnnotifiedHandlesEdges(t *testing.T) {
 	s, ctx := newStore(t), context.Background()
 

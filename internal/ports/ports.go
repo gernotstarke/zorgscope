@@ -106,6 +106,20 @@ type Store interface {
 	// error — when no run has ever been recorded. "Never run" is a state to render, not a
 	// failure, so it is not reported as one.
 	LastRun(ctx context.Context) (domain.RefreshRun, error)
+	// LastSuccessfulRun returns the most recently finished refresh run that succeeded, or the
+	// zero RefreshRun — with a nil error — when none ever has. Like LastVisit and LastRun,
+	// "never" is the zero value and not an error: a store that has never completed a good run is
+	// a state to render, not a failure.
+	//
+	// It is deliberately not LastRun filtered by OK. LastRun answers with the most recently
+	// *started* run whatever became of it, so as soon as the latest attempt fails or is still
+	// open the two answers differ — and FR-1.1 AC3 asks the header for this one, the time of the
+	// last run that actually worked, which is exactly the run LastRun can no longer reach.
+	//
+	// A run still in flight is never the answer: it carries neither an outcome nor a finishing
+	// time yet, and an unfinished run is not a successful one. The returned run's FinishedAt is
+	// therefore always non-zero when its StartedAt is.
+	LastSuccessfulRun(ctx context.Context) (domain.RefreshRun, error)
 
 	// MarkNotified records that the items identified by keys have been notified about, as of
 	// time at. A key already recorded keeps its original time: an item is announced once, and the

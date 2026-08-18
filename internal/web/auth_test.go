@@ -1107,6 +1107,9 @@ func (f *fakeStore) FinishRun(context.Context, int64, time.Time, bool, string) e
 func (f *fakeStore) LastRun(context.Context) (domain.RefreshRun, error) {
 	return domain.RefreshRun{}, f.err
 }
+func (f *fakeStore) LastSuccessfulRun(context.Context) (domain.RefreshRun, error) {
+	return domain.RefreshRun{}, f.err
+}
 func (f *fakeStore) MarkNotified(context.Context, []string, time.Time) error { return f.err }
 func (f *fakeStore) UnnotifiedKeys(context.Context, []string) ([]string, error) {
 	return nil, f.err

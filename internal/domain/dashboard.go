@@ -36,18 +36,25 @@ const (
 )
 
 // DashboardInput is everything the store holds that BuildDashboard needs: the current time, the
-// visitor's last-seen watermark, the outcome of the last refresh run, every stored item across
-// sources, per-source health, and the list of sources disabled for lack of a credential.
+// visitor's last-seen watermark, the outcome of the last refresh run and of the last one that
+// succeeded, every stored item across sources, per-source health, and the list of sources disabled
+// for lack of a credential.
 type DashboardInput struct {
 	Now         time.Time
 	LastVisitAt time.Time
 	LastRun     RefreshRun
-	StaleAfter  time.Duration
-	Items       []Item
-	Builds      []Build
-	Metrics     []Metric
-	States      map[string]SourceState
-	Disabled    []string // sources without a credential (FR-8.2 AC2)
+	// LastSuccessfulRun is the most recent run that finished successfully, which is the run
+	// FR-1.1 AC3 names. It is a second field rather than a filter over LastRun because the two
+	// are different runs whenever the latest attempt failed or is still open — and those are
+	// exactly the moments the header has to reach past the latest run to stay both honest and
+	// useful. It is the zero RefreshRun when no run has ever succeeded.
+	LastSuccessfulRun RefreshRun
+	StaleAfter        time.Duration
+	Items             []Item
+	Builds            []Build
+	Metrics           []Metric
+	States            map[string]SourceState
+	Disabled          []string // sources without a credential (FR-8.2 AC2)
 }
 
 // RunOutcome is what may honestly be said about the last refresh run (FR-1.1 AC3). It exists
@@ -81,6 +88,13 @@ type Dashboard struct {
 	// failed run as a refresh and an open one as no refresh at all.
 	LastRun   RunOutcome
 	LastRunAt time.Time
+	// LastSuccessAt is when the last *successful* run finished, zero when none ever has. It is
+	// what FR-1.1 AC3 asks the header for, and it is a field of its own because LastRunAt cannot
+	// answer it: when the latest run failed or is still in flight, LastRunAt belongs to that run
+	// and the last success lies further back. The header states both — what the latest attempt
+	// did, and when the data on the page was last actually refreshed — so that a failing upstream
+	// makes the page say so without also making it look like it has never worked.
+	LastSuccessAt time.Time
 	// LastRunDetail is the run record's per-source outcome, plus the reason the announcement step
 	// stopped if it did. It is the only signal a permanently blocked Slack webhook has: such a
 	// failure never fails a run (FR-6.1 AC3), so nothing else on the page changes when the hook is
@@ -132,6 +146,10 @@ func BuildDashboard(in DashboardInput) Dashboard {
 		LastRun:       outcome,
 		LastRunAt:     at,
 		LastRunDetail: in.LastRun.Detail,
+		// Taken straight from the successful run's own finishing time, with no fallback to
+		// LastRun: a run the store did not report as successful must never end up under the words
+		// "last successful refresh", which is the whole of FR-1.1 AC3's honesty.
+		LastSuccessAt: in.LastSuccessfulRun.FinishedAt,
 		Tiles:         make([]Tile, 0, len(tileOrder)),
 	}
 
@@ -158,12 +176,14 @@ func BuildDashboard(in DashboardInput) Dashboard {
 //     *successful* run, and OK, stored and read back on every run, was consulted nowhere.
 //
 // What this deliberately does not do is reach back for the last successful run when the most
-// recent one failed, which is what FR-1.1 AC3 would have the header show. It cannot: the store
-// offers the last run and no other, so the earlier success is not in this input at all. Between
-// the two honest options — a stale claim about success or a truthful statement about the failure —
-// this returns RunFailed with the failure's own time, and the header says the last refresh failed.
-// Showing a failed run's timestamp under the words "last refresh" is the reading that is simply
-// wrong, and it is the one that was there.
+// recent one failed. It answers one question — what became of the latest attempt — and a failed
+// attempt is reported as failed, at its own time; showing a failed run's timestamp under the words
+// "last refresh" is the reading that is simply wrong, and it is the one that was there.
+//
+// The last *successful* run FR-1.1 AC3 asks for is a second, independent reading of the store
+// (DashboardInput.LastSuccessfulRun, Dashboard.LastSuccessAt) precisely so that neither answer has
+// to be bent into the other: the header can say that the latest refresh failed *and* when the data
+// it is showing was last refreshed for real.
 func lastRun(run RefreshRun) (RunOutcome, time.Time) {
 	switch {
 	case run.StartedAt.IsZero() && run.FinishedAt.IsZero():
