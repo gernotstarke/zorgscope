@@ -110,8 +110,13 @@ db-reset: ## Drop the local database and its volume
 # ---------------------------------------------------------------- quality
 .PHONY: test test-unit test-domain lint fmt tidy go
 test: db-up ## All tests, with the race detector, against the local database
+	@# -p 1 runs one package at a time. More than one package now tests against the database —
+	@# internal/adapters/libsql and internal/refresh — and there is one local libsql-server holding
+	@# one database, which each of them truncates between tests. Run in parallel they delete each
+	@# other's rows and deadlock on writes ("SQLite error: database is locked"); run sequentially
+	@# they are deterministic.
 	$(GO_RUN_DB) sh -c 'CGO_ENABLED=1 TEST_TURSO_URL=http://localhost:8080 \
-	  go test -race -coverprofile=coverage.out ./... && go tool cover -func=coverage.out | tail -1'
+	  go test -race -p 1 -coverprofile=coverage.out ./... && go tool cover -func=coverage.out | tail -1'
 
 test-unit: ## Tests that need no database (store tests skip themselves)
 	$(GO_RUN) sh -c 'CGO_ENABLED=1 go test -race ./...'
