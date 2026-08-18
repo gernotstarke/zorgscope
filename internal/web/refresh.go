@@ -105,11 +105,25 @@ func (s *Server) renderBusy(w http.ResponseWriter, r *http.Request) {
 
 // ---------------------------------------------------------------- running
 
-// runRefresh performs one run under the given trigger, bounded by refreshCeiling.
+// runRefresh performs one run under the given trigger.
 //
-// The ceiling hangs off the request's own context, so a caller that gives up also stops the work
-// it asked for; the runner's closing writes are on contexts of their own and survive either
-// ending, so the lease is freed and the run record closed out whichever way the run ends.
+// The context it runs on pairs context.WithoutCancel with context.WithTimeout, and that pairing
+// only looks redundant until you have thought about it. Both halves are load-bearing and neither
+// may be dropped — the runner's own cleanupCtx has the same shape for a related reason:
+//
+//   - context.WithoutCancel, because a client hanging up carries no information about whether the
+//     refresh should finish. cron-job.org gives up at its own timeout, around thirty seconds, which
+//     is well inside a run that is merely slow rather than broken. On the request's own context
+//     that disconnect would cancel the run, and every source not yet fetched would have "context
+//     canceled" recorded as its failure — a fabricated error, rendered on the dashboard as a
+//     failing source (FR-1.4 AC3) when the source was fine and only the HTTP client left. On a
+//     Machine that scales to zero it is self-perpetuating too: the cron trigger is the only thing
+//     that ever writes upstream data, so an abandoned run leaves the data stale until the next
+//     trigger, which is cut off at the same point. The same holds for the dashboard's own button:
+//     a visitor navigating away must not leave half-written data and invented errors behind.
+//   - context.WithTimeout, because something still has to bound how long this process stays awake;
+//     see refreshCeiling. Dropping the client's ability to cut the work short is not the same as
+//     letting it run forever, and the deadline is what keeps the second from following the first.
 //
 // It never calls time.Now: every timestamp in the report comes from the injected clock, through
 // the runner.
@@ -117,7 +131,7 @@ func (s *Server) runRefresh(r *http.Request, trigger string) (refresh.Report, er
 	if s.runner == nil {
 		return refresh.Report{}, errors.New("no refresh runner is configured")
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), refreshCeiling)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), refreshCeiling)
 	defer cancel()
 	return s.runner.Run(ctx, trigger)
 }

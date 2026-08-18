@@ -228,6 +228,64 @@ func TestTheRefreshRunCarriesACeiling(t *testing.T) {
 	}
 }
 
+// The other half of the ceiling's context, and the reason WithoutCancel is paired with WithTimeout:
+// a client hanging up must not abandon the run. cron-job.org gives up at its own timeout, well
+// inside a run that is merely slow, and on the request's own context that disconnect would cancel
+// the fetch of every source not yet reached — recording "context canceled" as their failure and
+// rendering them on the dashboard as broken sources that were never broken (FR-1.4 AC3). On a
+// Machine where the cron trigger is the only thing that ever writes, the data would then stay stale
+// until the next trigger, which would be cut off at the same point.
+func TestAClientHangingUpDoesNotAbandonTheRun(t *testing.T) {
+	block := make(chan struct{})
+	slow := &ports.FakeFetcher{
+		SourceName: "github",
+		Block:      block,
+		Result:     ports.FetchResult{Items: []domain.Item{ghItem(1, "an issue", testNow)}},
+	}
+	later := fetcherWith("todoist", ghItem(2, "a task", testNow))
+	store := newLeaseStore()
+	h := newRefreshServer(t, store, &ports.FixedClock{T: testNow}, slow, later).Handler()
+
+	ctx, hangUp := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodPost, "/api/refresh", nil).WithContext(ctx)
+	req.Header.Set("Authorization", "Bearer "+testSecret)
+	rec := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.ServeHTTP(rec, req)
+	}()
+
+	waitFor(t, "the first source to start fetching", func() bool { return slow.CallCount() > 0 })
+	hangUp() // the cron service's own timeout expires and it drops the connection
+	close(block)
+	<-done
+
+	if got := slow.CallCount(); got != 1 {
+		t.Errorf("the in-flight source was fetched %d times, want 1", got)
+	}
+	if got := store.replaced("github"); got != 1 {
+		t.Errorf("the in-flight source stored %d items, want 1: the run it was already doing "+
+			"must finish, not be thrown away because the caller left", got)
+	}
+	// The source that had not been reached yet is the one the request's own context would have
+	// killed, and the one that would have been given a fabricated error.
+	if got := later.CallCount(); got != 1 {
+		t.Errorf("the source after it was fetched %d times, want 1: a client hanging up carries "+
+			"no information about whether the refresh should finish", got)
+	}
+	if got := store.replaced("todoist"); got != 1 {
+		t.Errorf("the source after it stored %d items, want 1", got)
+	}
+	if _, _, finished := store.record(); !finished {
+		t.Error("the run record was never closed out")
+	}
+	if held, holder := store.leaseHeld(); held {
+		t.Errorf("the lease is still held by %q after the abandoned run finished", holder)
+	}
+}
+
 // FR-1.3 AC3: the dashboard's "Refresh now" is a plain form, so the answer has to be a redirect
 // back to the page — a 204 leaves the browser on the old page with nothing having happened.
 func TestDashboardRefreshRunsAsTheUserAndReturnsToTheDashboard(t *testing.T) {
