@@ -51,6 +51,31 @@ const (
 	maxDetailLen = 2000
 )
 
+// cleanupTimeout bounds each of the writes that close a run out — releasing the lease, finishing
+// the run record, recording a source error. They are single small statements; five seconds is
+// generous for one of them and short enough that all of them together stay well inside what a
+// caller can afford to wait for after its own budget is gone.
+const cleanupTimeout = 5 * time.Second
+
+// cleanupCtx derives the context the run's closing writes use. Both halves are load-bearing and
+// neither may be dropped:
+//
+//   - context.WithoutCancel, because a run that was cancelled or timed out must still free its
+//     lease, close its run record and say why the remaining sources have no fresh data. On the
+//     run's own context every one of those writes would fail, and a single cancellation would
+//     lock refreshes out for the whole leaseTTL and leave the run "running" forever.
+//   - context.WithTimeout, because WithoutCancel strips the deadline along with the cancellation.
+//     Without it, the only writes that run after the time budget is blown are the ones that can
+//     then block indefinitely: a half-open Turso would keep the POST /api/refresh request in
+//     flight, and Fly does not stop a Machine with a request in flight — the run capped at 30
+//     seconds would hold the Machine awake for as long as the database stayed unresponsive, which
+//     is the half of QS-2.5 that says nothing may hold the Machine awake.
+//
+// The caller must call the returned cancel, as with any context.WithTimeout.
+func cleanupCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
+}
+
 // SourceReport is what one source contributed to a run.
 type SourceReport struct {
 	// Source is the fetcher's name, e.g. "github" or "todoist".
@@ -92,7 +117,28 @@ type Runner struct {
 //
 // The fetchers are used in the order given and are identified by their own Name; no source name is
 // hard-coded here.
+//
+// No two fetchers may share a Name, and New panics if two do. This is a precondition, not a
+// preference, and it protects the first-seen invariant: a source owns its rows, and ReplaceItems
+// deletes the rows the incoming set omits. A fetcher that returns only builds or only metrics
+// therefore calls ReplaceItems with no items, which deletes every item of that source name. Give
+// GitHub's build fetcher the name "github" instead of "github-builds" and each refresh deletes
+// every GitHub issue and pull request; the issue fetcher re-inserts them on the next run with a
+// fresh FirstSeenAt, so the whole dashboard lights up NEW on every single refresh (QS-1.2).
+//
+// It is a panic rather than an error because it can only be violated by a code change where the
+// sources are wired, is fully determined at that point, and is caught on the first startup — and
+// because a Runner built over a colliding set has no safe behaviour to fall back on.
 func New(store ports.Store, fetchers []ports.SourceFetcher, clock ports.Clock, n ports.Notifier, log *slog.Logger) *Runner {
+	seen := make(map[string]struct{}, len(fetchers))
+	for _, f := range fetchers {
+		name := f.Name()
+		if _, dup := seen[name]; dup {
+			panic("refresh.New: two fetchers share the source name " + name +
+				": one fetcher per source name, or each refresh deletes the other's items")
+		}
+		seen[name] = struct{}{}
+	}
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
@@ -119,10 +165,13 @@ func (r *Runner) Run(ctx context.Context, trigger string) (Report, error) {
 	if !ok {
 		return Report{}, ErrBusy
 	}
-	// context.WithoutCancel matters here: a cancelled or timed-out run must still free its lease,
-	// or a single cancellation locks every refresh out for the whole leaseTTL.
+	// A cancelled or timed-out run must still free its lease, or a single cancellation locks every
+	// refresh out for the whole leaseTTL — and it must not be able to hang doing so; see
+	// cleanupCtx for why both halves are needed.
 	defer func() {
-		if err := r.store.ReleaseRefreshLease(context.WithoutCancel(ctx), holder); err != nil {
+		release, cancel := cleanupCtx(ctx)
+		defer cancel()
+		if err := r.store.ReleaseRefreshLease(release, holder); err != nil {
 			r.log.Error("release refresh lease", "err", err)
 		}
 	}()
@@ -146,9 +195,12 @@ func (r *Runner) Run(ctx context.Context, trigger string) (Report, error) {
 	r.notify(ctx, fresh)
 
 	rep.EndedAt = r.clock.Now()
-	// Finished with an uncancellable context for the same reason as the lease: a run that was
-	// cancelled mid-flight must still be closed out, or it stays "running" in the history forever.
-	if err := r.store.FinishRun(context.WithoutCancel(ctx), runID, rep.EndedAt, rep.OK, detail(rep)); err != nil {
+	// Finished on a cleanup context for the same reason as the lease: a run that was cancelled
+	// mid-flight must still be closed out, or it stays "running" in the history forever — under a
+	// deadline of its own, so closing out cannot outlast the run it closes (see cleanupCtx).
+	finish, cancelFinish := cleanupCtx(ctx)
+	defer cancelFinish()
+	if err := r.store.FinishRun(finish, runID, rep.EndedAt, rep.OK, detail(rep)); err != nil {
 		r.log.Error("finish run", "run", runID, "err", err)
 	}
 	r.log.Info("refresh finished",
@@ -200,16 +252,19 @@ func (r *Runner) runSource(ctx context.Context, f ports.SourceFetcher, now time.
 
 // sourceFailed records a source's failure and reports it.
 //
-// The failure is recorded with an uncancellable context: a run cancelled between two sources must
-// still be able to say why the later ones have no fresh data (FR-1.4 AC2), and the write is a
-// single small statement.
+// The failure is recorded on a cleanup context: a run cancelled between two sources must still be
+// able to say why the later ones have no fresh data (FR-1.4 AC2), and the write is a single small
+// statement — but it is exactly the write a dead database would make hang, so it is given a
+// deadline of its own (see cleanupCtx).
 //
 // Only the error's message is stored and logged. Every adapter keeps credentials out of its error
 // text — the libSQL adapter never names its DSN, the HTTP adapters never echo a token — because
 // this message reaches both the log and the dashboard (QS-4.3).
 func (r *Runner) sourceFailed(ctx context.Context, source string, now time.Time, cause error) SourceReport {
 	msg := clip(cause.Error(), maxErrLen)
-	if err := r.store.RecordSourceError(context.WithoutCancel(ctx), source, now, msg); err != nil {
+	record, cancel := cleanupCtx(ctx)
+	defer cancel()
+	if err := r.store.RecordSourceError(record, source, now, msg); err != nil {
 		r.log.Error("record source error", "source", source, "err", err)
 	}
 	r.log.Warn("source failed", "source", source, "err", msg)

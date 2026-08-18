@@ -236,6 +236,37 @@ func TestConcurrentRunsAreRejected(t *testing.T) {
 	}
 }
 
+// QS-1.7 again, for the case the test above cannot see: two runs of the *same* trigger. The holder
+// is what the lease is keyed by, and AcquireRefreshLease deliberately admits the current holder
+// again (a run that lost its answer must be able to carry on), so two runs sharing a holder name
+// would both believe they won and whichever finished first would delete the lease out from under
+// the other. Trigger and start time alone do not separate them — a fixed clock, or two cron
+// triggers landing in the same nanosecond, produce the same string — which is why the holder
+// carries a random suffix. Without it this test acquires twice and no test notices.
+func TestTwoRunsOfTheSameTriggerAtTheSameInstantStillExcludeEachOther(t *testing.T) {
+	store := newTestStore(t)
+	clock := &ports.FixedClock{T: now} // both runs read the same start time
+	block := make(chan struct{})
+	first := refresh.New(store, []ports.SourceFetcher{
+		&ports.FakeFetcher{SourceName: "github", Block: block},
+	}, clock, nil, discardLogger())
+
+	done := make(chan error, 1)
+	go func() { _, err := first.Run(context.Background(), "cron"); done <- err }()
+	waitUntilLeaseTaken(t, store)
+
+	second := refresh.New(store, []ports.SourceFetcher{fetcher("github", item("1"))},
+		clock, nil, discardLogger())
+	if _, err := second.Run(context.Background(), "cron"); !errors.Is(err, refresh.ErrBusy) {
+		t.Errorf("second run of the same trigger err = %v, want ErrBusy — the two runs shared a lease holder", err)
+	}
+
+	close(block)
+	if err := <-done; err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+}
+
 // waitUntilLeaseTaken blocks until the refresh lease is held, or fails the test after a bounded
 // wait so a regression fails instead of hanging the suite.
 //
@@ -432,6 +463,40 @@ func TestNotifierFailureDoesNotFailTheRun(t *testing.T) {
 	if n.items != 1 {
 		t.Errorf("notifier saw %d items, want the 1 refreshed item", n.items)
 	}
+}
+
+// The partial-result rule's sibling: what was not stored must not be announced either. A fetcher
+// may hand back items together with an error, and those items are deliberately not stored — so
+// announcing them would tell the user about items that do not exist in the database, and mark them
+// notified, which suppresses the real announcement when they finally arrive (FR-6.1 AC2).
+func TestFailedSourceItemsAreNotAnnounced(t *testing.T) {
+	store, ctx := newTestStore(t), context.Background()
+	n := &recordingNotifier{}
+	partial := &ports.FakeFetcher{
+		SourceName: "github",
+		Result:     ports.FetchResult{Items: []domain.Item{item("1"), item("2")}}, // fetched, not stored
+		Err:        errors.New("list org/two: 500"),
+	}
+	r := refresh.New(store, []ports.SourceFetcher{partial, fetcher("todoist", task("t1"))},
+		&ports.FixedClock{T: now}, n, discardLogger())
+
+	if _, err := r.Run(ctx, "cron"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(n.seen) != 1 {
+		t.Fatalf("notifier saw %d items, want only the healthy source's 1 — a failed source's items were never stored", len(n.seen))
+	}
+	if n.seen[0].Source != "todoist" {
+		t.Errorf("notifier saw an item from %q, want only todoist", n.seen[0].Source)
+	}
+}
+
+type recordingNotifier struct{ seen []domain.Item }
+
+func (n *recordingNotifier) Notify(_ context.Context, items []domain.Item) error {
+	n.seen = append(n.seen, items...)
+	return nil
 }
 
 type failingNotifier struct{ items int }
