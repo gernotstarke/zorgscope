@@ -1,0 +1,112 @@
+/* Hand-written CSS, no build step (ADR-0002). Light and dark come from custom properties switched
+   by prefers-color-scheme, so there is no theme script and therefore no theme flash — and no
+   inline style, so the Content-Security-Policy needs no 'unsafe-inline' (QS-4.4). */
+
+:root {
+  color-scheme: light dark;
+  --bg: #fbfbfc;
+  --surface: #ffffff;
+  --border: #dcdfe4;
+  --text: #1c1e21;
+  --muted: #5b6169;
+  --accent: #2f5bd7;
+  --danger: #b3261e;
+  --radius: 10px;
+  --gap: 1rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181c;
+    --surface: #1e2126;
+    --border: #31353c;
+    --text: #e7e9ec;
+    --muted: #9aa1ab;
+    --accent: #7fa2ff;
+    --danger: #f2836f;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.topbar {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--gap);
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.brand {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-decoration: none;
+  color: var(--text);
+}
+
+.topbar nav a { color: var(--muted); text-decoration: none; }
+.topbar nav a:hover { color: var(--accent); }
+
+main { max-width: 72rem; margin: 0 auto; padding: 1.5rem 1.25rem; }
+
+h1 { font-size: 1.4rem; margin: 0 0 1rem; }
+
+.signin {
+  max-width: 26rem;
+  margin: 3rem auto;
+  padding: 1.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.signin form { display: grid; gap: 0.5rem; }
+
+label { color: var(--muted); font-size: 0.9rem; }
+
+input[type="password"] {
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+button {
+  margin-top: 0.5rem;
+  padding: 0.6rem 1rem;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: #ffffff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:hover { filter: brightness(1.08); }
+
+.error {
+  margin: 0 0 0.5rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+}
+
+.tile {
+  padding: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
