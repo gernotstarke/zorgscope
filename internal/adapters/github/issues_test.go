@@ -1,9 +1,11 @@
 package github_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -46,6 +48,114 @@ func TestFetchReturnsIssuesAndPRs(t *testing.T) {
 		if it.CreatedAt.IsZero() || it.UpdatedAt.IsZero() {
 			t.Errorf("item %s has no timestamps; FR-2.2 needs them", it.ExternalID)
 		}
+	}
+}
+
+// FR-2.1 AC1: a pull request's draft flag is fetched and reaches the item. It is carried in
+// State — "DRAFT" for a draft, "OPEN" for a ready one — so a draft is distinguishable from a
+// ready pull request by the time the item reaches the store, with no new column. The fixture's
+// org/repo has PR #11 marked isDraft and PR #10 not.
+//
+// The issues in the same fixture are asserted too: isDraft exists on GitHub's PullRequest and not
+// on its Issue, so an issue must never come back as DRAFT.
+func TestPullRequestDraftFlagIsFetched(t *testing.T) {
+	srv := httptest.NewServer(fakesources.NewServer())
+	defer srv.Close()
+
+	f := github.NewIssueFetcher(github.Config{
+		Token: "x", BaseURL: srv.URL + "/graphql", Repos: []string{"org/repo"},
+	}, srv.Client())
+
+	res, err := f.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+
+	byID := map[string]domain.Item{}
+	for _, it := range res.Items {
+		byID[it.ExternalID] = it
+	}
+
+	draft, ok := byID["pr:org/repo#11"]
+	if !ok {
+		t.Fatalf("draft pull request pr:org/repo#11 missing from %d items", len(res.Items))
+	}
+	if draft.State != "DRAFT" {
+		t.Errorf("draft PR State = %q, want DRAFT — the draft flag is not carried (FR-2.1 AC1)", draft.State)
+	}
+
+	ready, ok := byID["pr:org/repo#10"]
+	if !ok {
+		t.Fatal("ready pull request pr:org/repo#10 missing")
+	}
+	if ready.State != "OPEN" {
+		t.Errorf("ready PR State = %q, want OPEN — a ready PR must not read as a draft", ready.State)
+	}
+
+	for _, it := range res.Items {
+		if it.Kind == domain.KindIssue && it.State != "OPEN" {
+			t.Errorf("issue %s State = %q, want OPEN", it.ExternalID, it.State)
+		}
+	}
+}
+
+// FR-2.1 AC1, guarding the half internal/fakesources cannot: isDraft exists on GitHub's
+// PullRequest type and not on its Issue type, so asking for it in the issues query is rejected by
+// real GitHub with "Field 'isDraft' doesn't exist on type 'Issue'". The fake server does not
+// validate queries against a schema, so it would answer such a query happily and every other test
+// in this file would still pass. This one reads the query text the client actually sends.
+func TestOnlyThePullRequestQueryAsksForIsDraft(t *testing.T) {
+	var mu sync.Mutex
+	queries := map[string]string{}
+
+	echo := connectionEchoHandler(t, func(string) (nodes []any, hasNextPage bool, endCursor string) {
+		return []any{}, false, ""
+	})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+			http.Error(w, "unreadable body", http.StatusBadRequest)
+			return
+		}
+		var q struct {
+			Query string `json:"query"`
+		}
+		if err := json.Unmarshal(body, &q); err != nil {
+			t.Errorf("decode request body: %v", err)
+			http.Error(w, "bad request body", http.StatusBadRequest)
+			return
+		}
+		conn := "pullRequests"
+		if strings.Contains(q.Query, "issues(") {
+			conn = "issues"
+		}
+		mu.Lock()
+		queries[conn] = q.Query
+		mu.Unlock()
+
+		r.Body = io.NopCloser(bytes.NewReader(body)) // the echo handler decodes it again
+		echo(w, r)
+	}))
+	defer srv.Close()
+
+	f := github.NewIssueFetcher(github.Config{
+		Token: "x", BaseURL: srv.URL + "/graphql", Repos: []string{"org/repo"},
+	}, srv.Client())
+	if _, err := f.Fetch(context.Background()); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if queries["issues"] == "" || queries["pullRequests"] == "" {
+		t.Fatalf("both connections must have been queried, got %d: %v", len(queries), queries)
+	}
+	if strings.Contains(queries["issues"], "isDraft") {
+		t.Errorf("the issues query asks for isDraft, which real GitHub rejects on type Issue:\n%s", queries["issues"])
+	}
+	if !strings.Contains(queries["pullRequests"], "isDraft") {
+		t.Errorf("the pull request query must ask for isDraft (FR-2.1 AC1):\n%s", queries["pullRequests"])
 	}
 }
 

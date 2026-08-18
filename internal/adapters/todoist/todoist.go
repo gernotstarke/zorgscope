@@ -23,6 +23,11 @@ const defaultBaseURL = "https://api.todoist.com"
 // tasksPath is the REST v2 endpoint this package reads.
 const tasksPath = "/rest/v2/tasks"
 
+// projectsPath is the REST v2 endpoint that names the projects tasks belong to. A task carries
+// only its project_id, and FR-4.1 AC1 asks for the project, so the ids have to be resolved
+// somewhere; Todoist has no way to expand them inside the tasks response.
+const projectsPath = "/rest/v2/projects"
+
 // Config configures access to Todoist for Fetcher.
 type Config struct {
 	Token   string
@@ -92,7 +97,11 @@ func (f *Fetcher) Fetch(ctx context.Context) (ports.FetchResult, error) {
 	y, m, d := now.Date()
 	startOfTomorrow := time.Date(y, m, d+1, 0, 0, 0, 0, f.loc)
 
-	var items []domain.Item
+	type dueTask struct {
+		task  todoistTask
+		dueAt time.Time
+	}
+	var due []dueTask
 	for _, tk := range tasks {
 		if tk.Due == nil {
 			continue // no due date: out of scope (FR-4.1 AC3)
@@ -104,7 +113,14 @@ func (f *Fetcher) Fetch(ctx context.Context) (ports.FetchResult, error) {
 		if !dueAt.Before(startOfTomorrow) {
 			continue // due later than today: out of scope (FR-4.1 AC3)
 		}
-		items = append(items, tk.toItem(dueAt))
+		due = append(due, dueTask{task: tk, dueAt: dueAt})
+	}
+
+	projects := f.projectNames(ctx, due != nil)
+
+	items := make([]domain.Item, 0, len(due))
+	for _, d := range due {
+		items = append(items, d.task.toItem(d.dueAt, projects[d.task.ProjectID]))
 	}
 
 	sort.Slice(items, func(i, j int) bool {
@@ -115,6 +131,60 @@ func (f *Fetcher) Fetch(ctx context.Context) (ports.FetchResult, error) {
 	})
 
 	return ports.FetchResult{Items: items}, nil
+}
+
+// projectNames resolves every project id to its name with one request for all of them —
+// GET /rest/v2/projects — never one request per task. It returns an empty map, not an error, when
+// anything goes wrong, and it makes no request at all when wanted is false (no task survived the
+// due filter, so no name would be used).
+//
+// The failure is swallowed on purpose, and this is the one place in the package where an error is
+// dropped. Returning it would have to travel out of Fetch as a non-nil error, and a fetcher's
+// non-nil error means "discard everything I returned" (see ports.SourceFetcher): a Todoist outage
+// on the projects endpoint alone would then blank the whole tasks tile — losing the content, due
+// date and priority the user actually needs — over a missing label. Degrading to tasks without a
+// project name is the smaller loss. It cannot be reported any other way today: this package holds
+// no logger, and ports.FetchResult has no channel for a warning.
+func (f *Fetcher) projectNames(ctx context.Context, wanted bool) map[string]string {
+	if !wanted {
+		return nil
+	}
+	projects, err := f.fetchProjects(ctx)
+	if err != nil {
+		return nil
+	}
+	names := make(map[string]string, len(projects))
+	for _, p := range projects {
+		names[p.ID] = p.Name
+	}
+	return names
+}
+
+// fetchProjects issues GET {baseURL}/rest/v2/projects with the configured bearer token. Like
+// fetchTasks, a non-200 is an error rather than a body decoded as JSON, the body is always
+// closed, and no error names the token or the Authorization header (QS-4.3).
+func (f *Fetcher) fetchProjects(ctx context.Context) ([]todoistProject, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.baseURL+projectsPath, nil)
+	if err != nil {
+		return nil, fmt.Errorf("todoist: building projects request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+f.token)
+
+	resp, err := f.hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("todoist: projects request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("todoist: unexpected status %d for projects", resp.StatusCode)
+	}
+
+	var projects []todoistProject
+	if err := json.NewDecoder(resp.Body).Decode(&projects); err != nil {
+		return nil, fmt.Errorf("todoist: decoding projects response: %w", err)
+	}
+	return projects, nil
 }
 
 // fetchTasks issues GET {baseURL}/rest/v2/tasks?filter={url-encoded filter} with the configured
@@ -156,11 +226,19 @@ func (f *Fetcher) fetchTasks(ctx context.Context) ([]todoistTask, error) {
 
 // todoistTask is one element of Todoist REST v2's GET /rest/v2/tasks array.
 type todoistTask struct {
-	ID       string      `json:"id"`
-	Content  string      `json:"content"`
-	Priority int         `json:"priority"`
-	URL      string      `json:"url"`
-	Due      *todoistDue `json:"due"`
+	ID        string      `json:"id"`
+	Content   string      `json:"content"`
+	ProjectID string      `json:"project_id"`
+	Priority  int         `json:"priority"`
+	URL       string      `json:"url"`
+	Due       *todoistDue `json:"due"`
+}
+
+// todoistProject is one element of GET /rest/v2/projects. Only the two fields needed to turn a
+// task's project_id into a name are declared; the response carries many more.
+type todoistProject struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 // todoistDue is Todoist's "due" object. Exactly one of the two shapes is meaningful at a time:
@@ -196,15 +274,25 @@ func (d *todoistDue) instant(loc *time.Location) (time.Time, error) {
 	return endOfDay.UTC(), nil
 }
 
-// toItem maps t to a domain.Item, given the due instant already resolved by instant(). Repo,
-// Number and Author stay empty: Todoist tasks have none of those. FirstSeenAt is left zero too —
-// the store owns it, and an adapter writing it would break the one invariant the product depends
-// on (FR-5.3).
-func (t todoistTask) toItem(dueAt time.Time) domain.Item {
+// toItem maps t to a domain.Item, given the due instant already resolved by instant() and the
+// project name already resolved by projectNames. Number and Author stay empty: Todoist tasks have
+// neither. FirstSeenAt is left zero too — the store owns it, and an adapter writing it would break
+// the one invariant the product depends on (FR-5.3).
+//
+// The project goes into Repo, which FR-4.1 AC1 needs somewhere and which no Todoist item used
+// before. That column is the item's container — for GitHub "owner/name", for Todoist the project
+// — and it is the only field on domain.Item with that meaning, so the value is in the right place
+// even though the field's name reads as GitHub's word for it. The cost is exactly that name: a
+// reader of `item.Repo` on a task sees "Website", not a repository. It buys the alternative's
+// absence: a dedicated Project field would need a column, hence migration 0002, for a string an
+// existing column already carries. If the name is ever worth fixing, the honest fix is to rename
+// Repo across the domain, the schema and the templates — not to add a second column beside it.
+func (t todoistTask) toItem(dueAt time.Time, project string) domain.Item {
 	return domain.Item{
 		Source:     "todoist",
 		ExternalID: "todoist:" + t.ID,
 		Kind:       domain.KindTask,
+		Repo:       project,
 		Title:      t.Content,
 		URL:        t.URL,
 		Priority:   t.Priority,

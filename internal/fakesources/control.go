@@ -22,7 +22,11 @@ var controlSources = map[string]bool{"github": true, "plausible": true, "todoist
 // though: shouldFailLocked keys github's failures by repository, but plausible has no repository
 // concept, so a plausible caller passes a site_id in the same repo parameter (e.g.
 // /_control/fail?source=plausible&repo=example.com&status=502) to scope the failure to one site.
-// todoist has neither concept, so repo is ignored for it and only a source-wide failure applies.
+// todoist has no repository concept either, but it does have two endpoints: passing
+// repo=projects (todoistProjectsTarget) fails GET /rest/v2/projects alone and leaves
+// GET /rest/v2/tasks healthy, which is how a test proves that a failed project lookup does not
+// destroy a healthy task fetch. Any other repo value fails nothing on its own; a source-wide
+// failure (no repo) fails both endpoints.
 func (s *server) handleControlFail(w http.ResponseWriter, r *http.Request) {
 	source := r.URL.Query().Get("source")
 	if !controlSources[source] {

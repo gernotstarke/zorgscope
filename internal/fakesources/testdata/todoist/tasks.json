@@ -10,7 +10,7 @@
   {
     "id": "1002",
     "content": "Review pull request #10",
-    "project_id": "5001",
+    "project_id": "5002",
     "priority": 3,
     "url": "https://todoist.com/showTask?id=1002",
     "due": { "date": "2026-08-17" }

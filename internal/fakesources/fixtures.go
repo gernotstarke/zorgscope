@@ -10,13 +10,20 @@ import (
 // (working directory: the package) and `go run ./cmd/fakesources` (working directory: the module
 // root) — a relative path would only work for one of the two.
 //
-//go:embed testdata/github/repos/*.json testdata/github/runs/*.json testdata/todoist/tasks.json
+//go:embed testdata/github/repos/*.json testdata/github/runs/*.json testdata/todoist/*.json
 var fixturesFS embed.FS
 
 // ghIssue is a single GitHub issue or pull request, shaped exactly as shurcooL/githubv4
-// unmarshals a GraphQL node: number, title, url, author.login, createdAt, updatedAt, state. Both
-// issues and pull requests use this type — the two GraphQL connections differ only in which slice
-// a node lives in, not in field shape.
+// unmarshals a GraphQL node: number, title, url, author.login, createdAt, updatedAt, state, and —
+// for pull requests only — isDraft. Both issues and pull requests use this type; the two GraphQL
+// connections differ only in which slice a node lives in, not in field shape.
+//
+// IsDraft carries omitempty for a reason that is not cosmetic. On real GitHub, isDraft exists on
+// PullRequest and not on Issue, so an adapter's issues query cannot ask for it — and
+// shurcooL/graphql's decoder is strict about response keys it has no struct field for. Emitting
+// "isDraft": false into the issues connection would therefore break every issues query. omitempty
+// drops the key wherever the flag is false, which is every issue and every ready pull request; a
+// draft pull request is the only node that carries it.
 type ghIssue struct {
 	Number    int      `json:"number"`
 	Title     string   `json:"title"`
@@ -25,6 +32,7 @@ type ghIssue struct {
 	CreatedAt string   `json:"createdAt"`
 	UpdatedAt string   `json:"updatedAt"`
 	State     string   `json:"state"`
+	IsDraft   bool     `json:"isDraft,omitempty"`
 }
 
 // ghAuthor is the author sub-object of a GraphQL issue or pull-request node.
@@ -63,6 +71,14 @@ type todoistDue struct {
 	Datetime string `json:"datetime,omitempty"`
 }
 
+// todoistProject is a single project, shaped as Todoist's REST v2 GET /rest/v2/projects returns
+// it. Only the two fields an adapter needs to resolve a task's project_id to a name are declared;
+// the real response carries colour, order, view style and more.
+type todoistProject struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 // todoistTask is a single task, shaped as Todoist's REST v2 API returns it.
 type todoistTask struct {
 	ID        string      `json:"id"`
@@ -99,35 +115,54 @@ var githubRunsFiles = map[string]string{
 // use.
 const todoistTasksFile = "testdata/todoist/tasks.json"
 
+// todoistProjectsFile holds the two projects the fixture tasks belong to (5001 and 5002), so that
+// an adapter resolving project_id to a project name has both a hit for every fixture task and two
+// distinguishable names to assert on (FR-4.1 AC1).
+const todoistProjectsFile = "testdata/todoist/projects.json"
+
 // loadFixtures reads every embedded fixture document fresh and returns a new, independent copy of
 // the pristine state. It is used both to build the server's initial state and to implement
 // POST /_control/reset — calling it again always yields the same starting point, discarding any
 // injected issues or failures from a previous call.
-func loadFixtures() (map[string]*ghRepoFixture, map[string]*runsFixture, []todoistTask, error) {
-	repos := make(map[string]*ghRepoFixture, len(githubRepoFiles))
+func loadFixtures() (fixtures, error) {
+	var fx fixtures
+
+	fx.repos = make(map[string]*ghRepoFixture, len(githubRepoFiles))
 	for name, path := range githubRepoFiles {
-		var fx ghRepoFixture
-		if err := readFixture(path, &fx); err != nil {
-			return nil, nil, nil, fmt.Errorf("loading github repo fixture %s: %w", name, err)
+		var repo ghRepoFixture
+		if err := readFixture(path, &repo); err != nil {
+			return fixtures{}, fmt.Errorf("loading github repo fixture %s: %w", name, err)
 		}
-		repos[name] = &fx
+		fx.repos[name] = &repo
 	}
 
-	runs := make(map[string]*runsFixture, len(githubRunsFiles))
+	fx.runs = make(map[string]*runsFixture, len(githubRunsFiles))
 	for name, path := range githubRunsFiles {
-		var fx runsFixture
-		if err := readFixture(path, &fx); err != nil {
-			return nil, nil, nil, fmt.Errorf("loading github runs fixture %s: %w", name, err)
+		var runs runsFixture
+		if err := readFixture(path, &runs); err != nil {
+			return fixtures{}, fmt.Errorf("loading github runs fixture %s: %w", name, err)
 		}
-		runs[name] = &fx
+		fx.runs[name] = &runs
 	}
 
-	var tasks []todoistTask
-	if err := readFixture(todoistTasksFile, &tasks); err != nil {
-		return nil, nil, nil, fmt.Errorf("loading todoist tasks fixture: %w", err)
+	if err := readFixture(todoistTasksFile, &fx.tasks); err != nil {
+		return fixtures{}, fmt.Errorf("loading todoist tasks fixture: %w", err)
+	}
+	if err := readFixture(todoistProjectsFile, &fx.projects); err != nil {
+		return fixtures{}, fmt.Errorf("loading todoist projects fixture: %w", err)
 	}
 
-	return repos, runs, tasks, nil
+	return fx, nil
+}
+
+// fixtures is one pristine copy of every embedded fixture document. It exists so that adding a
+// fixture kind does not add another positional return value to loadFixtures and another silent
+// opportunity to swap two of them at the call site.
+type fixtures struct {
+	repos    map[string]*ghRepoFixture
+	runs     map[string]*runsFixture
+	tasks    []todoistTask
+	projects []todoistProject
 }
 
 // readFixture reads the embedded file at path and decodes it into v.

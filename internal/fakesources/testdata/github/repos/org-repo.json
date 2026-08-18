@@ -45,7 +45,8 @@
       "author": { "login": "erin" },
       "createdAt": "2026-08-06T09:00:00Z",
       "updatedAt": "2026-08-06T15:00:00Z",
-      "state": "OPEN"
+      "state": "OPEN",
+      "isDraft": true
     }
   ]
 }

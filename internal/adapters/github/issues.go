@@ -110,10 +110,16 @@ func (f *IssueFetcher) Fetch(ctx context.Context) (ports.FetchResult, error) {
 	return ports.FetchResult{Items: items}, errors.Join(errs...)
 }
 
-// ghConnection is one page of a GraphQL connection: a page of nodes plus pageInfo. Issues and
-// pull requests share this shape.
-type ghConnection struct {
+// ghIssueConnection is one page of the issues connection: a page of nodes plus pageInfo.
+type ghIssueConnection struct {
 	Nodes    []ghIssueNode
+	PageInfo ghPageInfo
+}
+
+// ghPRConnection is one page of the pullRequests connection. It is a separate type from
+// ghIssueConnection only because its nodes are: see ghPRNode.
+type ghPRConnection struct {
+	Nodes    []ghPRNode
 	PageInfo ghPageInfo
 }
 
@@ -123,18 +129,18 @@ type ghConnection struct {
 // connections would be wrong, not just inconvenient.
 type issuesQuery struct {
 	Repository struct {
-		Issues ghConnection `graphql:"issues(states: OPEN, first: 100, after: $after, orderBy: {field: CREATED_AT, direction: ASC})"`
+		Issues ghIssueConnection `graphql:"issues(states: OPEN, first: 100, after: $after, orderBy: {field: CREATED_AT, direction: ASC})"`
 	} `graphql:"repository(owner: $owner, name: $name)"`
 }
 
 // pullRequestsQuery fetches one page of a repository's open pull requests. See issuesQuery.
 type pullRequestsQuery struct {
 	Repository struct {
-		PullRequests ghConnection `graphql:"pullRequests(states: OPEN, first: 100, after: $after, orderBy: {field: CREATED_AT, direction: ASC})"`
+		PullRequests ghPRConnection `graphql:"pullRequests(states: OPEN, first: 100, after: $after, orderBy: {field: CREATED_AT, direction: ASC})"`
 	} `graphql:"repository(owner: $owner, name: $name)"`
 }
 
-// ghIssueNode is one issue or pull-request node; both connections share this shape.
+// ghIssueNode is one issue node.
 type ghIssueNode struct {
 	Number    githubv4.Int
 	Title     githubv4.String
@@ -143,6 +149,28 @@ type ghIssueNode struct {
 	CreatedAt githubv4.DateTime
 	UpdatedAt githubv4.DateTime
 	State     githubv4.String
+}
+
+// ghPRNode is one pull-request node: every field of ghIssueNode plus isDraft (FR-2.1 AC1).
+//
+// The seven shared fields are spelled out again rather than embedded. shurcooL/graphql builds the
+// query text by reflecting over this struct, and it reads an embedded struct as a GraphQL
+// fragment, not as a set of inlined fields — so embedding would change the query, not just the
+// Go type. Duplicating seven field declarations is the cheaper of the two mistakes.
+//
+// A separate type is required in the first place because isDraft exists on GitHub's PullRequest
+// and not on its Issue. One shared node type would put isDraft into the issues query too, which
+// real GitHub rejects with "Field 'isDraft' doesn't exist on type 'Issue'" — a failure the fake
+// server would never show, since it does not validate queries against a schema.
+type ghPRNode struct {
+	Number    githubv4.Int
+	Title     githubv4.String
+	URL       githubv4.URI
+	Author    struct{ Login githubv4.String }
+	CreatedAt githubv4.DateTime
+	UpdatedAt githubv4.DateTime
+	State     githubv4.String
+	IsDraft   githubv4.Boolean
 }
 
 // ghPageInfo mirrors a GraphQL connection's pageInfo.
@@ -212,7 +240,7 @@ func (f *IssueFetcher) fetchPullRequests(ctx context.Context, owner, name string
 		}
 
 		for _, n := range q.Repository.PullRequests.Nodes {
-			items = append(items, toItem(owner, name, domain.KindPR, n))
+			items = append(items, toPRItem(owner, name, n))
 		}
 
 		next, done, err := nextAfter(after, q.Repository.PullRequests.PageInfo, repo)
@@ -255,9 +283,9 @@ func externalIDPrefix(kind domain.Kind) string {
 	return "issue"
 }
 
-// toItem maps one GraphQL issue or pull-request node to a domain.Item. DueAt and Priority are
-// left zero — GitHub items have neither. FirstSeenAt is left zero too: the store owns it, and an
-// adapter writing it would break the one invariant the product depends on (FR-5.3).
+// toItem maps one GraphQL issue node to a domain.Item. DueAt and Priority are left zero — GitHub
+// items have neither. FirstSeenAt is left zero too: the store owns it, and an adapter writing it
+// would break the one invariant the product depends on (FR-5.3).
 func toItem(owner, name string, kind domain.Kind, n ghIssueNode) domain.Item {
 	repo := owner + "/" + name
 	number := int(n.Number)
@@ -274,6 +302,39 @@ func toItem(owner, name string, kind domain.Kind, n ghIssueNode) domain.Item {
 		CreatedAt:  n.CreatedAt.UTC(),
 		UpdatedAt:  n.UpdatedAt.UTC(),
 	}
+}
+
+// draftState is the value Item.State carries for a draft pull request (FR-2.1 AC1).
+const draftState = "DRAFT"
+
+// toPRItem maps one GraphQL pull-request node to a domain.Item, carrying the draft flag in State.
+//
+// State is the honest place for it, not a workaround for the absence of a dedicated field.
+// pullRequestsQuery asks for states: OPEN, so every node reaching here has state OPEN and the
+// field carries no information at all today — it is a constant. Replacing that constant with
+// "DRAFT" for a draft therefore loses nothing, and it is the vocabulary GitHub itself uses:
+// `gh pr list` prints DRAFT in the same column that otherwise prints OPEN, and the web UI labels
+// the pull request "Draft" where it would say "Open". A reader of the stored row sees a value
+// that means what it says.
+//
+// The alternative — a bool on domain.Item — would need a column to survive the store, and so a
+// second migration, for one bit that an existing column already has room for. Nothing branches on
+// State today (nothing else reads it), so nothing is broken by the value changing; a renderer that
+// wants a "draft" badge tests State == "DRAFT".
+func toPRItem(owner, name string, n ghPRNode) domain.Item {
+	it := toItem(owner, name, domain.KindPR, ghIssueNode{
+		Number:    n.Number,
+		Title:     n.Title,
+		URL:       n.URL,
+		Author:    n.Author,
+		CreatedAt: n.CreatedAt,
+		UpdatedAt: n.UpdatedAt,
+		State:     n.State,
+	})
+	if bool(n.IsDraft) {
+		it.State = draftState
+	}
+	return it
 }
 
 // splitRepo splits "owner/name" into its two parts. It reports ok = false for anything else,

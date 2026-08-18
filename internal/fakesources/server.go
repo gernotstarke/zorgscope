@@ -22,9 +22,10 @@ import (
 type server struct {
 	mu sync.Mutex
 
-	githubRepos map[string]*ghRepoFixture
-	githubRuns  map[string]*runsFixture
-	todoist     []todoistTask
+	githubRepos     map[string]*ghRepoFixture
+	githubRuns      map[string]*runsFixture
+	todoist         []todoistTask
+	todoistProjects []todoistProject
 
 	// fail maps source -> target -> HTTP status to return. target is a repository
 	// ("owner/name") for github, and the empty string for a source-wide failure (also used by
@@ -51,6 +52,7 @@ func NewServer() http.Handler {
 	mux.HandleFunc("GET /repos/{owner}/{repo}/actions/runs", s.handleActionsRuns)
 	mux.HandleFunc("GET /api/v1/stats/aggregate", s.handlePlausibleAggregate)
 	mux.HandleFunc("GET /rest/v2/tasks", s.handleTodoistTasks)
+	mux.HandleFunc("GET /rest/v2/projects", s.handleTodoistProjects)
 	mux.HandleFunc("POST /_control/fail", s.handleControlFail)
 	mux.HandleFunc("POST /_control/add-issue", s.handleControlAddIssue)
 	mux.HandleFunc("POST /_control/reset", s.handleControlReset)
@@ -87,13 +89,14 @@ func (s *server) shouldFailLocked(source, target string) (status int, fail bool)
 // other in-progress test down with it. The condition is identical; when in the request lifecycle
 // it is discovered decides whether panicking is a favour or a liability.
 func (s *server) resetLocked() error {
-	repos, runs, tasks, err := loadFixtures()
+	fx, err := loadFixtures()
 	if err != nil {
 		return err
 	}
-	s.githubRepos = repos
-	s.githubRuns = runs
-	s.todoist = tasks
+	s.githubRepos = fx.repos
+	s.githubRuns = fx.runs
+	s.todoist = fx.tasks
+	s.todoistProjects = fx.projects
 	s.fail = map[string]map[string]int{}
 	return nil
 }

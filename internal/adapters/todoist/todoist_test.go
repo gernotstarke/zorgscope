@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -136,8 +137,12 @@ func TestFetchMapsTaskFields(t *testing.T) {
 	if !overdue.DueAt.Equal(at(t, "2026-08-16T17:00:00Z")) {
 		t.Errorf("DueAt = %s, want 2026-08-16T17:00:00Z", overdue.DueAt)
 	}
-	if overdue.Repo != "" || overdue.Number != 0 || overdue.Author != "" {
-		t.Errorf("Repo/Number/Author must stay empty for a task: %+v", overdue)
+	if overdue.Number != 0 || overdue.Author != "" {
+		t.Errorf("Number/Author must stay empty for a task: %+v", overdue)
+	}
+	// Repo carries the project name for a task — see toItem (FR-4.1 AC1).
+	if overdue.Repo != "Website" {
+		t.Errorf("Repo = %q, want the project name Website", overdue.Repo)
 	}
 
 	dueToday, ok := byID["todoist:1002"]
@@ -149,6 +154,133 @@ func TestFetchMapsTaskFields(t *testing.T) {
 	// not midnight, or a task due "today" would read as already past by the morning.
 	if !dueToday.DueAt.Equal(time.Date(2026, 8, 17, 23, 59, 59, 999999999, time.UTC)) {
 		t.Errorf("DueAt = %s, want end of 2026-08-17 UTC", dueToday.DueAt)
+	}
+}
+
+// countingFetcher builds a Fetcher against a fresh fake server whose requests are counted by
+// path, so a test can assert how many upstream calls one Fetch costs.
+func countingFetcher(t *testing.T, clock ports.Clock) (*todoist.Fetcher, *httptest.Server, func(path string) int) {
+	t.Helper()
+
+	var mu sync.Mutex
+	counts := map[string]int{}
+	fake := fakesources.NewServer()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		counts[r.URL.Path]++
+		mu.Unlock()
+		fake.ServeHTTP(w, r)
+	}))
+
+	f := todoist.New(todoist.Config{
+		Token:   "x",
+		BaseURL: srv.URL,
+		Filter:  "overdue | today",
+	}, srv.Client(), clock)
+
+	return f, srv, func(path string) int {
+		mu.Lock()
+		defer mu.Unlock()
+		return counts[path]
+	}
+}
+
+// TestFetchCarriesProjectName is FR-4.1 AC1: a task is shown with content, project, due date and
+// priority, so the project name has to reach the item. It is carried in Repo — the item's
+// container field — because Todoist tasks never used that column and adding a dedicated one would
+// mean a schema migration for a single string (see toItem).
+//
+// The two surviving fixture tasks deliberately belong to different projects (1001 to 5001
+// "Website", 1002 to 5002 "Planning"), so an implementation that resolves one project and applies
+// its name to every task fails here.
+func TestFetchCarriesProjectName(t *testing.T) {
+	clock := &ports.FixedClock{T: at(t, "2026-08-17T12:00:00Z")}
+	f, srv := newFetcher(t, clock)
+	defer srv.Close()
+
+	res, err := f.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+
+	want := map[string]string{"todoist:1001": "Website", "todoist:1002": "Planning"}
+	got := map[string]string{}
+	for _, it := range res.Items {
+		got[it.ExternalID] = it.Repo
+	}
+	for id, name := range want {
+		if got[id] != name {
+			t.Errorf("item %s: project = %q, want %q (FR-4.1 AC1)", id, got[id], name)
+		}
+	}
+}
+
+// QS-2.5, QS-3.1: resolving project names must cost one request for all of them, not one per
+// task. Two tasks survive the filter here; a per-task implementation would make two projects
+// calls and still pass every assertion about the names.
+func TestProjectsAreFetchedOnceForAllTasks(t *testing.T) {
+	clock := &ports.FixedClock{T: at(t, "2026-08-17T12:00:00Z")}
+	f, srv, count := countingFetcher(t, clock)
+	defer srv.Close()
+
+	res, err := f.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if len(res.Items) != 2 {
+		t.Fatalf("len(items) = %d, want 2", len(res.Items))
+	}
+	if n := count("/rest/v2/projects"); n != 1 {
+		t.Errorf("GET /rest/v2/projects called %d times, want exactly 1 for the whole fetch", n)
+	}
+	if n := count("/rest/v2/tasks"); n != 1 {
+		t.Errorf("GET /rest/v2/tasks called %d times, want 1", n)
+	}
+}
+
+// A fetch that keeps no task needs no project names, so it must not spend a request on them —
+// the projects call is an extra cost on the refresh budget (QS-2.5) and buys nothing here. The
+// clock is set years BEFORE every fixture due date — not after, which would make all of them
+// overdue and keep them — so nothing survives the filter.
+func TestNoProjectsRequestWhenNoTaskSurvives(t *testing.T) {
+	clock := &ports.FixedClock{T: at(t, "2020-01-01T12:00:00Z")}
+	f, srv, count := countingFetcher(t, clock)
+	defer srv.Close()
+
+	res, err := f.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if len(res.Items) != 0 {
+		t.Fatalf("len(items) = %d, want 0 — every fixture task is due well after 2020", len(res.Items))
+	}
+	if n := count("/rest/v2/projects"); n != 0 {
+		t.Errorf("GET /rest/v2/projects called %d times, want 0 when no task survives", n)
+	}
+}
+
+// QS-1.4 and the partial-result rule: the project lookup is a second call, and a second call must
+// not be able to destroy the first. When only /rest/v2/projects fails, Fetch still returns every
+// task, with a nil error — a non-nil error would make the runner discard the whole healthy fetch
+// (see ports.SourceFetcher), blanking the tile over a missing label. The tasks simply carry no
+// project name.
+func TestProjectLookupFailureKeepsTasks(t *testing.T) {
+	clock := &ports.FixedClock{T: at(t, "2026-08-17T12:00:00Z")}
+	f, srv := newFetcher(t, clock)
+	defer srv.Close()
+	post(t, srv.URL+"/_control/fail?source=todoist&repo=projects&status=500")
+
+	res, err := f.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch must not fail when only the project lookup does: %v", err)
+	}
+	if len(res.Items) != 2 {
+		t.Fatalf("len(items) = %d, want 2 — a failed project lookup must not lose tasks", len(res.Items))
+	}
+	for _, it := range res.Items {
+		if it.Repo != "" {
+			t.Errorf("item %s: project = %q, want empty when the lookup failed", it.ExternalID, it.Repo)
+		}
 	}
 }
 
