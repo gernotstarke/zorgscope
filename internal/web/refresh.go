@@ -25,6 +25,39 @@ import (
 // deadline, deliberately independent of this context so that a cancelled run can still record why
 // it failed. A run can therefore legitimately linger some fifteen seconds past its own budget, and
 // a ceiling sized to the budget would cut those writes off precisely when they matter most.
+//
+// # The invariant: refreshCeiling must stay strictly below internal/refresh's leaseTTL
+//
+// The two constants live in different packages and look unrelated, and they are not. A run holds
+// the refresh lease for leaseTTL (5 minutes) and the store hands an expired lease to whoever asks
+// next. Raise this ceiling past that TTL and a genuinely slow run reaches minute six still working,
+// the next cron trigger acquires the lease that has expired underneath it, and two runs call
+// ReplaceItems on the same sources at once — the exact thing QS-1.7 exists to prevent, with the
+// first-seen invariant in the blast radius. Nothing would report it: both runs answer 200.
+//
+// TestTheCeilingStaysInsideTheLease pins the relationship against the TTL the runner actually
+// asks the store for, not against a copy of it, so raising either constant past the other fails.
+//
+// # The value: what it has to cover
+//
+// Sources are fetched sequentially, each HTTP call is bounded by main.go's 20-second
+// upstreamTimeout, and two of the fetchers fan out inside one Fetch. The worst case a run can take
+// is therefore, in whole seconds:
+//
+//	20 × (2×repos + 2×sites + 1) + 10
+//
+// — GitHub's issue and build fetchers make one call per configured repository each, Plausible
+// makes one per site per window and there are two windows (FR-3.1), Todoist makes one, and the
+// announcement step is bounded by the runner's own 10-second notifyBudget. One repository and one
+// site is 110 s, which is inside this ceiling by ten seconds. Two repositories, or a second site,
+// is not: at 150 s the ceiling fires mid-run and every source it has not reached records
+// "context deadline exceeded" — rendered on the dashboard as a broken source that was never broken
+// (FR-1.4 AC3), which is the fabricated-error failure the WithoutCancel below exists to prevent,
+// one layer up. TestTheCeilingFiringIsReportedAsSuchPerSource pins what that looks like.
+//
+// So this value is a decision about configuration size, and adding a repository or a site is a
+// decision to revisit it. The headroom above the ceiling is bounded too: leaseTTL minus the
+// ceiling has to leave room for the closing writes above, which run past it.
 const refreshCeiling = 2 * time.Minute
 
 // busyNotice is what a visitor is told when another refresh already holds the lease. The API says
@@ -51,7 +84,10 @@ func (s *Server) handleAPIRefresh(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, refresh.ErrBusy):
 		s.writeJSON(w, r, http.StatusConflict, apiError{Error: refresh.ErrBusy.Error()})
 	case err != nil:
-		s.fail(w, r, "refreshing", err)
+		// JSON, not s.fail's text/plain: this endpoint's whole contract is a body a machine
+		// decodes, and a caller that meets a syntax error exactly when the run failed learns
+		// nothing from the one response that had something to tell it.
+		s.failJSON(w, r, "refreshing", err)
 	default:
 		s.writeJSON(w, r, http.StatusOK, s.apiReport(rep))
 	}
@@ -127,13 +163,73 @@ func (s *Server) renderBusy(w http.ResponseWriter, r *http.Request) {
 //
 // It never calls time.Now: every timestamp in the report comes from the injected clock, through
 // the runner.
+//
+// A panicking source is caught here only long enough to close the run record out; the panic then
+// carries on to recoverPanics, which is what turns it into a 500.
 func (s *Server) runRefresh(r *http.Request, trigger string) (refresh.Report, error) {
-	if s.runner == nil {
-		return refresh.Report{}, errors.New("no refresh runner is configured")
-	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), refreshCeiling)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), s.ceiling)
 	defer cancel()
+	// Registered after cancel, so it runs before it: the context is still live in here.
+	defer s.closeRunAfterPanic(ctx)
 	return s.runner.Run(ctx, trigger)
+}
+
+// panicDetail is what the run record says about a run a panic ended. It is deliberately fixed: the
+// detail is stored and rendered, and a panic value can carry anything the panicking code was
+// holding (QS-4.3). The value and its stack go to the log instead.
+const panicDetail = "the refresh was stopped by a panic; see the log"
+
+// panicCleanupTimeout bounds the one write closeAbandonedRun makes, for the same reason
+// internal/refresh bounds its own closing writes: nothing on the way out may be able to hold a
+// scale-to-zero Machine awake indefinitely.
+const panicCleanupTimeout = 5 * time.Second
+
+// closeRunAfterPanic closes out the refresh_run row of a run a panic ended, and then re-panics.
+//
+// The lease looks after itself: Runner.Run releases it in a defer, which the unwinding stack runs.
+// FinishRun does not — it is a plain call after the fetch loop — so without this the row stays
+// "running" for good and the dashboard's last-refresh line never moves again, even after the
+// process recovers.
+//
+// It re-panics because a panic is a bug and must not be turned into a quiet answer here: the 500
+// and the logged stack are recoverPanics' job, and this is only the part that has to happen while
+// the run's own context is still alive.
+func (s *Server) closeRunAfterPanic(ctx context.Context) {
+	p := recover()
+	if p == nil {
+		return
+	}
+	s.closeAbandonedRun(ctx)
+	panic(p)
+}
+
+// closeAbandonedRun writes the end of a run record nobody else will close.
+//
+// The row is found through LastRun rather than by ID, because a panic unwinds past the ID the
+// runner holds. The lease is already free by the time this runs, so a cron trigger arriving in
+// that same instant could have opened a newer row; the FinishedAt check keeps this from closing a
+// run that finished on its own, not from closing the wrong open one. That window is microseconds
+// wide, needs a concurrent trigger to hit it, and costs a run record's end timestamp — against a
+// row that is otherwise wrong forever.
+func (s *Server) closeAbandonedRun(ctx context.Context) {
+	// The run's own context may well be the reason for the panic, and is cancelled the moment
+	// runRefresh returns; the closing write gets a live one of its own, as the runner's do.
+	closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), panicCleanupTimeout)
+	defer cancel()
+
+	run, err := s.store.LastRun(closeCtx)
+	if err != nil {
+		s.log.Error("closing out the run a panic ended",
+			"doing", "reading the last run", "err", Redact(s.cfg.Secrets, err.Error()))
+		return
+	}
+	if run.ID == 0 || !run.FinishedAt.IsZero() {
+		return // nothing was opened, or it closed itself before the panic
+	}
+	if err := s.store.FinishRun(closeCtx, run.ID, s.clock.Now(), false, panicDetail); err != nil {
+		s.log.Error("closing out the run a panic ended",
+			"run", run.ID, "err", Redact(s.cfg.Secrets, err.Error()))
+	}
 }
 
 // ---------------------------------------------------------------- the JSON body
@@ -190,6 +286,15 @@ func (s *Server) apiReport(rep refresh.Report) apiReport {
 		})
 	}
 	return out
+}
+
+// failJSON is fail for the endpoint that answers in JSON: the same scrubbed log line, and a body
+// the caller can decode. The body carries the fixed notice rather than the error's own text, for
+// the reason fail's does — an error from the libSQL driver quotes the DSN, and the DSN carries the
+// Turso auth token (QS-4.3).
+func (s *Server) failJSON(w http.ResponseWriter, r *http.Request, doing string, err error) {
+	s.logFailure(r, doing, err)
+	s.writeJSON(w, r, http.StatusInternalServerError, apiError{Error: internalErrorNotice})
 }
 
 // writeJSON encodes v into a buffer before writing anything, so an encoding that fails half way

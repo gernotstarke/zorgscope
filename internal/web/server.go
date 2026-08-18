@@ -26,9 +26,11 @@ import (
 	"os"
 	"path"
 	"reflect"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gernotstarke/zorgscope/internal/config"
 	"github.com/gernotstarke/zorgscope/internal/ports"
@@ -99,6 +101,10 @@ type Server struct {
 	signIn   *rateLimiter
 	bearer   *rateLimiter
 	handler  http.Handler
+	// ceiling is how long one refresh run may take; New sets it to refreshCeiling. It is a field
+	// rather than a bare use of the constant so that a test can exercise the ceiling actually
+	// firing without waiting two minutes for it — see refresh.go for what the value has to be.
+	ceiling time.Duration
 	// trustFlyClientIP is the decision behind clientIP: only a process actually running behind
 	// Fly's proxy may believe the Fly-Client-IP header.
 	trustFlyClientIP bool
@@ -110,6 +116,14 @@ type Server struct {
 func New(o Options) (*Server, error) {
 	if o.Store == nil {
 		return nil, errors.New("web: a store is required")
+	}
+	// The runner is as required as the store, and for the same kind of reason. On a Machine that
+	// scales to zero the refresh endpoints are the only thing that ever writes upstream data:
+	// without a runner this process would start, serve a dashboard that silently went stale, and
+	// answer every cron trigger with 500 — a misconfiguration that looks healthy from the outside.
+	// It fails here instead, where a deployment notices.
+	if o.Runner == nil {
+		return nil, errors.New("web: a refresh runner is required")
 	}
 	if o.Config.Secrets.AppToken == "" {
 		return nil, errors.New("web: ZORGSCOPE_TOKEN is not set")
@@ -169,13 +183,14 @@ func New(o Options) (*Server, error) {
 		signIn:           newRateLimiter(signInAttempts, signInWindow),
 		bearer:           newRateLimiter(signInAttempts, signInWindow),
 		trustFlyClientIP: trustFly,
+		ceiling:          refreshCeiling,
 	}
-	s.handler = securityHeaders(canonicalPath(s.mux()))
+	s.handler = securityHeaders(s.recoverPanics(canonicalPath(s.mux())))
 	return s, nil
 }
 
-// Handler returns the server's HTTP handler: the route table behind the security-header
-// middleware.
+// Handler returns the server's HTTP handler: the route table behind the panic-recovery and
+// security-header middleware.
 func (s *Server) Handler() http.Handler { return s.handler }
 
 // authKind is the credential a route requires.
@@ -308,6 +323,71 @@ func cleanPath(p string) string {
 	}
 	return cleaned
 }
+
+// recoverPanics turns a panicking handler into a 500 rather than a dropped connection.
+//
+// It wraps the whole mux rather than a single handler, because a panic is not a property of one
+// route: it is the last thing standing between a bug anywhere in this process and a client that is
+// given no status at all. That client is usually cron-job.org, which records what it was answered
+// with — "500" is a far better entry in that history than a connection that simply closed. It sits
+// inside securityHeaders so that this answer carries them too, and outside the mux so that no
+// route can be registered past it (QS-4.1).
+//
+// The response says nothing beyond the fixed sentence. A panic value can quote whatever the
+// panicking code was holding — a DSN, a token, a request body — and a stack trace names the
+// filesystem this binary was built on; this is a public surface, so neither goes into it (QS-4.3).
+// Both go to the log, scrubbed, which is where they can be read.
+func (s *Server) recoverPanics(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rw := &recordingWriter{ResponseWriter: w}
+		defer func() {
+			p := recover()
+			if p == nil {
+				return
+			}
+			// http.ErrAbortHandler is net/http's own way of saying "abandon this response,
+			// quietly". The server handles it itself; swallowing it here would turn a deliberate
+			// abort into a 500 and log a bug that is not one.
+			if err, ok := p.(error); ok && errors.Is(err, http.ErrAbortHandler) {
+				panic(p)
+			}
+			s.log.Error("handler panicked",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"panic", Redact(s.cfg.Secrets, fmt.Sprint(p)),
+				"stack", Redact(s.cfg.Secrets, string(debug.Stack())),
+			)
+			if rw.started {
+				// The status line is already on the wire and cannot be taken back; writing a
+				// second one would only add a "superfluous WriteHeader" to the log.
+				return
+			}
+			http.Error(rw, internalErrorNotice, http.StatusInternalServerError)
+		}()
+		next.ServeHTTP(rw, r)
+	})
+}
+
+// recordingWriter notes whether a response has been started, so that a panic recovered after the
+// status line went out does not try to write a second one.
+type recordingWriter struct {
+	http.ResponseWriter
+	started bool
+}
+
+func (w *recordingWriter) WriteHeader(status int) {
+	w.started = true
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *recordingWriter) Write(b []byte) (int, error) {
+	w.started = true
+	return w.ResponseWriter.Write(b)
+}
+
+// Unwrap hands http.ResponseController the writer underneath, so that wrapping does not take away
+// anything a handler could otherwise reach.
+func (w *recordingWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // securityHeaders wraps the whole mux, so the headers are on every response — including the 404s
 // and 405s the mux itself produces (QS-4.4).
@@ -525,17 +605,27 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, page
 	_, _ = w.Write(buf.Bytes())
 }
 
+// internalErrorNotice is what a visitor is told when something failed on this side. It names
+// nothing: every server-side error text is logged, scrubbed, and never rendered (QS-4.3).
+const internalErrorNotice = "Something went wrong. The details are in the log."
+
 // fail is the single place a server-side error becomes a response. The visitor gets a fixed
 // sentence; the error's own text is logged, scrubbed of every configured secret, because an error
 // from the libSQL driver quotes the DSN and the DSN carries the Turso auth token (QS-4.3).
 func (s *Server) fail(w http.ResponseWriter, r *http.Request, doing string, err error) {
+	s.logFailure(r, doing, err)
+	http.Error(w, internalErrorNotice, http.StatusInternalServerError)
+}
+
+// logFailure records a server-side failure. It is the half of fail that a handler answering in
+// JSON shares: what reaches the log is the same either way, only the body differs.
+func (s *Server) logFailure(r *http.Request, doing string, err error) {
 	s.log.Error("request failed",
 		"doing", doing,
 		"method", r.Method,
 		"path", r.URL.Path,
 		"err", Redact(s.cfg.Secrets, err.Error()),
 	)
-	http.Error(w, "Something went wrong. The details are in the log.", http.StatusInternalServerError)
 }
 
 // Redact replaces every configured secret value found in text with a marker. It is the last line
