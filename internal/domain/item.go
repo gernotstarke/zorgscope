@@ -34,9 +34,15 @@ type Item struct {
 	// deliberately deferred: it reaches the domain, the schema, every adapter and the templates,
 	// which is a migration and a broad edit for a naming defect with no behavioural consequence.
 	// It was decided, not missed.
-	Repo        string
-	Number      int
-	Title       string
+	Repo   string
+	Number int
+	Title  string
+	// Summary is a short prefix of the item's own text — a GitHub issue or pull request body —
+	// with its whitespace collapsed, or empty when the source has none. It is stored short
+	// because it is displayed short: the dashboard renders it in small type under the title, so
+	// that a list of numbers and headlines says what the items are actually about. It is
+	// borrowed text like Title, and is escaped, never trusted.
+	Summary     string
 	URL         string
 	Author      string
 	State       string

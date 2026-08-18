@@ -28,6 +28,19 @@ var tileTitle = map[string]string{
 // tileOrder fixes the tiles' assembly and rendering order (FR-1.1 AC1).
 var tileOrder = []string{"github", "builds", "sites", "tasks"}
 
+// githubTileLimit is how many issues and pull requests the GitHub tile shows.
+//
+// The dashboard answers "does anything need me right now", and a list of every open issue across
+// eight repositories answers a different question — one nobody scrolls to the bottom of. Five is
+// the number that fits beside the other three tiles without the page becoming a report. The tile
+// still says how many more there are, because the count is the part a truncated list would
+// otherwise destroy: "5 shown" and "5 open" must not look the same.
+//
+// Only the list is cut. NewCount is counted over every item the source holds, so the badge and
+// the total in the tab title stay true — truncating before counting would make the dashboard
+// report fewer new items the more there were.
+const githubTileLimit = 5
+
 // The two Plausible windows the dashboard shows per site (FR-3.1 AC1). No other window length is
 // paired into a SiteMetrics.
 const (
@@ -122,9 +135,15 @@ type Tile struct {
 	Disabled bool
 	Error    string
 	LastOKAt time.Time
-	Items    []Item
-	Builds   []Build
-	Sites    []SiteMetrics
+	// Items is what the tile shows, which on a truncated tile is not everything the source holds
+	// — see Total.
+	Items []Item
+	// Total is how many items the source holds in all. It equals len(Items) on a tile that shows
+	// everything, and is larger on one that shows only its first few, so the tile can say how
+	// many it is not showing rather than quietly implying there are none.
+	Total  int
+	Builds []Build
+	Sites  []SiteMetrics
 }
 
 // SiteMetrics pairs one site's week and month Plausible windows (FR-3.1 AC1). A window that never
@@ -223,8 +242,11 @@ func buildTile(name string, in DashboardInput, disabled map[string]bool) Tile {
 	case "github":
 		items := itemsBySource(in.Items, source)
 		SortItems(items, in.LastVisitAt)
-		tile.Items = items
+		// Counted over everything, shown as the first few: the badge is about the source, the
+		// list is about the screen.
 		tile.NewCount = CountNew(items, in.LastVisitAt)
+		tile.Total = len(items)
+		tile.Items = firstN(items, githubTileLimit)
 	case "tasks":
 		// Not SortItems: that orders new-first then most-recently-updated, which would
 		// silently destroy due-date order (FR-4.1 AC2 needs overdue before due-today).
@@ -232,6 +254,7 @@ func buildTile(name string, in DashboardInput, disabled map[string]bool) Tile {
 		items := itemsBySource(in.Items, source)
 		sortTasks(items)
 		tile.Items = items
+		tile.Total = len(items)
 		tile.NewCount = CountNew(items, in.LastVisitAt)
 	case "builds":
 		tile.Builds = in.Builds
@@ -264,6 +287,17 @@ func itemsBySource(items []Item, source string) []Item {
 		}
 	}
 	return out
+}
+
+// firstN returns the first n items, or all of them when there are fewer. The result shares its
+// backing array with items, which is safe because nothing downstream sorts or appends to a tile's
+// Items — and it is the same slice the caller already owns exclusively, itemsBySource having
+// allocated it.
+func firstN(items []Item, n int) []Item {
+	if len(items) <= n {
+		return items
+	}
+	return items[:n]
 }
 
 // sortTasks orders the tasks tile by due date ascending — overdue tasks before those due today

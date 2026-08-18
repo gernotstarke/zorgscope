@@ -1,35 +1,50 @@
-/* Hand-written CSS, no build step (ADR-0002). Light and dark come from custom properties switched
-   by prefers-color-scheme, so there is no theme script and therefore no theme flash — and no
-   inline style, so the Content-Security-Policy needs no 'unsafe-inline' (QS-4.4). */
+/* Hand-written CSS, no build step (ADR-0002). Light and dark come from one set of custom
+   properties resolved by the document's colour scheme, which the server sets from a cookie — so
+   there is no theme script and therefore no theme flash, and no inline style, so the
+   Content-Security-Policy needs no 'unsafe-inline' (QS-4.4). */
 
 :root {
+  /* One palette, not two. light-dark() takes the light value when the document's colour scheme
+     resolves to light and the dark one when it resolves to dark, so the whole theme is decided by
+     `color-scheme` alone — which is what the switch below sets. Before it, this file carried the
+     dark palette a second time inside a prefers-color-scheme media query, and every colour had to
+     be changed in two places or the two appearances quietly drifted apart.
+
+     Each token is declared twice on purpose. A browser that does not know light-dark() discards
+     the second declaration and keeps the first, so it gets the complete light theme rather than a
+     page with no colours at all. A browser that does know it overwrites the first with the
+     second, which is how the cascade works within a single rule. */
   color-scheme: light dark;
+
   --bg: #fbfbfc;
+  --bg: light-dark(#fbfbfc, #16181c);
   --surface: #ffffff;
+  --surface: light-dark(#ffffff, #1e2126);
   --border: #dcdfe4;
+  --border: light-dark(#dcdfe4, #31353c);
   --text: #1c1e21;
+  --text: light-dark(#1c1e21, #e7e9ec);
   --muted: #5b6169;
+  --muted: light-dark(#5b6169, #9aa1ab);
   --accent: #2f5bd7;
+  --accent: light-dark(#2f5bd7, #7fa2ff);
   --danger: #b3261e;
+  --danger: light-dark(#b3261e, #f2836f);
   --warn: #8a5300;
+  --warn: light-dark(#8a5300, #e0a03c);
   --ok: #1f7a3d;
+  --ok: light-dark(#1f7a3d, #6bc98a);
+
   --radius: 10px;
   --gap: 1rem;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #16181c;
-    --surface: #1e2126;
-    --border: #31353c;
-    --text: #e7e9ec;
-    --muted: #9aa1ab;
-    --accent: #7fa2ff;
-    --danger: #f2836f;
-    --warn: #e0a03c;
-    --ok: #6bc98a;
-  }
-}
+/* The appearance switch (FR-1.5). The server writes data-theme on <html> from a cookie, so the
+   document is in the right theme from its first byte — there is no class to add after load and
+   therefore no flash of the wrong colours. Following the system is the absence of the attribute,
+   which is also the absence of the cookie: one state, expressed once. */
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
 
 * { box-sizing: border-box; }
 
@@ -347,6 +362,9 @@ button:hover { filter: brightness(1.08); }
 
 .topbar-nav { display: inline-flex; align-items: center; gap: 0.6rem; }
 
+/* The switch is a form, which is a block by default and would break the nav's row. */
+.theme-form { display: inline-flex; margin: 0; }
+
 /* An icon-only control. The disabled state is what the settings cog is in for the whole of v1,
    so it is styled as the ordinary case rather than as an exception: dimmed, no pointer, and no
    hover response, which together say "not now" without a tooltip having to be discovered. */
@@ -493,3 +511,29 @@ button:hover { filter: brightness(1.08); }
 .footer-meta { margin: 0; color: var(--muted); }
 .footer-sep { margin: 0 0.35rem; }
 .version { font-variant-numeric: tabular-nums; }
+
+/* ---------------------------------------------------------------- item rows */
+
+/* The number, ahead of the title, so a list of five is scannable by the thing people actually
+   quote to each other. */
+.item-number {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+/* The item's own description. Small and quiet: it is context under a title, not a second title,
+   and it is clamped to one line so five rows stay a list rather than becoming prose. */
+.item-summary {
+  margin: 0.15rem 0 0.2rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.item-more {
+  margin: 0.5rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}

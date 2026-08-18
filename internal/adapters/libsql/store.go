@@ -163,12 +163,13 @@ func (s *Store) Close() (err error) {
 // refresh". last_fetched_at, by contrast, is updated every time.
 const upsertItemSQL = `
 INSERT INTO items (
-  source, external_id, kind, repo, number, title, url, author, state,
+  source, external_id, kind, repo, number, title, summary, url, author, state,
   created_at, updated_at, due_at, priority, first_seen_at, last_fetched_at, payload)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)
 ON CONFLICT(source, external_id) DO UPDATE SET
   kind = excluded.kind, repo = excluded.repo, number = excluded.number,
-  title = excluded.title, url = excluded.url, author = excluded.author,
+  title = excluded.title, summary = excluded.summary, url = excluded.url,
+  author = excluded.author,
   state = excluded.state, created_at = excluded.created_at,
   updated_at = excluded.updated_at, due_at = excluded.due_at,
   priority = excluded.priority, last_fetched_at = excluded.last_fetched_at`
@@ -177,7 +178,8 @@ ON CONFLICT(source, external_id) DO UPDATE SET
 // or by hand from failing the scan.
 const itemColumns = `
   source, external_id, COALESCE(kind,''), COALESCE(repo,''), COALESCE(number,0),
-  COALESCE(title,''), COALESCE(url,''), COALESCE(author,''), COALESCE(state,''),
+  COALESCE(title,''), COALESCE(summary,''), COALESCE(url,''), COALESCE(author,''),
+  COALESCE(state,''),
   COALESCE(created_at,''), COALESCE(updated_at,''), COALESCE(due_at,''),
   COALESCE(priority,0), first_seen_at`
 
@@ -226,7 +228,7 @@ func (s *Store) ReplaceItems(ctx context.Context, source string, items []domain.
 // ignored: a fetcher does not know it, and the store is the only place that decides it.
 func upsertArgs(it domain.Item, source string, now time.Time) []any {
 	return []any{
-		source, it.ExternalID, string(it.Kind), it.Repo, it.Number, it.Title, it.URL,
+		source, it.ExternalID, string(it.Kind), it.Repo, it.Number, it.Title, it.Summary, it.URL,
 		it.Author, it.State, sqlTime(it.CreatedAt), sqlTime(it.UpdatedAt), sqlTime(it.DueAt),
 		it.Priority, sqlTime(now), sqlTime(now),
 	}
@@ -307,7 +309,8 @@ func (s *Store) Items(ctx context.Context) (_ []domain.Item, err error) {
 			kind, created, updated, due, firstAt string
 		)
 		if err := rows.Scan(&it.Source, &it.ExternalID, &kind, &it.Repo, &it.Number, &it.Title,
-			&it.URL, &it.Author, &it.State, &created, &updated, &due, &it.Priority, &firstAt); err != nil {
+			&it.Summary, &it.URL, &it.Author, &it.State, &created, &updated, &due,
+			&it.Priority, &firstAt); err != nil {
 			return nil, fmt.Errorf("scan item: %w", err)
 		}
 		it.Kind = domain.Kind(kind)

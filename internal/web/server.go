@@ -251,6 +251,12 @@ func (s *Server) routes() []route {
 		{http.MethodGet, "/docs", authPublic, s.handleDocs, ""},
 		{http.MethodGet, "/docs/", authPublic, s.handleDocs, "/docs/requirements/01-goals"},
 		{http.MethodGet, "/static/", authPublic, s.handleStatic, "/static/app.css"},
+		// Public because it decides a colour and nothing else: it reads no data, writes no data
+		// and grants no access — it sets one display-preference cookie and redirects. It has to
+		// be public because /login is, and the sign-in page is the one page an anonymous visitor
+		// sees; a switch that only worked once you were inside would be missing from the only
+		// page where the appearance is all there is.
+		{http.MethodPost, "/theme", authPublic, s.handleTheme, ""},
 
 		// "/{$}" and not "/": the bare pattern is the mux's catch-all and matches every path no
 		// other route claims, so /admin, /no-such-page and /tile/github/extra all answered 200
@@ -597,12 +603,36 @@ type pageData struct {
 	Doc *docPage
 	// Docs is the grouped list docs_index.html shows; nil on every other page.
 	Docs []docCategory
+	// Theme is the appearance the visitor asked for, and Path the page they are on so that the
+	// theme control can send them back to it. Both are filled in by render, from the request,
+	// for every page: an appearance that applied to some pages and not others would be worse
+	// than none at all.
+	Theme theme
+	Path  string
 	// Version is the build's semantic version, shown in the footer of every page. render fills
 	// it in for every page rather than each handler doing so, because a footer that silently
 	// lost its version on one page is exactly the kind of omission nobody notices until they
 	// need to know which build they are looking at.
 	Version string
 }
+
+// ThemeAttr is the document's data-theme value, empty when the visitor follows the system. The
+// attribute is then absent rather than present-and-saying-"system", so the stylesheet has one
+// state to describe instead of two that mean the same thing.
+func (d pageData) ThemeAttr() string {
+	if d.Theme == themeSystem {
+		return ""
+	}
+	return string(d.Theme)
+}
+
+// ThemeName, NextTheme and NextThemeLabel are what the control shows and submits. They are
+// methods rather than fields because they are all derived from Theme, and a field that has to be
+// kept in step with another field is a field that eventually is not.
+func (d pageData) ThemeName() string      { return string(d.Theme) }
+func (d pageData) ThemeLabel() string     { return d.Theme.label() }
+func (d pageData) NextTheme() string      { return string(d.Theme.next()) }
+func (d pageData) NextThemeLabel() string { return d.Theme.next().label() }
 
 // render executes a page template into a buffer before writing anything, so a template failing
 // half way through cannot leave a truncated page behind a 200.
@@ -613,6 +643,8 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, page
 		return
 	}
 	data.Version = version.String()
+	data.Theme = themeOf(r)
+	data.Path = r.URL.Path
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, "layout", data); err != nil {
 		s.fail(w, r, "rendering", err)

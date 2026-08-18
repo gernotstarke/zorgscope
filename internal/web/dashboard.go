@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gernotstarke/zorgscope/internal/domain"
 )
@@ -393,8 +395,11 @@ type tileData struct {
 	LastOK   timeView
 	PollSecs int
 	Items    []itemView
-	Builds   []buildView
-	Sites    []siteView
+	// More is how many items the source holds beyond the ones listed. The tile says the number
+	// rather than trailing off, so a list of five out of forty cannot be read as all there is.
+	More   int
+	Builds []buildView
+	Sites  []siteView
 	// HasContent says whether this tile has anything stored to show, whatever its health. A
 	// disabled source holding items is the case that needs it: the tile must say that what is
 	// below is the last stored data rather than pretend nothing was ever fetched.
@@ -430,7 +435,11 @@ type timeView struct {
 
 // itemView is one row of the GitHub or the tasks tile.
 type itemView struct {
-	Title    string
+	Title string
+	// Summary is the first line or so of the item's own description, already cut to the length
+	// the page shows it at. It is borrowed text and is escaped like every other borrowed string
+	// here — never a template.HTML.
+	Summary  string
 	URL      string
 	Repo     string
 	Number   int
@@ -574,6 +583,9 @@ func (s *Server) tileData(t domain.Tile, now, lastVisit time.Time) tileData {
 	for _, it := range t.Items {
 		td.Items = append(td.Items, newItemView(it, now, it.IsNew(lastVisit)))
 	}
+	if t.Total > len(t.Items) {
+		td.More = t.Total - len(t.Items)
+	}
 	for _, b := range t.Builds {
 		td.Builds = append(td.Builds, newBuildView(b, now))
 	}
@@ -643,6 +655,7 @@ func newTimeView(t, now time.Time) timeView {
 func newItemView(it domain.Item, now time.Time, isNew bool) itemView {
 	v := itemView{
 		Title:    it.Title,
+		Summary:  summaryLine(it.Summary),
 		URL:      it.URL,
 		Repo:     it.Repo,
 		Number:   it.Number,
@@ -730,6 +743,33 @@ func newChangeView(percent float64, known bool) changeView {
 }
 
 // ---------------------------------------------------------------- formatting
+
+// displaySummaryLen is how much of an item's description the tile shows. Eighty characters is
+// about one line at the tile's width in the small type it is set in — long enough to say what an
+// issue is about, short enough that five of them still read as a list rather than as prose.
+const displaySummaryLen = 80
+
+// summaryLine cuts a stored summary down to what is displayed, on a word boundary, and marks that
+// it was cut.
+//
+// The boundary is the point. Cutting at exactly eighty characters ends most lines mid-word, and a
+// half word followed by an ellipsis reads as a rendering fault rather than as a deliberate
+// abbreviation. Text with no space in the first eighty characters — a long identifier, a URL, a
+// language that does not space its words — is cut at the limit instead, on a rune boundary, since
+// the alternative is showing the whole of it.
+func summaryLine(s string) string {
+	if len(s) <= displaySummaryLen {
+		return s
+	}
+	cut := displaySummaryLen
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	if i := strings.LastIndexByte(s[:cut], ' '); i > displaySummaryLen/2 {
+		cut = i
+	}
+	return strings.TrimRight(s[:cut], " ") + "…"
+}
 
 // humanise renders a duration as the coarse phrase the page shows, without a direction: callers
 // append " ago", "due in " or "overdue by ". It is deliberately imprecise. The dashboard answers

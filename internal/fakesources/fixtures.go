@@ -25,8 +25,14 @@ var fixturesFS embed.FS
 // drops the key wherever the flag is false, which is every issue and every ready pull request; a
 // draft pull request is the only node that carries it.
 type ghIssue struct {
-	Number    int      `json:"number"`
-	Title     string   `json:"title"`
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+	// BodyText is the item's description with Markdown stripped, as GitHub's bodyText field
+	// returns it. It carries omitempty so a fixture item written without one produces a node
+	// with no bodyText key at all, which is what a real issue opened with an empty body looks
+	// like — the adapter has to cope with its absence, and a fixture that always supplied it
+	// would never show that it does.
+	BodyText  string   `json:"bodyText,omitempty"`
 	URL       string   `json:"url"`
 	Author    ghAuthor `json:"author"`
 	CreatedAt string   `json:"createdAt"`

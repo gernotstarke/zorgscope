@@ -388,3 +388,55 @@ func post(t *testing.T, url string) {
 		t.Fatalf("post %s: status = %d, want < 300", url, resp.StatusCode)
 	}
 }
+
+// The item's own description reaches the item, so the dashboard can say what an issue is about
+// rather than only what it is called. An issue opened with an empty body carries none — the
+// fixture's issue #3 is deliberately written without one — and must arrive with an empty summary
+// rather than failing the query, since GitHub omits the key entirely in that case.
+func TestIssueBodyTextReachesTheItem(t *testing.T) {
+	srv := httptest.NewServer(fakesources.NewServer())
+	defer srv.Close()
+
+	f := github.NewIssueFetcher(github.Config{
+		Token: "x", BaseURL: srv.URL + "/graphql", Repos: []string{"org/repo"},
+	}, srv.Client())
+
+	res, err := f.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+
+	byID := map[string]domain.Item{}
+	for _, it := range res.Items {
+		byID[it.ExternalID] = it
+	}
+
+	withBody, ok := byID["issue:org/repo#1"]
+	if !ok {
+		t.Fatalf("issue:org/repo#1 missing from %d items", len(res.Items))
+	}
+	if !strings.Contains(withBody.Summary, "liveness probe") {
+		t.Errorf("Summary = %q, want the issue's body text", withBody.Summary)
+	}
+	if strings.ContainsAny(withBody.Summary, "\n\r\t") {
+		t.Errorf("Summary = %q, want its whitespace collapsed", withBody.Summary)
+	}
+
+	// A pull request carries one too: it goes through a second node type, so it is a second
+	// chance to forget the field.
+	pr, ok := byID["pr:org/repo#10"]
+	if !ok {
+		t.Fatal("pr:org/repo#10 missing")
+	}
+	if pr.Summary == "" {
+		t.Error("a pull request's body text is not carried")
+	}
+
+	empty, ok := byID["issue:org/repo#3"]
+	if !ok {
+		t.Fatal("issue:org/repo#3 missing")
+	}
+	if empty.Summary != "" {
+		t.Errorf("Summary = %q for an issue with no body, want empty", empty.Summary)
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/shurcooL/githubv4"
 	"golang.org/x/oauth2"
@@ -142,8 +143,15 @@ type pullRequestsQuery struct {
 
 // ghIssueNode is one issue node.
 type ghIssueNode struct {
-	Number    githubv4.Int
-	Title     githubv4.String
+	Number githubv4.Int
+	Title  githubv4.String
+	// BodyText is the item's description with GitHub's Markdown already stripped, which is the
+	// field to ask for rather than body: the dashboard shows a line of prose in small type, and
+	// rendering raw Markdown there would put backticks, link syntax and image tags on the page.
+	// It arrives whole and is cut down to maxSummaryLen before it is stored — asking for a
+	// prefix is not something GraphQL offers, and keeping the whole of every issue body of eight
+	// repositories in the database would grow it for text no page ever shows.
+	BodyText  githubv4.String
 	URL       githubv4.URI
 	Author    struct{ Login githubv4.String }
 	CreatedAt githubv4.DateTime
@@ -165,6 +173,7 @@ type ghIssueNode struct {
 type ghPRNode struct {
 	Number    githubv4.Int
 	Title     githubv4.String
+	BodyText  githubv4.String
 	URL       githubv4.URI
 	Author    struct{ Login githubv4.String }
 	CreatedAt githubv4.DateTime
@@ -296,6 +305,7 @@ func toItem(owner, name string, kind domain.Kind, n ghIssueNode) domain.Item {
 		Repo:       repo,
 		Number:     number,
 		Title:      string(n.Title),
+		Summary:    summarise(string(n.BodyText)),
 		URL:        n.URL.String(),
 		Author:     string(n.Author.Login),
 		State:      string(n.State),
@@ -325,6 +335,7 @@ func toPRItem(owner, name string, n ghPRNode) domain.Item {
 	it := toItem(owner, name, domain.KindPR, ghIssueNode{
 		Number:    n.Number,
 		Title:     n.Title,
+		BodyText:  n.BodyText,
 		URL:       n.URL,
 		Author:    n.Author,
 		CreatedAt: n.CreatedAt,
@@ -345,4 +356,33 @@ func splitRepo(repo string) (owner, name string, ok bool) {
 		return "", "", false
 	}
 	return repo[:i], repo[i+1:], true
+}
+
+// maxSummaryLen bounds what is stored of an item's body text. The dashboard renders roughly eighty
+// characters of it, so this is generous enough that a longer display can be tried without another
+// refresh, and small enough that eight repositories of issue bodies stay a rounding error in a
+// database that is measured in kilobytes.
+const maxSummaryLen = 300
+
+// summarise reduces an item's body text to what is worth storing: whitespace collapsed to single
+// spaces and the result cut to maxSummaryLen.
+//
+// The whitespace matters more than the length. A GitHub issue body is written as Markdown, so it
+// arrives full of newlines, indentation and blank lines even after GitHub has stripped the markup
+// for bodyText; stored as it is, it would be a paragraph of ragged text sitting in one HTML
+// element, where every one of those newlines collapses to a single space anyway. Doing it here
+// means what is stored is what is meant, and the eighty characters the page shows are eighty
+// characters of prose rather than eighty characters of indentation.
+func summarise(body string) string {
+	collapsed := strings.Join(strings.Fields(body), " ")
+	if len(collapsed) <= maxSummaryLen {
+		return collapsed
+	}
+	// Cut on a rune boundary: a body is arbitrary text and slicing mid-rune would store invalid
+	// UTF-8, which the template would then render as a replacement character.
+	cut := maxSummaryLen
+	for cut > 0 && !utf8.RuneStart(collapsed[cut]) {
+		cut--
+	}
+	return collapsed[:cut]
 }

@@ -72,6 +72,11 @@ func TestEveryRouteIsEitherDeliberatelyPublicOrRefusesAnonymousAccess(t *testing
 		"GET /docs":    true,
 		"GET /docs/":   true,
 		"GET /static/": true,
+		// It sets a display-preference cookie and redirects: no data is read, none is written,
+		// and no access is granted. /login is public, and the sign-in page is the one page an
+		// anonymous visitor sees, so a switch that needed a session would be missing exactly
+		// where the appearance is the whole of the page.
+		"POST /theme": true,
 	}
 
 	for _, rt := range s.routes() {

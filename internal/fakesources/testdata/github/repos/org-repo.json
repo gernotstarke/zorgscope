@@ -3,8 +3,11 @@
     {
       "number": 1,
       "title": "Add health endpoint",
+      "bodyText": "The container needs a liveness probe. Add GET /healthz returning 200 with no body, and wire it into the Compose stack so a failing start is visible without reading logs.",
       "url": "https://github.com/org/repo/issues/1",
-      "author": { "login": "alice" },
+      "author": {
+        "login": "alice"
+      },
       "createdAt": "2026-08-01T09:00:00Z",
       "updatedAt": "2026-08-05T10:00:00Z",
       "state": "OPEN"
@@ -12,8 +15,11 @@
     {
       "number": 2,
       "title": "Flaky test in adapters package",
+      "bodyText": "adapters/github flakes about one run in twenty on CI. Suspect the fake server's port being reused before the previous test released it.",
       "url": "https://github.com/org/repo/issues/2",
-      "author": { "login": "bob" },
+      "author": {
+        "login": "bob"
+      },
       "createdAt": "2026-08-03T11:00:00Z",
       "updatedAt": "2026-08-06T08:30:00Z",
       "state": "OPEN"
@@ -22,7 +28,9 @@
       "number": 3,
       "title": "Document the refresh lease",
       "url": "https://github.com/org/repo/issues/3",
-      "author": { "login": "carol" },
+      "author": {
+        "login": "carol"
+      },
       "createdAt": "2026-08-04T14:00:00Z",
       "updatedAt": "2026-08-04T14:00:00Z",
       "state": "OPEN"
@@ -32,8 +40,11 @@
     {
       "number": 10,
       "title": "Wire up refresh lease",
+      "bodyText": "Takes the lease before the first fetcher runs and releases it in a deferred call, so a crashed run does not hold it for the whole TTL.",
       "url": "https://github.com/org/repo/pull/10",
-      "author": { "login": "dave" },
+      "author": {
+        "login": "dave"
+      },
       "createdAt": "2026-08-05T09:00:00Z",
       "updatedAt": "2026-08-07T12:00:00Z",
       "state": "OPEN"
@@ -41,8 +52,11 @@
     {
       "number": 11,
       "title": "Add Plausible adapter skeleton",
+      "bodyText": "Draft while the migration is still being written. Do not merge before 0002 lands.",
       "url": "https://github.com/org/repo/pull/11",
-      "author": { "login": "erin" },
+      "author": {
+        "login": "erin"
+      },
       "createdAt": "2026-08-06T09:00:00Z",
       "updatedAt": "2026-08-06T15:00:00Z",
       "state": "OPEN",

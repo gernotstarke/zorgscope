@@ -5,6 +5,8 @@ package web
 
 import (
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +14,18 @@ import (
 	"github.com/gernotstarke/zorgscope/internal/domain"
 	"github.com/gernotstarke/zorgscope/internal/version"
 )
+
+// getWithCookies issues a GET carrying several cookies, which the single-cookie helper in
+// auth_test.go cannot: the theme tests need a session and a theme preference at once.
+func getWithCookies(h http.Handler, path string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	h.ServeHTTP(rec, req)
+	return rec
+}
 
 // failingStates returns healthy states with one source broken, so a test can name the one thing
 // it is about.
@@ -39,7 +53,7 @@ func TestTheHeaderCarriesTheLogoAndAnInertSettingsControl(t *testing.T) {
 		t.Error("no favicon is linked, so every first request of every visit is a 404")
 	}
 
-	cog := firstLineContaining(body, "icon-button")
+	cog := firstLineContaining(body, "settings-button")
 	if cog == "" {
 		t.Fatal("the header has no settings control")
 	}
@@ -327,5 +341,220 @@ func TestTheWarningBoxKeepsItsPlaceholderWhileHealthy(t *testing.T) {
 	fragment := getAuthed(t, h, "/tile/github").Body.String()
 	if !strings.Contains(fragment, `id="dash-alert" hx-swap-oob="true"`) {
 		t.Error("a poll from a healthy page carries no slot, so the box could never be cleared")
+	}
+}
+
+// The appearance switch (FR-1.5). It is a form post, not a script: the CSP carries no
+// 'unsafe-inline' (QS-4.4) and the page has to work with JavaScript switched off (FR-1.3 AC3).
+func TestTheThemeSwitchCyclesThroughTheThreeAppearances(t *testing.T) {
+	h := dashHandler(t, representativeStore())
+
+	tests := []struct {
+		name       string
+		cookie     *http.Cookie
+		wantAttr   string // what data-theme the document carries
+		wantSubmit string // what the control would switch to
+	}{
+		{name: "no cookie follows the system", wantAttr: "", wantSubmit: "light"},
+		{
+			name:       "light",
+			cookie:     &http.Cookie{Name: themeCookieName, Value: "light"},
+			wantAttr:   `data-theme="light"`,
+			wantSubmit: "dark",
+		},
+		{
+			name:       "dark",
+			cookie:     &http.Cookie{Name: themeCookieName, Value: "dark"},
+			wantAttr:   `data-theme="dark"`,
+			wantSubmit: "system",
+		},
+		{
+			// A hand-edited cookie must not put arbitrary text into the document's attribute.
+			name:       "an unrecognised value falls back to the system",
+			cookie:     &http.Cookie{Name: themeCookieName, Value: `x" onload="alert(1)`},
+			wantAttr:   "",
+			wantSubmit: "light",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := signIn(t, h)
+			rec := getAuthed(t, h, "/")
+			if tc.cookie != nil {
+				rec = getWithCookies(h, "/", c, tc.cookie)
+			}
+			body := rec.Body.String()
+
+			html := firstLineContaining(body, "<html")
+			if tc.wantAttr == "" {
+				if strings.Contains(html, "data-theme") {
+					t.Errorf("<html> carries a theme attribute while following the system: %s", html)
+				}
+			} else if !strings.Contains(html, tc.wantAttr) {
+				t.Errorf("<html> = %s, want it to carry %s", html, tc.wantAttr)
+			}
+
+			if !strings.Contains(body, `name="theme" value="`+tc.wantSubmit+`"`) {
+				t.Errorf("the control does not switch to %q:\n%s",
+					tc.wantSubmit, firstLineContaining(body, `name="theme"`))
+			}
+			// QS-4.4: the mechanism is markup. A script toggling a class would need
+			// 'unsafe-inline', and would flash the wrong theme before it ran.
+			if strings.Contains(firstLineContaining(body, "theme-form"), "onclick") {
+				t.Error("the switch is wired with an inline handler")
+			}
+		})
+	}
+}
+
+// The switch sets the cookie and comes back to the page it was pressed on.
+func TestSwitchingTheThemeReturnsToThePageItWasPressedOn(t *testing.T) {
+	h := dashHandler(t, representativeStore())
+
+	rec := post(h, "/theme", url.Values{"theme": {"dark"}, "return": {"/problems"}})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("POST /theme = %d, want 303", rec.Code)
+	}
+	if got := rec.Header().Get("Location"); got != "/problems" {
+		t.Errorf("Location = %q, want /problems", got)
+	}
+	c := cookieNamed(rec, themeCookieName)
+	if c == nil || c.Value != "dark" {
+		t.Fatalf("theme cookie = %+v, want dark", c)
+	}
+	if !c.HttpOnly || !c.Secure || c.SameSite != http.SameSiteLaxMode {
+		t.Errorf("theme cookie = %+v, want the same hardening as every other cookie here", c)
+	}
+}
+
+// Choosing to follow the system is the absence of a choice, so it clears the cookie rather than
+// storing the word.
+func TestFollowingTheSystemClearsTheCookie(t *testing.T) {
+	h := dashHandler(t, representativeStore())
+
+	rec := post(h, "/theme", url.Values{"theme": {"system"}, "return": {"/"}})
+	c := cookieNamed(rec, themeCookieName)
+	if c == nil {
+		t.Fatal("no theme cookie in the response, so an existing one is never cleared")
+	}
+	if c.Value != "" || c.MaxAge >= 0 {
+		t.Errorf("theme cookie = %+v, want an expiry that removes it", c)
+	}
+}
+
+// The return field is submitted by the browser, so a crafted link could otherwise turn this site's
+// own redirect into a way of carrying its visitors somewhere else.
+func TestTheThemeSwitchIsNotAnOpenRedirect(t *testing.T) {
+	h := dashHandler(t, representativeStore())
+
+	tests := []struct{ name, give string }{
+		{"absolute URL", "https://evil.example/"},
+		{"protocol-relative URL", "//evil.example/"},
+		{"backslash escape", "/\\evil.example"},
+		{"header injection", "/ok\r\nSet-Cookie: a=b"},
+		{"scheme without a host", "javascript:alert(1)"},
+		{"empty", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := post(h, "/theme", url.Values{"theme": {"dark"}, "return": {tc.give}})
+			if got := rec.Header().Get("Location"); got != "/" {
+				t.Errorf("Location = %q for return=%q, want /", got, tc.give)
+			}
+		})
+	}
+}
+
+// A path this site actually serves is kept, so the switch does not dump the visitor on the
+// dashboard from wherever they were.
+func TestTheThemeSwitchKeepsAnOrdinaryPath(t *testing.T) {
+	h := dashHandler(t, representativeStore())
+	for _, path := range []string{"/", "/problems", "/docs", "/docs/requirements/01-goals", "/login"} {
+		rec := post(h, "/theme", url.Values{"theme": {"light"}, "return": {path}})
+		if got := rec.Header().Get("Location"); got != path {
+			t.Errorf("Location = %q, want %q", got, path)
+		}
+	}
+}
+
+// The GitHub tile shows a number, a title and a line of the item's own description, and says how
+// many items it is not showing.
+func TestTheGitHubTileShowsNumbersDescriptionsAndTheRemainder(t *testing.T) {
+	store := representativeStore()
+	store.items[0].Number = 4242
+	store.items[0].Summary = "The container needs a liveness probe so a failing start is visible."
+
+	body := getAuthed(t, dashHandler(t, store), "/").Body.String()
+
+	if !strings.Contains(body, "#4242") {
+		t.Error("the tile does not show the item's number")
+	}
+	if !strings.Contains(body, "liveness probe") {
+		t.Error("the tile does not show the item's description")
+	}
+	if !strings.Contains(body, `class="item-summary"`) {
+		t.Error("the description is not set apart from the title")
+	}
+	// representativeStore holds 150 GitHub items, so the tile shows five and names the rest.
+	if !strings.Contains(body, "and 145 more open") {
+		t.Errorf("the tile does not say how many it left out:\n%s",
+			firstLineContaining(body, "item-more"))
+	}
+}
+
+// A long description is cut on a word boundary. A half word followed by an ellipsis reads as a
+// rendering fault rather than as a deliberate abbreviation.
+func TestALongDescriptionIsCutOnAWordBoundary(t *testing.T) {
+	tests := []struct {
+		name, give string
+		check      func(t *testing.T, got string)
+	}{
+		{
+			name:  "short enough is untouched",
+			give:  "Add a health endpoint.",
+			check: func(t *testing.T, got string) { wantEqual(t, got, "Add a health endpoint.") },
+		},
+		{
+			name: "long prose is cut at a space",
+			give: "The container needs a liveness probe, and the Compose stack has to wire it in " +
+				"so that a failing start is visible without anyone reading the logs.",
+			check: func(t *testing.T, got string) {
+				if !strings.HasSuffix(got, "…") {
+					t.Errorf("%q does not end in an ellipsis", got)
+				}
+				trimmed := strings.TrimSuffix(got, "…")
+				if strings.HasSuffix(trimmed, " ") {
+					t.Errorf("%q has a space before the ellipsis", got)
+				}
+				// The cut landed between words, not inside one.
+				if !strings.HasPrefix(
+					"The container needs a liveness probe, and the Compose stack has to wire it in",
+					trimmed) {
+					t.Errorf("%q is not a word-boundary prefix of the description", trimmed)
+				}
+			},
+		},
+		{
+			// No space to cut at: a single long token. Cutting at the limit beats showing all
+			// of it.
+			name: "an unbroken run is cut at the limit",
+			give: strings.Repeat("z", 200),
+			check: func(t *testing.T, got string) {
+				if len([]rune(got)) != displaySummaryLen+1 { // the ellipsis
+					t.Errorf("length = %d runes, want %d", len([]rune(got)), displaySummaryLen+1)
+				}
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) { tc.check(t, summaryLine(tc.give)) })
+	}
+}
+
+func wantEqual(t *testing.T, got, want string) {
+	t.Helper()
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }

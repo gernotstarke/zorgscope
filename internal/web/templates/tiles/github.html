@@ -1,5 +1,6 @@
-{{/* Open issues and pull requests, in the order BuildDashboard produced: new first, then most
-     recently updated (FR-2.2 AC2). Nothing is re-sorted here. */}}
+{{/* The top few open issues and pull requests, in the order BuildDashboard produced: new first,
+     then most recently updated (FR-2.2 AC2). Nothing is re-sorted here, and nothing is cut here
+     either — the domain decides how many are shown and says how many were left out. */}}
 {{define "tile-github"}}
 {{if .Items}}
 <ul class="items">
@@ -7,9 +8,15 @@
   <li class="item{{if .New}} is-new{{end}}">
     <p class="item-line">
       {{if .New}}<span class="badge badge-new">NEW</span>{{end}}
+      {{if .Number}}<span class="item-number">#{{.Number}}</span>{{end}}
       <a class="item-title" href="{{.URL}}" target="_blank" rel="noopener noreferrer">{{.Title}}</a>
     </p>
-    <p class="item-meta">{{.Repo}}{{if .Number}} #{{.Number}}{{end}} · {{.Kind}}{{if .Author}} · {{.Author}}{{end}}</p>
+    {{/* The item's own description, in small type under its title: a number and a headline often
+         do not say what an issue is actually about. Absent when the source has none — an issue
+         opened with an empty body — in which case the row is simply shorter rather than carrying
+         an empty line. */}}
+    {{with .Summary}}<p class="item-summary">{{.}}</p>{{end}}
+    <p class="item-meta">{{.Repo}} · {{.Kind}}{{if .Author}} · {{.Author}}{{end}}</p>
     {{/* Both stamps are guarded by .Known: a zero timestamp — a stored row whose created_at
          failed to parse — must read as unknown rather than render <time datetime=""></time>,
          which is invalid HTML and shows the visitor the word "opened" followed by nothing. */}}
@@ -17,6 +24,9 @@
   </li>
   {{end}}
 </ul>
+{{/* The count the truncated list would otherwise destroy: five shown out of forty must not read
+     the same as five open. */}}
+{{if .More}}<p class="item-more">and {{.More}} more open</p>{{end}}
 {{else}}
 <p class="empty">Nothing open.</p>
 {{end}}

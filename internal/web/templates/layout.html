@@ -1,5 +1,9 @@
 {{define "layout"}}<!doctype html>
-<html lang="en">
+{{/* The appearance is decided on the server, from a cookie, so the document is in the right theme
+     from its first byte. A class added by script after load would flash the other theme first, and
+     there is no script to add it with: the CSP carries no 'unsafe-inline' (QS-4.4). Following the
+     system leaves the attribute off entirely — see app.css. */}}
+<html lang="en"{{with .ThemeAttr}} data-theme="{{.}}"{{end}}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -69,13 +73,49 @@
   {{end}}
   <nav class="topbar-nav">
     <a href="/docs">Docs</a>
+    {{/* The appearance switch: a plain form post, so it works with JavaScript switched off
+         (FR-1.3 AC3) and needs no inline handler the CSP would forbid. It cycles
+         follow-system → light → dark → follow-system; "follow system" stays in the cycle because
+         without it a visitor who ever pressed the control could never get back to the behaviour
+         the site had before it existed. The return field carries the page to come back to, and is
+         validated server-side — a form field is submitted by the browser and could otherwise
+         redirect this site's visitors somewhere else entirely (see safeReturn). */}}
+    <form class="theme-form" method="post" action="/theme">
+      <input type="hidden" name="return" value="{{.Path}}">
+      <input type="hidden" name="theme" value="{{.NextTheme}}">
+      <button type="submit" class="icon-button"
+              title="Appearance: {{.ThemeLabel}} — switch to {{.NextThemeLabel}}"
+              aria-label="Appearance: {{.ThemeLabel}} — switch to {{.NextThemeLabel}}">
+        {{if eq .ThemeName "light"}}
+        {{/* A sun: the light theme is on. */}}
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"
+             fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+          <circle cx="12" cy="12" r="4.2"></circle>
+          <path d="M12 2.5v2.6M12 18.9v2.6M2.5 12h2.6M18.9 12h2.6M5.2 5.2l1.9 1.9M16.9 16.9l1.9 1.9M18.8 5.2l-1.9 1.9M7.1 16.9l-1.9 1.9"></path>
+        </svg>
+        {{else if eq .ThemeName "dark"}}
+        {{/* A crescent: the dark theme is on. */}}
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"
+             fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round">
+          <path d="M20.5 14.8A8.8 8.8 0 0 1 9.2 3.5a8.8 8.8 0 1 0 11.3 11.3z"></path>
+        </svg>
+        {{else}}
+        {{/* A circle half filled: the appearance follows the operating system, so it is both. */}}
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"
+             fill="none" stroke="currentColor" stroke-width="1.8">
+          <circle cx="12" cy="12" r="8.5"></circle>
+          <path d="M12 3.5a8.5 8.5 0 0 0 0 17z" fill="currentColor" stroke="none"></path>
+        </svg>
+        {{end}}
+      </button>
+    </form>
     {{/* The settings control, deliberately inert: there is no configuration page in v1 —
          configuration is a YAML file and Fly secrets (C-9) — and the button says so rather than
          leading to a 404. It is a disabled <button> rather than a styled <span> so that the
          browser gives it the right semantics for free: it is not focusable, it is announced as an
          unavailable button, and nothing has to be scripted, which the Content-Security-Policy
          would forbid anyway (QS-4.4). */}}
-    <button type="button" class="icon-button" disabled
+    <button type="button" class="icon-button settings-button" disabled
             title="Settings — there is no configuration page yet"
             aria-label="Settings — there is no configuration page yet">
       <svg class="cog" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"
