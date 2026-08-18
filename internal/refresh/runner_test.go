@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -57,9 +58,13 @@ func newTestStore(t *testing.T) *libsql.Store {
 
 func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-func item(id string) domain.Item {
+func item(id string) domain.Item { return issueOf("github", id) }
+
+// issueOf is item for a source other than "github": announcing is scoped by kind, not by source
+// name, so a second issue source is the honest way to test the scoping.
+func issueOf(source, id string) domain.Item {
 	return domain.Item{
-		Source: "github", ExternalID: id, Kind: domain.KindIssue,
+		Source: source, ExternalID: id, Kind: domain.KindIssue,
 		Repo: "org/repo", Number: 1, Title: "issue " + id, URL: "https://example/" + id,
 		Author: "someone", State: "open",
 		CreatedAt: at("2026-08-01T00:00:00Z"), UpdatedAt: at("2026-08-10T00:00:00Z"),
@@ -481,7 +486,10 @@ func TestFailedSourceItemsAreNotAnnounced(t *testing.T) {
 		Result:     ports.FetchResult{Items: []domain.Item{item("1"), item("2")}}, // fetched, not stored
 		Err:        errors.New("list org/two: 500"),
 	}
-	r := refresh.New(store, []ports.SourceFetcher{partial, fetcher("todoist", task("t1"))},
+	// The healthy source is a second issue source rather than Todoist, because only issues and
+	// pull requests are announced at all (see TestOnlyGitHubItemsAreAnnounced) — a task would make
+	// the assertion below pass for the wrong reason.
+	r := refresh.New(store, []ports.SourceFetcher{partial, fetcher("github-extra", issueOf("github-extra", "3"))},
 		&ports.FixedClock{T: now}, n, discardLogger())
 
 	if _, err := r.Run(ctx, "cron"); err != nil {
@@ -491,8 +499,8 @@ func TestFailedSourceItemsAreNotAnnounced(t *testing.T) {
 	if len(n.seen) != 1 {
 		t.Fatalf("notifier saw %d items, want only the healthy source's 1 — a failed source's items were never stored", len(n.seen))
 	}
-	if n.seen[0].Source != "todoist" {
-		t.Errorf("notifier saw an item from %q, want only todoist", n.seen[0].Source)
+	if n.seen[0].Source != "github-extra" {
+		t.Errorf("notifier saw an item from %q, want only github-extra", n.seen[0].Source)
 	}
 }
 
@@ -564,6 +572,17 @@ func TestSlackFailureDoesNotFailTheRun(t *testing.T) {
 	if !last.OK {
 		t.Error("the recorded run is marked failed; a Slack failure must not reach the run record")
 	}
+	// FR-6.1 AC3 says the failure is *recorded*. A log line is not a record on a Machine that
+	// scales to zero and whose logs nobody reads: a revoked webhook would stop the notifications
+	// for weeks while every dashboard signal said the system was healthy.
+	if !strings.Contains(last.Detail, "notify:") || !strings.Contains(last.Detail, "500") {
+		t.Errorf("run detail = %q, want it to record why the announcement failed", last.Detail)
+	}
+	// QS-4.3: the detail is rendered on the dashboard, and this webhook answered by quoting
+	// itself — so this is the whole path from a rejection to a rendered page.
+	if strings.Contains(last.Detail, "secret") {
+		t.Errorf("the webhook leaked into the run detail (QS-4.3): %q", last.Detail)
+	}
 
 	// Nothing was sent, so nothing may have been marked: the announcement is retried.
 	if got := posts.count(); got != 1 {
@@ -580,11 +599,17 @@ func TestSlackFailureDoesNotFailTheRun(t *testing.T) {
 	}
 }
 
-// posted is an httptest server standing in for a Slack incoming webhook, counting what reaches it.
+// posted is an httptest server standing in for a Slack incoming webhook, recording what reaches
+// it. It answers "ok" as Slack does for a delivered message, and quotes the URL it was called at
+// when it rejects one — which real endpoints do, and which is what makes the scrubbing (QS-4.3)
+// testable all the way to the run record.
 type posted struct {
 	srv *httptest.Server
 	mu  sync.Mutex
 	n   int
+	msg []string
+	// reject decides what the nth post (1-based) is answered with: a zero status accepts it.
+	reject func(n int, body string) int
 }
 
 func (p *posted) count() int {
@@ -593,14 +618,56 @@ func (p *posted) count() int {
 	return p.n
 }
 
+// messages returns every body posted so far, in order.
+func (p *posted) messages() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.msg...)
+}
+
+// sent reports how many of the posted messages name text — one item's announcement is one message
+// naming its title.
+func (p *posted) sent(text string) int {
+	got := 0
+	for _, m := range p.messages() {
+		if strings.Contains(m, text) {
+			got++
+		}
+	}
+	return got
+}
+
+// rejectWith installs the rejection policy under the server's own lock, so a test may change it
+// between two runs without racing the handler.
+func (p *posted) rejectWith(f func(n int, body string) int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.reject = f
+}
+
 func postRecorder(t *testing.T, status int) *posted {
 	t.Helper()
 	p := &posted{}
-	p.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	if status < 200 || status > 299 {
+		p.reject = func(int, string) int { return status }
+	}
+	p.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		body, _ := io.ReadAll(req.Body)
 		p.mu.Lock()
 		p.n++
+		n := p.n
+		p.msg = append(p.msg, string(body))
+		reject := p.reject
 		p.mu.Unlock()
-		w.WriteHeader(status)
+
+		if reject != nil {
+			if got := reject(n, string(body)); got != 0 {
+				w.WriteHeader(got)
+				_, _ = io.WriteString(w, "no_service for http://"+req.Host+req.URL.Path)
+				return
+			}
+		}
+		_, _ = io.WriteString(w, "ok")
 	}))
 	t.Cleanup(p.srv.Close)
 	return p
@@ -627,4 +694,142 @@ func mustItems(t *testing.T, s *libsql.Store, ctx context.Context) []domain.Item
 		t.Fatalf("Items: %v", err)
 	}
 	return got
+}
+
+// The failure this fix exists for: a batch that stops partway must leave the run further ahead
+// than it started, or it never gets anywhere.
+//
+// Before, the runner sent the whole set in one call and marked nothing when that call failed. The
+// two failures a first run actually meets are deterministic — Slack's incoming webhooks allow
+// about one message a second, and the announcement step has a budget of its own — so the run
+// failed at the same position every time: the same prefix was re-posted on every cron tick
+// forever and the items behind it were never announced at all. Now each message is sent on its
+// own and recorded as it goes, so the unannounced prefix shrinks on every run and the next run
+// carries on where this one stopped (FR-6.1 AC1, AC2).
+func TestAPartlySentBatchContinuesWhereItStopped(t *testing.T) {
+	store, ctx := newTestStore(t), context.Background()
+	posts := postRecorder(t, http.StatusOK)
+	// The webhook takes one message and then rate-limits, exactly as it would on a first run over
+	// a populated database.
+	posts.rejectWith(func(n int, _ string) int {
+		if n >= 2 {
+			return http.StatusTooManyRequests
+		}
+		return 0
+	})
+	n := slack.New(posts.srv.URL+"/services/T0/B0/secret", posts.srv.Client())
+	fetchers := []ports.SourceFetcher{fetcher("github", item("1"), item("2"), item("3"))}
+
+	first := refresh.New(store, fetchers, &ports.FixedClock{T: now}, n, discardLogger())
+	if _, err := first.Run(ctx, "cron"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := posts.count(); got != 2 {
+		t.Fatalf("the first run attempted %d posts, want 2: one delivered, then it stops at the "+
+			"first failure", got)
+	}
+
+	// The rate limit passes, as it does between two cron ticks.
+	posts.rejectWith(nil)
+	second := refresh.New(store, fetchers, &ports.FixedClock{T: now}, n, discardLogger())
+	if _, err := second.Run(ctx, "cron"); err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+
+	// issue 1 went out in the first run and must never be posted again (FR-6.1 AC2); issue 2 was
+	// the one the rate limit hit, so it is attempted once per run until it lands; issue 3 was
+	// behind the failure and is announced by the run after it (FR-6.1 AC1) — which is the whole
+	// point: before, it never was.
+	for _, want := range []struct {
+		item string
+		n    int
+		why  string
+	}{
+		{"issue 1", 1, "a message that went out must not be posted again on the next run"},
+		{"issue 2", 2, "the message the failure hit is retried, exactly once per run"},
+		{"issue 3", 1, "the items behind the failure must be announced by the run after it"},
+	} {
+		if got := posts.sent(want.item); got != want.n {
+			t.Errorf("%s was posted %d times, want %d: %s", want.item, got, want.n, want.why)
+		}
+	}
+
+	// And it has converged: a third run over the same items posts nothing at all.
+	before := posts.count()
+	third := refresh.New(store, fetchers, &ports.FixedClock{T: now}, n, discardLogger())
+	if _, err := third.Run(ctx, "cron"); err != nil {
+		t.Fatalf("third Run: %v", err)
+	}
+	if got := posts.count(); got != before {
+		t.Errorf("a third run posted %d more messages, want none: everything is announced", got-before)
+	}
+}
+
+// The other half of converging: one message Slack will never accept must not stand at the head of
+// the queue forever.
+//
+// A non-429 4xx is Slack refusing this payload, so retrying cannot change the answer. Leaving it
+// unmarked would mean it leads the batch on every run, fails, and suppresses every item behind it
+// for good — one bad item silently switching the feature off. It is therefore recorded as
+// announced although it never went out: the deliberate exception to "mark only what was sent",
+// and the failure is recorded in the run detail rather than swallowed.
+func TestAPermanentlyRejectedMessageDoesNotBlockTheOnesBehindIt(t *testing.T) {
+	store, ctx := newTestStore(t), context.Background()
+	posts := postRecorder(t, http.StatusOK)
+	posts.rejectWith(func(_ int, body string) int {
+		if strings.Contains(body, "issue 1") {
+			return http.StatusBadRequest // invalid_payload: this message, on every run
+		}
+		return 0
+	})
+	n := slack.New(posts.srv.URL+"/services/T0/B0/secret", posts.srv.Client())
+	fetchers := []ports.SourceFetcher{fetcher("github", item("1"), item("2"))}
+
+	first := refresh.New(store, fetchers, &ports.FixedClock{T: now}, n, discardLogger())
+	rep, err := first.Run(ctx, "cron")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !rep.OK {
+		t.Error("a rejected announcement is not a failed refresh (FR-6.1 AC3)")
+	}
+	if rep.NotifyErr == "" {
+		t.Error("the rejection was not recorded; a swallowed message must at least be visible")
+	}
+
+	second := refresh.New(store, fetchers, &ports.FixedClock{T: now}, n, discardLogger())
+	if _, err := second.Run(ctx, "cron"); err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+
+	if got := posts.sent("issue 1"); got != 1 {
+		t.Errorf("the rejected message was attempted %d times, want 1: retrying it cannot help", got)
+	}
+	if got := posts.sent("issue 2"); got != 1 {
+		t.Errorf("issue 2 was announced %d times, want 1 — a message Slack will never accept must "+
+			"not suppress the items behind it", got)
+	}
+}
+
+// FR-6.1 AC1 is about GitHub items: issues and pull requests. A Todoist task is something the user
+// entered themselves, so announcing it back to them is noise — and it multiplies the volume of
+// every first run.
+func TestOnlyGitHubItemsAreAnnounced(t *testing.T) {
+	store, ctx := newTestStore(t), context.Background()
+	posts := postRecorder(t, http.StatusOK)
+	n := slack.New(posts.srv.URL+"/services/T0/B0/secret", posts.srv.Client())
+	r := refresh.New(store, []ports.SourceFetcher{
+		fetcher("github", item("1")),
+		fetcher("todoist", task("t1")),
+	}, &ports.FixedClock{T: now}, n, discardLogger())
+
+	if _, err := r.Run(ctx, "cron"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := posts.count(); got != 1 {
+		t.Fatalf("posted %d messages, want 1 — the issue, not the task: %q", got, posts.messages())
+	}
+	if got := posts.sent("issue 1"); got != 1 {
+		t.Errorf("the announced message was %q, want the GitHub issue", posts.messages())
+	}
 }

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"io"
+	"log/slog"
 	"net/http"
 	"testing"
 	"time"
@@ -104,5 +106,35 @@ func TestBuildFetchersOnlyBuildsEnabledSources(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The nil buildNotifier returns has to stay an untyped one.
+//
+// The runner reads "no notifier" as r.notifier == nil, and a (*slack.Notifier)(nil) handed back
+// through a ports.Notifier interface is *not* nil: the check would pass it through and the first
+// refresh would dereference it and panic. Nothing but a test pins that, because changing the
+// return type to *slack.Notifier compiles perfectly well and breaks it.
+func TestBuildNotifierReturnsATrulyNilNotifierWhenNothingShouldBeAnnounced(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	var off config.Config // notifications not switched on
+	if got := buildNotifier(off, nil, log); got != nil {
+		t.Errorf("buildNotifier with notifications off = %v, want nil", got)
+	}
+
+	var noWebhook config.Config
+	noWebhook.Notifications.Slack.Enabled = true
+	if got := buildNotifier(noWebhook, nil, log); got != nil {
+		t.Errorf("buildNotifier without a webhook = %v, want nil: the switch alone posts nowhere", got)
+	}
+
+	// Both halves present: the notifier is built. A test that only checked the nil cases would
+	// pass for a buildNotifier that never returns one at all.
+	var on config.Config
+	on.Notifications.Slack.Enabled = true
+	on.Secrets.SlackWebhook = "https://hooks.slack.test/services/T0/B0/x"
+	if got := buildNotifier(on, nil, log); got == nil {
+		t.Error("buildNotifier with the switch and a webhook returned nil")
 	}
 }

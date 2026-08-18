@@ -105,6 +105,14 @@ type Report struct {
 	OK bool
 	// Sources holds one entry per configured fetcher, in the order they ran.
 	Sources []SourceReport
+	// NotifyErr is why the announcement step stopped, empty when it did not stop.
+	//
+	// It deliberately does not touch OK: announcing is a courtesy and never fails a refresh
+	// (FR-6.1 AC3). But "recorded" has to mean more than a log line — on a Machine that scales to
+	// zero nobody reads the logs, and a revoked webhook would otherwise stop the notifications for
+	// weeks while every dashboard signal said the system was healthy. It therefore travels into
+	// the run record's detail (see detail).
+	NotifyErr string
 }
 
 // Runner performs refresh runs. Its fields are set once by New and never mutated, so a single
@@ -198,7 +206,7 @@ func (r *Runner) Run(ctx context.Context, trigger string) (Report, error) {
 		rep.Sources = append(rep.Sources, sr)
 	}
 
-	r.notify(ctx, fresh)
+	rep.NotifyErr = r.notify(ctx, fresh)
 
 	rep.EndedAt = r.clock.Now()
 	// Finished on a cleanup context for the same reason as the lease: a run that was cancelled
@@ -278,7 +286,8 @@ func (r *Runner) sourceFailed(ctx context.Context, source string, now time.Time,
 }
 
 // notify announces the items this run stored that have never been announced before, and is a
-// no-op while there is no notifier.
+// no-op while there is no notifier. It returns why it stopped, empty when it did not — see
+// Report.NotifyErr.
 //
 // The three steps happen in exactly this order, and the order is the guarantee:
 //
@@ -286,33 +295,50 @@ func (r *Runner) sourceFailed(ctx context.Context, source string, now time.Time,
 //     This is what makes an item announced at most once across restarts and repeated runs
 //     (FR-6.1 AC2) — the bookkeeping is a table, not a field of a process that dies between
 //     requests.
-//  2. Notifier.Notify sends those and only those.
-//  3. Store.MarkNotified records them, and only once they have actually been sent.
+//  2. Notifier.Notify sends them, one item per call, stopping at the first failure.
+//  3. Store.MarkNotified records the ones that actually went out, and only those.
 //
 // Marking first would be the cheaper-looking order and it is the wrong one: a Machine that dies
 // between marking and sending swallows the announcement for good, while one that dies between
 // sending and marking repeats it. A duplicate Slack message is an annoyance; a silently dropped
 // notification is the feature not working.
 //
-// Notify's error is all-or-nothing by the shape of ports.Notifier, so a failed batch marks
-// nothing. Some of it may already have gone out — the next run re-announces those, which is the
-// same trade in the same direction.
+// One item per call is what makes a failed announcement converge, and it is worth spelling out
+// why. Sending the whole set in one call and marking nothing when it failed looked like the
+// strictest reading of "mark only what was sent" — but the two failures a batch actually meets
+// are deterministic: Slack's incoming webhooks allow about one message a second, and the whole
+// step has notifyBudget to work in. A first run over a populated database would therefore fail at
+// roughly the same position every time, re-post the same prefix on every cron tick forever, and
+// never reach the items behind it. Sending item by item makes "mark only what was sent" literally
+// true per item and shortens the unannounced prefix on every run, so the same repeated failure
+// now converges. It costs nothing extra on the failing path either: the batch still stops at the
+// first failure, so a dead webhook is still one failed POST per run, not one per item.
+//
+// A rejection that retrying cannot fix is marked as announced all the same (see the notifier's
+// permanent marker). It is the one deliberate exception to "never mark what was not sent", and
+// the alternative is worse: with a fail-fast batch, one message Slack will never accept would
+// lead the queue on every run and suppress every item behind it for good.
 //
 // Everything here is logged and dropped. Announcing is a courtesy and must never turn a good
-// refresh into a bad one (FR-6.1 AC3): Run still returns nil and Report.OK is untouched.
+// refresh into a bad one (FR-6.1 AC3): Run still returns nil and Report.OK is untouched — but the
+// reason is reported, because a failure only a log knows about is a feature that stops working
+// silently.
 //
 // The items offered are the runner's fresh slice, which holds only what a *successful* source
 // stored. A partial result is never stored (see the package comment) and must never be announced
 // either: announcing it would tell the user about items that are not in the database and mark
 // them notified, suppressing the real announcement when they finally arrive.
-func (r *Runner) notify(ctx context.Context, items []domain.Item) {
+func (r *Runner) notify(ctx context.Context, items []domain.Item) string {
 	if r.notifier == nil || len(items) == 0 {
-		return
+		return ""
 	}
 
 	keys := make([]string, 0, len(items))
 	byKey := make(map[string]domain.Item, len(items))
 	for _, it := range items {
+		if !announceable(it) {
+			continue
+		}
 		k := notifyKey(it)
 		if _, dup := byKey[k]; dup {
 			continue // one message per item, even if a source hands the same one over twice
@@ -320,42 +346,94 @@ func (r *Runner) notify(ctx context.Context, items []domain.Item) {
 		byKey[k] = it
 		keys = append(keys, k)
 	}
+	if len(keys) == 0 {
+		return ""
+	}
 
 	unsent, err := r.store.UnnotifiedKeys(ctx, keys)
 	if err != nil {
 		// Without the filter there is no way to tell a new item from one announced last week, and
 		// announcing everything again is worse than announcing nothing.
 		r.log.Error("select unnotified items", "err", err)
-		return
-	}
-	if len(unsent) == 0 {
-		return
-	}
-
-	fresh := make([]domain.Item, 0, len(unsent))
-	for _, k := range unsent {
-		if it, ok := byKey[k]; ok {
-			fresh = append(fresh, it)
-		}
+		return clip("select unnotified items: "+err.Error(), maxErrLen)
 	}
 
 	// The announcement gets a budget of its own. It runs inside the refresh's 30-second budget
 	// (QS-2.5), and a webhook that accepts the connection and then says nothing would otherwise
 	// hold the POST /api/refresh request in flight — and Fly does not stop a Machine with a
-	// request in flight. Derived from the run's context rather than detached from it: a caller
-	// that hung up is not owed notifications.
+	// request in flight. It is derived from the run's context rather than detached from it, so it
+	// is bounded by the run's own ceiling and cannot outlive the run: SIGTERM and the refresh
+	// budget both still stop the posting, which is right, because posting to Slack after the
+	// process has been told to stop is worse than not posting at all.
 	notifyCtx, cancel := context.WithTimeout(ctx, notifyBudget)
 	defer cancel()
-	if err := r.notifier.Notify(notifyCtx, fresh); err != nil {
-		r.log.Error("notify", "items", len(fresh), "err", err)
-		return
+
+	sent := make([]string, 0, len(unsent))
+	note := ""
+	for _, k := range unsent {
+		it, ok := byKey[k]
+		if !ok {
+			// A key this run never asked about. It cannot be sent — there is no item behind it —
+			// so it must not be marked either: marking it would swallow the announcement the day
+			// the item does turn up. The keys marked below are exactly the ones sent, never the
+			// ones the store returned.
+			r.log.Warn("unnotified key not in this run", "key", k)
+			continue
+		}
+		if err := r.notifier.Notify(notifyCtx, []domain.Item{it}); err != nil {
+			r.log.Error("notify", "key", k, "sent", len(sent), "err", err)
+			note = clip(err.Error(), maxErrLen)
+			if permanentlyRejected(err) {
+				// Retrying cannot change the answer, and leaving it unmarked would park it at the
+				// head of the queue for good.
+				r.log.Warn("announcement permanently rejected; recording it as sent", "key", k)
+				sent = append(sent, k)
+			}
+			break
+		}
+		sent = append(sent, k)
+	}
+	if len(sent) == 0 {
+		return note
 	}
 
-	if err := r.store.MarkNotified(ctx, unsent, r.clock.Now()); err != nil {
+	// Recorded on a cleanup context: the messages are already out, and a deadline that expires
+	// between the last post and this write would re-announce every one of them on the next run.
+	// It is a closing write like FinishRun, and needs the same both-halves treatment (see
+	// cleanupCtx) — outliving cancellation, but never able to hang.
+	mark, cancelMark := cleanupCtx(ctx)
+	defer cancelMark()
+	if err := r.store.MarkNotified(mark, sent, r.clock.Now()); err != nil {
 		// The messages are out; only the bookkeeping failed, so the next run announces them
 		// again. That is the direction this order was chosen for.
-		r.log.Error("mark notified", "items", len(unsent), "err", err)
+		r.log.Error("mark notified", "items", len(sent), "err", err)
+		if note == "" {
+			note = clip("mark notified: "+err.Error(), maxErrLen)
+		}
 	}
+	return note
+}
+
+// announceable reports whether an item is one FR-6.1 AC1 asks to announce: "one message per newly
+// first-seen GitHub item", i.e. an issue or a pull request.
+//
+// It is a kind rather than a source name because no source name is hard-coded in this package
+// (see New) — and because the kind is what the requirement is really about. A Todoist task is
+// something the user entered themselves, so announcing it back to them is noise; it is stored and
+// shown on the dashboard like everything else, just not posted.
+func announceable(it domain.Item) bool {
+	return it.Kind == domain.KindIssue || it.Kind == domain.KindPR
+}
+
+// permanentlyRejected reports whether a notifier said that retrying this message cannot help.
+//
+// The check is an anonymous interface rather than an error value from the notifier's package,
+// because this package talks to notifiers through ports.Notifier and must not import an adapter
+// to interpret one. A notifier that does not classify its failures simply has none of them
+// treated as permanent, which is the safe direction: the item stays unannounced and is retried.
+func permanentlyRejected(err error) bool {
+	var p interface{ PermanentNotifyFailure() bool }
+	return errors.As(err, &p) && p.PermanentNotifyFailure()
 }
 
 // notifyKey is the identity the notified table records, "source|external_id" — the same pair that
@@ -373,14 +451,22 @@ func leaseHolder(trigger string, started time.Time) string {
 }
 
 // detail renders the per-source outcome for the run record: "github: 12; todoist: fetch: …".
+//
+// A failed announcement is appended to it. The run itself was fine and stays OK (FR-6.1 AC3), but
+// the failure has to be recorded somewhere a person actually looks — the run record is that place,
+// and it is where the notifier error's scrubbing (QS-4.3) earns its keep, because this text is
+// rendered on the dashboard.
 func detail(rep Report) string {
-	parts := make([]string, 0, len(rep.Sources))
+	parts := make([]string, 0, len(rep.Sources)+1)
 	for _, sr := range rep.Sources {
 		if sr.Err != "" {
 			parts = append(parts, sr.Source+": "+sr.Err)
 			continue
 		}
 		parts = append(parts, fmt.Sprintf("%s: %d", sr.Source, sr.Stored))
+	}
+	if rep.NotifyErr != "" {
+		parts = append(parts, "notify: "+rep.NotifyErr)
 	}
 	return clip(strings.Join(parts, "; "), maxDetailLen)
 }

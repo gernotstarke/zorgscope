@@ -34,6 +34,7 @@ type stubStore struct {
 	recordOKErr   error
 	unnotifiedErr error
 	markErr       error
+	extraKeys     []string // keys UnnotifiedKeys answers with although it was never asked about them
 
 	// What the run did, for the assertions.
 	holder     string
@@ -143,10 +144,13 @@ func (s *stubStore) UnnotifiedKeys(_ context.Context, keys []string) ([]string, 
 			out = append(out, k)
 		}
 	}
-	return out, nil
+	// A store that answers with more than it was asked about is what the port's doc comment
+	// forbids and what nothing but this stub can produce; see TestOnlyTheItemsSentAreMarked.
+	return append(out, s.extraKeys...), nil
 }
 
-func (s *stubStore) MarkNotified(_ context.Context, keys []string, _ time.Time) error {
+func (s *stubStore) MarkNotified(ctx context.Context, keys []string, _ time.Time) error {
+	s.note("MarkNotified", ctx)
 	s.marked = append(s.marked, keys...)
 	if s.markErr != nil {
 		return s.markErr
@@ -229,15 +233,20 @@ func TestCleanupWritesOutliveCancellationButKeepADeadline(t *testing.T) {
 	defer cancel()
 	// The fetcher cancels the run from the inside, which is what a client hanging up or a Machine
 	// being stopped looks like from between two sources.
+	// A healthy source runs first so the run has something to announce, and the notifier is a stub
+	// that ignores its context — so the run reaches MarkNotified with the message already out.
+	// That is the case that matters: a deadline expiring between the last post and the bookkeeping
+	// would lose the record and re-announce the whole batch on the next run.
 	r := refresh.New(store, []ports.SourceFetcher{
-		&cancelThenFetch{FakeFetcher: fetcher("github", item("1")), cancel: cancel},
-	}, &ports.FixedClock{T: now}, nil, discardLogger())
+		fetcher("github", item("1")),
+		&cancelThenFetch{FakeFetcher: fetcher("todoist", task("t1")), cancel: cancel},
+	}, &ports.FixedClock{T: now}, &recordingNotifier{}, discardLogger())
 
 	if _, err := r.Run(ctx, "cron"); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 
-	for _, name := range []string{"RecordSourceError", "FinishRun", "ReleaseRefreshLease"} {
+	for _, name := range []string{"RecordSourceError", "FinishRun", "ReleaseRefreshLease", "MarkNotified"} {
 		got, called := store.ctxAt[name]
 		if !called {
 			t.Errorf("%s was never called; a cancelled run must still close itself out", name)
@@ -575,4 +584,59 @@ func (n *ctxSpyNotifier) Notify(ctx context.Context, _ []domain.Item) error {
 		n.hasDeadline, n.budget = true, time.Until(d)
 	}
 	return nil
+}
+
+// The keys marked are the ones this run actually sent, never the ones the store answered with.
+//
+// UnnotifiedKeys is asked about the run's keys and the real store answers with a subset of them,
+// but the runner has to look each one up to find the item to send — and a key it cannot resolve
+// is a key it cannot have sent. Marking it anyway would record an announcement that never
+// happened and swallow it for good, which is the one failure the whole ordering exists to
+// prevent.
+func TestOnlyTheItemsSentAreMarked(t *testing.T) {
+	store := newStubStore()
+	store.extraKeys = []string{"github|never-part-of-this-run"}
+	n := &recordingNotifier{}
+	r := refresh.New(store, []ports.SourceFetcher{fetcher("github", item("1"))},
+		&ports.FixedClock{T: now}, n, discardLogger())
+
+	if _, err := r.Run(context.Background(), "cron"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(n.seen) != 1 || n.seen[0].ExternalID != "1" {
+		t.Fatalf("notifier saw %+v, want only the one item this run stored", n.seen)
+	}
+	if len(store.marked) != 1 || store.marked[0] != "github|1" {
+		t.Errorf("marked %v, want only github|1 — a key that was never sent must never be marked",
+			store.marked)
+	}
+}
+
+// Nothing may be marked when nothing was sent, however the send failed. The notifier here fails on
+// the first item, so the run has announced nothing at all and owes both announcements still.
+func TestAFailedFirstAnnouncementMarksNothing(t *testing.T) {
+	store := newStubStore()
+	n := &failingNotifier{}
+	r := refresh.New(store, []ports.SourceFetcher{fetcher("github", item("1"), item("2"))},
+		&ports.FixedClock{T: now}, n, discardLogger())
+
+	rep, err := r.Run(context.Background(), "cron")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(store.marked) != 0 {
+		t.Errorf("marked %v although nothing was sent", store.marked)
+	}
+	// The failure stops the batch: one failed post per run, not one per item.
+	if n.items != 1 {
+		t.Errorf("the notifier was called with %d items, want 1 — the batch stops at the first "+
+			"failure so a dead webhook costs one request, not one per item", n.items)
+	}
+	if !rep.OK {
+		t.Error("a failed announcement is not a failed refresh (FR-6.1 AC3)")
+	}
+	if rep.NotifyErr == "" {
+		t.Error("the failure was not recorded anywhere but the log")
+	}
 }

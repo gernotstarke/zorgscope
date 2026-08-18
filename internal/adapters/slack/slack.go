@@ -2,18 +2,28 @@
 // first-seen item (FR-6.1). A webhook post is a single JSON body to a single URL, so this package
 // is written against net/http and encoding/json rather than a client library (no new dependency).
 //
-// Two rules run through it:
+// Three rules run through it:
 //
 //   - The webhook URL is the credential. Anyone holding it can post to the channel, and net/http
 //     quotes the URL it dialled in every transport error, so every error leaving this package is
 //     scrubbed at the boundary (QS-4.3). Nothing here logs; the runner does, from what it is
 //     handed.
-//   - A batch stops at the first failed post. The runner marks an item notified only when it was
-//     actually sent, and ports.Notifier reports "sent" as a single error, so a batch that fails
-//     partway is retried whole on the next run. Carrying on is then pure cost: the usual cause of
-//     a failed post is the endpoint rather than the message, so the remaining posts fail too,
-//     each burning a request and a slice of the run's 30-second budget on a Machine that must not
-//     be held awake (QS-2.5).
+//   - A batch stops at the first failed post. Carrying on is pure cost: the usual cause of a
+//     failed post is the endpoint rather than the message, so the remaining posts fail too, each
+//     burning a request and a slice of the run's 30-second budget on a Machine that must not be
+//     held awake (QS-2.5). The runner calls this with one item at a time and records each success
+//     as it happens, so stopping early costs only the tail of one run and the next run carries on
+//     where this one stopped.
+//   - A rejection says whether retrying can help. Anything to do with the endpoint or the network
+//     — a 429, a 5xx, a timeout, a refused redirect, a 200 whose body is not Slack's "ok" — is
+//     retryable and leaves the item unannounced, to be sent again next run. A non-429 4xx is
+//     Slack refusing this payload; retrying cannot change the answer, so the error is marked
+//     permanent (see permanent) and the runner records the item as announced rather than letting
+//     it lead the queue forever.
+//
+// A post is never allowed to be redirected: 301, 302 and 303 turn a POST into a GET and drop the
+// body, so a followed redirect would answer 2xx for a message that was never delivered — and the
+// runner would then mark it announced. See refuseRedirect.
 package slack
 
 import (
@@ -56,11 +66,31 @@ type Notifier struct {
 // New builds a Notifier posting to webhookURL. hc supplies the transport (as in this package's
 // tests, which pass an httptest server's client); a nil hc gets a client with defaultTimeout, so a
 // caller that forgets one cannot hang forever.
+//
+// A supplied client is copied rather than used as it is, because this notifier owns its redirect
+// policy and must not inherit one someone else set — the shared client the main wiring passes is
+// also the one every fetcher uses. The copy shares the transport, so connection pooling is
+// unaffected.
 func New(webhookURL string, hc *http.Client) *Notifier {
-	if hc == nil {
-		hc = &http.Client{Timeout: defaultTimeout}
+	c := &http.Client{Timeout: defaultTimeout}
+	if hc != nil {
+		clone := *hc
+		c = &clone
 	}
-	return &Notifier{webhookURL: webhookURL, hc: hc, scrub: newScrubber(webhookURL)}
+	c.CheckRedirect = refuseRedirect
+	return &Notifier{webhookURL: webhookURL, hc: c, scrub: newScrubber(webhookURL)}
+}
+
+// refuseRedirect stops net/http from following a redirect from the webhook.
+//
+// The default policy follows up to ten, and for 301, 302 and 303 it rewrites the POST to a GET and
+// drops the body. The final response can then be a perfectly good 200 for a message that was never
+// delivered — and the runner, seeing a nil error, marks the item announced and never sends it
+// again. That is the one direction the ordering rule refuses, so a webhook that redirects is
+// treated as a failure instead. It names no URL: the error is wrapped by net/http, which quotes the
+// webhook, and everything from here is scrubbed anyway.
+func refuseRedirect(*http.Request, []*http.Request) error {
+	return errors.New("refusing to follow a redirect: the webhook must accept the POST itself")
 }
 
 // Notify posts one message per item, in order, and stops at the first failure (see the package
@@ -70,9 +100,10 @@ func New(webhookURL string, hc *http.Client) *Notifier {
 // message per second per hook with a short burst allowance, and this notifier only ever sees items
 // the store says have never been announced — on a personal dashboard that is a handful per refresh
 // and nothing at all on most runs. The one run that could exceed it is the very first, when every
-// stored item is unannounced; a 429 there fails the batch, nothing is marked, and the next run
-// retries. Adding backoff would mean sleeping inside a request that keeps a scale-to-zero Machine
-// awake, which is the worse trade.
+// stored item is unannounced; a 429 there stops the run's announcements, and because the runner
+// has recorded everything that did go out, the next run picks up where this one stopped instead of
+// starting over. Adding backoff would mean sleeping inside a request that keeps a scale-to-zero
+// Machine awake, which is the worse trade.
 func (n *Notifier) Notify(ctx context.Context, items []domain.Item) error {
 	for i, it := range items {
 		if err := n.post(ctx, message(it)); err != nil {
@@ -88,9 +119,16 @@ type payload struct {
 	Text string `json:"text"`
 }
 
-// post sends one message. The response body is always closed, and drained on success so the
+// okBody is what Slack answers a delivered message with. Anything else at 200 — a captive
+// portal's login page, a proxy's HTML error — is not a delivery, and treating it as one would
+// have the runner mark the item announced.
+const okBody = "ok"
+
+// post sends one message. The response body is always closed, and read up to maxReasonLen so the
 // connection can be reused for the next item in the batch. Every error returned from here is
 // scrubbed by the caller.
+//
+// A failure is classified as it is produced: see permanent for what that distinction buys.
 func (n *Notifier) post(ctx context.Context, text string) error {
 	body, err := json.Marshal(payload{Text: text})
 	if err != nil {
@@ -109,12 +147,58 @@ func (n *Notifier) post(ctx context.Context, text string) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	answer, _ := io.ReadAll(io.LimitReader(resp.Body, maxReasonLen))
+	reason := strings.TrimSpace(string(answer))
+
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		reason, _ := io.ReadAll(io.LimitReader(resp.Body, maxReasonLen))
-		return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, strings.TrimSpace(string(reason)))
+		rejected := fmt.Errorf("unexpected status %d: %s", resp.StatusCode, reason)
+		if isPermanentStatus(resp.StatusCode) {
+			return permanent{rejected}
+		}
+		return rejected
 	}
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxReasonLen))
+	if !strings.EqualFold(reason, okBody) {
+		// Retryable on purpose: whatever answered is not Slack, so the message may still be
+		// deliverable once whatever sits in between is gone.
+		return fmt.Errorf("status %d but the body was %q, not %q: the message was not accepted",
+			resp.StatusCode, reason, okBody)
+	}
 	return nil
+}
+
+// isPermanentStatus reports whether a status says that retrying this message cannot help.
+//
+// A 4xx other than 429 is Slack refusing the payload — an invalid body, a message too long, a
+// webhook that no longer exists. The answer will be the same on every run, so the runner records
+// the item as announced anyway rather than letting one message it can never deliver stand at the
+// head of the queue and suppress every item behind it forever.
+//
+// 429 is explicitly not in this class: it is the endpoint asking for less traffic, and the message
+// is fine. Neither is any 5xx, any transport error, any timeout or a refused redirect — all of
+// them leave the item unannounced and it is sent again next run.
+func isPermanentStatus(code int) bool {
+	return code >= 400 && code < 500 && code != http.StatusTooManyRequests
+}
+
+// permanent marks an error that retrying cannot fix.
+//
+// The runner has to tell the two apart to decide whether an item may be recorded as announced, but
+// internal/refresh must not import an adapter to do so: it discovers the distinction through the
+// anonymous interface this method satisfies, the way net's callers read Timeout(). The marker is
+// preserved through scrubbing (see scrubber.clean), because the error the runner sees is always
+// the scrubbed one.
+type permanent struct{ err error }
+
+func (e permanent) Error() string { return e.err.Error() }
+func (e permanent) Unwrap() error { return e.err }
+
+// PermanentNotifyFailure reports that this message will be rejected again on every retry.
+func (e permanent) PermanentNotifyFailure() bool { return true }
+
+// isPermanent reports whether err carries the permanent marker anywhere in its chain.
+func isPermanent(err error) bool {
+	var p interface{ PermanentNotifyFailure() bool }
+	return errors.As(err, &p) && p.PermanentNotifyFailure()
 }
 
 // message renders one item as Slack mrkdwn: what it is, where it lives, and a link to it. An item
@@ -130,7 +214,7 @@ func message(it domain.Item) string {
 	}
 	subject := title
 	if it.URL != "" {
-		subject = "<" + escape(it.URL) + "|" + title + ">"
+		subject = "<" + linkTarget(it.URL) + "|" + title + ">"
 	}
 	return fmt.Sprintf("New %s%s: %s", label(it.Kind), where, subject)
 }
@@ -157,6 +241,17 @@ func escape(s string) string {
 	s = strings.ReplaceAll(s, "&", "&amp;")
 	s = strings.ReplaceAll(s, "<", "&lt;")
 	return strings.ReplaceAll(s, ">", "&gt;")
+}
+
+// linkTarget escapes a URL for the target half of Slack's <url|label> link syntax.
+//
+// On top of the three mrkdwn characters, the pipe has to go: Slack splits the link at the *first*
+// one, so a URL carrying a pipe — a Todoist filter link, a query parameter with a list in it —
+// would have its target truncated at the pipe and the rest folded into the label, producing a
+// link that goes somewhere else. Percent-encoding it is lossless: the server decodes %7C back to
+// a pipe.
+func linkTarget(u string) string {
+	return strings.ReplaceAll(escape(u), "|", "%7C")
 }
 
 // scrubber removes the webhook from error text.
@@ -218,6 +313,12 @@ func newScrubber(webhookURL string) scrubber {
 // and all. When something did, the wrapping is deliberately dropped: an error whose text is clean
 // but whose wrapped cause still spells the webhook out would hand the credential back to anyone
 // who called errors.Unwrap. Nothing in this repository matches on a notifier error's cause.
+//
+// The one thing carried across that rewrite is the permanent marker: it is not information about
+// the webhook but about the message, the runner reads it off the error it is handed, and a
+// rejection that lost its marker on the way through the scrubber would quietly become retryable —
+// so a poison message would again block everything behind it, but only for the errors that had
+// something to hide.
 func (s scrubber) clean(err error) error {
 	if err == nil || s.r == nil {
 		return err
@@ -226,6 +327,9 @@ func (s scrubber) clean(err error) error {
 	cleaned := s.r.Replace(msg)
 	if cleaned == msg {
 		return err
+	}
+	if isPermanent(err) {
+		return permanent{errors.New(cleaned)}
 	}
 	return errors.New(cleaned)
 }

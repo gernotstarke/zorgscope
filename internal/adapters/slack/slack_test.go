@@ -157,13 +157,12 @@ func TestNotifyWithoutItemsPostsNothing(t *testing.T) {
 
 // The judgment call this package makes about a batch that fails midway.
 //
-// The runner marks an item notified only when it was actually sent, and with a one-error
-// interface "sent" can only mean "the whole batch went". So a batch that fails partway is retried
-// whole on the next run — which makes carrying on after the first failure pure cost: the usual
-// cause is the endpoint, not the message, so every remaining post fails too, each burning a
-// request and a slice of the run's 30-second budget (QS-2.5) on a scale-to-zero Machine that must
-// not be held awake. Stopping at the first failure costs one request to learn the webhook is
-// down, and the next run re-announces everything.
+// Carrying on after the first failure is pure cost: the usual cause is the endpoint, not the
+// message, so every remaining post fails too, each burning a request and a slice of the run's
+// 30-second budget (QS-2.5) on a scale-to-zero Machine that must not be held awake. Stopping
+// costs one request to learn the webhook is down. It is affordable only because the runner sends
+// one item per call and records each success as it happens, so what stops here is the tail of one
+// run rather than every announcement the run owed — see Runner.notify.
 func TestNotifyStopsAtTheFirstFailedPost(t *testing.T) {
 	rec := newRecorder(t)
 	rec.failFrom = 2
@@ -369,5 +368,144 @@ func TestScrubberReplacesEverySpellingOfTheWebhook(t *testing.T) {
 	}
 	if got := newScrubber("https://hooks.slack.test/").clean(errors.New("a/b")); got.Error() != "a/b" {
 		t.Errorf("a webhook with no credential tail scrubbed %q", got)
+	}
+}
+
+// A followed redirect is the one failure that looks like a success. net/http follows up to ten by
+// default and rewrites POST to GET for 301, 302 and 303 — dropping the body — so the final 200
+// would report a message that was never delivered, and the runner would mark the item announced
+// and never send it again.
+func TestRedirectsAreRefused(t *testing.T) {
+	final := newRecorder(t)
+	away := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		http.Redirect(w, req, final.srv.URL+webhookPath, http.StatusFound)
+	}))
+	t.Cleanup(away.Close)
+
+	webhook := away.URL + webhookPath
+	n := New(webhook, away.Client())
+	err := n.Notify(context.Background(), []domain.Item{issue("1", "t", "https://example.test/1")})
+	if err == nil {
+		t.Fatal("Notify followed a redirect and reported success: the message was never delivered")
+	}
+	if got := len(final.posted()); got != 0 {
+		t.Errorf("the redirect target received %d requests, want 0", got)
+	}
+	assertNoWebhook(t, webhook, err.Error())
+	// A misconfigured or redirecting endpoint may recover; the item must stay unannounced.
+	if isPermanent(err) {
+		t.Error("a refused redirect was classified permanent; it must be retried, not swallowed")
+	}
+}
+
+// Slack answers a delivered message with the body "ok". A 200 from anything else — a captive
+// portal, a proxy's error page — is not a delivery, and counting it as one would mark the item
+// announced and drop the notification for good.
+func TestA200WithoutSlacksOkBodyIsAFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "<html>sign in to the guest network</html>")
+	}))
+	t.Cleanup(srv.Close)
+
+	n := New(srv.URL+webhookPath, srv.Client())
+	err := n.Notify(context.Background(), []domain.Item{issue("1", "t", "https://example.test/1")})
+	if err == nil {
+		t.Fatal("Notify accepted a 200 whose body was not Slack's \"ok\"")
+	}
+	if isPermanent(err) {
+		t.Error("whatever answered is not Slack, so the message may still be deliverable: retryable")
+	}
+	assertNoWebhook(t, srv.URL+webhookPath, err.Error())
+}
+
+// A URL carrying a pipe must not truncate the link: Slack splits <url|label> at the first pipe, so
+// an unescaped one would send the reader somewhere the item is not.
+func TestAPipeInTheItemURLDoesNotTruncateTheLink(t *testing.T) {
+	rec := newRecorder(t)
+	n := New(rec.webhook(), rec.srv.Client())
+
+	itemURL := "https://todoist.test/app?filter=today%20|%20overdue"
+	if err := n.Notify(context.Background(), []domain.Item{issue("1", "piped", itemURL)}); err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	got := rec.text(t, 0)
+	target, _, ok := strings.Cut(strings.TrimPrefix(got[strings.Index(got, "<"):], "<"), "|")
+	if !ok {
+		t.Fatalf("message = %q, want a <url|label> link", got)
+	}
+	if strings.Contains(target, "|") {
+		t.Fatalf("link target = %q still contains a raw pipe", target)
+	}
+	if target != strings.ReplaceAll(itemURL, "|", "%7C") {
+		t.Errorf("link target = %q, want the whole URL with its pipe percent-encoded", target)
+	}
+}
+
+// The classification the runner reads to decide whether an item may be recorded as announced.
+// Getting it wrong is expensive in both directions: too permanent and a deliverable message is
+// swallowed, too retryable and one message Slack will never accept blocks every item behind it on
+// every run forever.
+func TestRejectionsAreClassifiedRetryableOrPermanent(t *testing.T) {
+	cases := []struct {
+		status        int
+		wantPermanent bool
+	}{
+		{http.StatusBadRequest, true},   // invalid_payload: the message itself
+		{http.StatusUnauthorized, true}, // the webhook is not accepted any more
+		{http.StatusForbidden, true},    // action_prohibited
+		{http.StatusNotFound, true},     // no_service: the hook is gone
+		{http.StatusGone, true},         // channel_is_archived
+		{http.StatusRequestEntityTooLarge, true},
+		{http.StatusTooManyRequests, false}, // rate limited: the message is fine
+		{http.StatusInternalServerError, false},
+		{http.StatusBadGateway, false},
+		{http.StatusServiceUnavailable, false},
+	}
+	for _, tc := range cases {
+		t.Run(http.StatusText(tc.status), func(t *testing.T) {
+			rec := newRecorder(t)
+			rec.failFrom, rec.failStatus, rec.failBody = 1, tc.status, "rejected"
+			n := New(rec.webhook(), rec.srv.Client())
+
+			err := n.Notify(context.Background(), []domain.Item{issue("1", "t", "https://example.test/1")})
+			if err == nil {
+				t.Fatalf("Notify returned nil for status %d", tc.status)
+			}
+			if got := isPermanent(err); got != tc.wantPermanent {
+				t.Errorf("status %d classified permanent=%v, want %v", tc.status, got, tc.wantPermanent)
+			}
+		})
+	}
+}
+
+// The marker has to survive scrubbing, because the runner only ever sees the scrubbed error: a
+// rejection that lost it on the way out would silently become retryable and block the queue again.
+func TestThePermanentMarkerSurvivesScrubbing(t *testing.T) {
+	rec := newRecorder(t)
+	// A webhook that echoes what was called is what forces the scrubber to rewrite the error.
+	rec.failFrom, rec.failStatus = 1, http.StatusBadRequest
+	rec.failBody = "invalid_payload for " + rec.webhook()
+	n := New(rec.webhook(), rec.srv.Client())
+
+	err := n.Notify(context.Background(), []domain.Item{issue("1", "t", "https://example.test/1")})
+	if err == nil {
+		t.Fatal("Notify returned nil for a 400")
+	}
+	assertNoWebhook(t, rec.webhook(), err.Error())
+	if !strings.Contains(err.Error(), redacted) {
+		t.Fatalf("error = %q was not rewritten, so this proves nothing about the marker", err)
+	}
+	if !isPermanent(err) {
+		t.Error("the permanent marker was lost while the error was scrubbed")
+	}
+}
+
+// The notifier owns its redirect policy, and the client it is handed is the one every fetcher
+// shares: setting the policy on that client would change how every other adapter behaves.
+func TestNewDoesNotMutateTheClientItIsGiven(t *testing.T) {
+	shared := &http.Client{Timeout: time.Minute}
+	_ = New("https://hooks.slack.test"+webhookPath, shared)
+	if shared.CheckRedirect != nil {
+		t.Error("New set a redirect policy on the caller's client")
 	}
 }
