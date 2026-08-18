@@ -10,11 +10,15 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/gernotstarke/zorgscope/internal/adapters/libsql"
+	"github.com/gernotstarke/zorgscope/internal/adapters/slack"
 	"github.com/gernotstarke/zorgscope/internal/domain"
 	"github.com/gernotstarke/zorgscope/internal/ports"
 	"github.com/gernotstarke/zorgscope/internal/refresh"
@@ -490,6 +494,116 @@ func TestFailedSourceItemsAreNotAnnounced(t *testing.T) {
 	if n.seen[0].Source != "todoist" {
 		t.Errorf("notifier saw an item from %q, want only todoist", n.seen[0].Source)
 	}
+}
+
+// FR-6.1 AC2: an item is announced at most once, across repeated runs and across restarts. The
+// bookkeeping is a row in the notified table precisely because there is no process between two
+// refreshes to remember anything — the Machine is stopped.
+//
+// The real Slack adapter is used rather than a stub: the dedup only holds if the runner asks the
+// store first, sends only what came back, and marks exactly that, and a notifier that counted
+// calls would let a runner that marked the wrong keys pass.
+func TestNotifyIsSkippedForAlreadyNotifiedItems(t *testing.T) {
+	store, ctx := newTestStore(t), context.Background()
+	posts := postRecorder(t, http.StatusOK)
+	n := slack.New(posts.srv.URL+"/services/T0/B0/secret", posts.srv.Client())
+	fetchers := []ports.SourceFetcher{fetcher("github", item("1"), item("2"))}
+
+	// Two runs over the same two items, as a cron trigger every few minutes produces.
+	for range 2 {
+		r := refresh.New(store, fetchers, &ports.FixedClock{T: now}, n, discardLogger())
+		if _, err := r.Run(ctx, "cron"); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+	}
+
+	if got := posts.count(); got != 2 {
+		t.Fatalf("posted %d messages over two runs of the same two items, want 2 — "+
+			"an item is announced at most once (FR-6.1 AC2)", got)
+	}
+
+	// A genuinely new item on a third run still gets through: the dedup must suppress repeats,
+	// not the feature.
+	r := refresh.New(store, []ports.SourceFetcher{fetcher("github", item("1"), item("2"), item("3"))},
+		&ports.FixedClock{T: now}, n, discardLogger())
+	if _, err := r.Run(ctx, "cron"); err != nil {
+		t.Fatalf("third Run: %v", err)
+	}
+	if got := posts.count(); got != 3 {
+		t.Errorf("posted %d messages after a third item appeared, want 3", got)
+	}
+}
+
+// FR-6.1 AC3: a Slack failure is recorded and dropped. The refresh itself succeeded — the items
+// are stored and the dashboard is correct — so a webhook that is down must not make the run look
+// broken.
+//
+// It must also not mark anything: nothing was sent, so the announcement is still owed. The second
+// run proves it, and is the reason the runner marks after sending rather than before.
+func TestSlackFailureDoesNotFailTheRun(t *testing.T) {
+	store, ctx := newTestStore(t), context.Background()
+	posts := postRecorder(t, http.StatusInternalServerError)
+	n := slack.New(posts.srv.URL+"/services/T0/B0/secret", posts.srv.Client())
+	r := refresh.New(store, []ports.SourceFetcher{fetcher("github", item("1"))},
+		&ports.FixedClock{T: now}, n, discardLogger())
+
+	rep, err := r.Run(ctx, "cron")
+	if err != nil {
+		t.Fatalf("Run must not fail because the webhook did: %v", err)
+	}
+	if !rep.OK {
+		t.Error("report.OK = false; a Slack failure is not a refresh failure (FR-6.1 AC3)")
+	}
+	if got := len(mustItems(t, store, ctx)); got != 1 {
+		t.Errorf("stored %d items, want 1 — the refresh itself succeeded", got)
+	}
+	last, err := store.LastRun(ctx)
+	if err != nil {
+		t.Fatalf("LastRun: %v", err)
+	}
+	if !last.OK {
+		t.Error("the recorded run is marked failed; a Slack failure must not reach the run record")
+	}
+
+	// Nothing was sent, so nothing may have been marked: the announcement is retried.
+	if got := posts.count(); got != 1 {
+		t.Fatalf("attempted %d posts, want 1", got)
+	}
+	rerun := refresh.New(store, []ports.SourceFetcher{fetcher("github", item("1"))},
+		&ports.FixedClock{T: now}, n, discardLogger())
+	if _, err := rerun.Run(ctx, "cron"); err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if got := posts.count(); got != 2 {
+		t.Errorf("the second run attempted %d posts in total, want 2 — a failed announcement "+
+			"must not be marked as sent", got)
+	}
+}
+
+// posted is an httptest server standing in for a Slack incoming webhook, counting what reaches it.
+type posted struct {
+	srv *httptest.Server
+	mu  sync.Mutex
+	n   int
+}
+
+func (p *posted) count() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.n
+}
+
+func postRecorder(t *testing.T, status int) *posted {
+	t.Helper()
+	p := &posted{}
+	p.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		p.mu.Lock()
+		p.n++
+		p.mu.Unlock()
+		w.WriteHeader(status)
+	}))
+	t.Cleanup(p.srv.Close)
+	return p
 }
 
 type recordingNotifier struct{ seen []domain.Item }

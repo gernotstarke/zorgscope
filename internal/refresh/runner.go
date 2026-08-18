@@ -57,6 +57,12 @@ const (
 // caller can afford to wait for after its own budget is gone.
 const cleanupTimeout = 5 * time.Second
 
+// notifyBudget bounds the whole announcement step. It is a third of QS-2.5's 30-second refresh
+// budget: enough for the handful of messages a personal dashboard produces in a run, and little
+// enough that a webhook which never answers costs the run a delay rather than the Machine an open
+// request it cannot be stopped with.
+const notifyBudget = 10 * time.Second
+
 // cleanupCtx derives the context the run's closing writes use. Both halves are load-bearing and
 // neither may be dropped:
 //
@@ -271,17 +277,90 @@ func (r *Runner) sourceFailed(ctx context.Context, source string, now time.Time,
 	return SourceReport{Source: source, Err: msg}
 }
 
-// notify offers the refreshed items to the notifier, and is a no-op while there is none — Task 17
-// fills that in. A notification that fails is logged and nothing more: announcing is a courtesy,
-// and it must never turn a good refresh into a bad one (FR-6.1 AC3).
+// notify announces the items this run stored that have never been announced before, and is a
+// no-op while there is no notifier.
+//
+// The three steps happen in exactly this order, and the order is the guarantee:
+//
+//  1. Store.UnnotifiedKeys filters the run's keys down to the ones that have never been sent.
+//     This is what makes an item announced at most once across restarts and repeated runs
+//     (FR-6.1 AC2) — the bookkeeping is a table, not a field of a process that dies between
+//     requests.
+//  2. Notifier.Notify sends those and only those.
+//  3. Store.MarkNotified records them, and only once they have actually been sent.
+//
+// Marking first would be the cheaper-looking order and it is the wrong one: a Machine that dies
+// between marking and sending swallows the announcement for good, while one that dies between
+// sending and marking repeats it. A duplicate Slack message is an annoyance; a silently dropped
+// notification is the feature not working.
+//
+// Notify's error is all-or-nothing by the shape of ports.Notifier, so a failed batch marks
+// nothing. Some of it may already have gone out — the next run re-announces those, which is the
+// same trade in the same direction.
+//
+// Everything here is logged and dropped. Announcing is a courtesy and must never turn a good
+// refresh into a bad one (FR-6.1 AC3): Run still returns nil and Report.OK is untouched.
+//
+// The items offered are the runner's fresh slice, which holds only what a *successful* source
+// stored. A partial result is never stored (see the package comment) and must never be announced
+// either: announcing it would tell the user about items that are not in the database and mark
+// them notified, suppressing the real announcement when they finally arrive.
 func (r *Runner) notify(ctx context.Context, items []domain.Item) {
 	if r.notifier == nil || len(items) == 0 {
 		return
 	}
-	if err := r.notifier.Notify(ctx, items); err != nil {
-		r.log.Error("notify", "err", err)
+
+	keys := make([]string, 0, len(items))
+	byKey := make(map[string]domain.Item, len(items))
+	for _, it := range items {
+		k := notifyKey(it)
+		if _, dup := byKey[k]; dup {
+			continue // one message per item, even if a source hands the same one over twice
+		}
+		byKey[k] = it
+		keys = append(keys, k)
+	}
+
+	unsent, err := r.store.UnnotifiedKeys(ctx, keys)
+	if err != nil {
+		// Without the filter there is no way to tell a new item from one announced last week, and
+		// announcing everything again is worse than announcing nothing.
+		r.log.Error("select unnotified items", "err", err)
+		return
+	}
+	if len(unsent) == 0 {
+		return
+	}
+
+	fresh := make([]domain.Item, 0, len(unsent))
+	for _, k := range unsent {
+		if it, ok := byKey[k]; ok {
+			fresh = append(fresh, it)
+		}
+	}
+
+	// The announcement gets a budget of its own. It runs inside the refresh's 30-second budget
+	// (QS-2.5), and a webhook that accepts the connection and then says nothing would otherwise
+	// hold the POST /api/refresh request in flight — and Fly does not stop a Machine with a
+	// request in flight. Derived from the run's context rather than detached from it: a caller
+	// that hung up is not owed notifications.
+	notifyCtx, cancel := context.WithTimeout(ctx, notifyBudget)
+	defer cancel()
+	if err := r.notifier.Notify(notifyCtx, fresh); err != nil {
+		r.log.Error("notify", "items", len(fresh), "err", err)
+		return
+	}
+
+	if err := r.store.MarkNotified(ctx, unsent, r.clock.Now()); err != nil {
+		// The messages are out; only the bookkeeping failed, so the next run announces them
+		// again. That is the direction this order was chosen for.
+		r.log.Error("mark notified", "items", len(unsent), "err", err)
 	}
 }
+
+// notifyKey is the identity the notified table records, "source|external_id" — the same pair that
+// identifies an item everywhere else in the store.
+func notifyKey(it domain.Item) string { return it.Source + "|" + it.ExternalID }
 
 // leaseHolder builds the identity this run holds the lease under. It has to be unique per run:
 // AcquireRefreshLease lets the current holder re-acquire its own lease, so two runs sharing a

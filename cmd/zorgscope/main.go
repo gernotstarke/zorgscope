@@ -22,6 +22,7 @@ import (
 	"github.com/gernotstarke/zorgscope/internal/adapters/github"
 	"github.com/gernotstarke/zorgscope/internal/adapters/libsql"
 	"github.com/gernotstarke/zorgscope/internal/adapters/plausible"
+	"github.com/gernotstarke/zorgscope/internal/adapters/slack"
 	"github.com/gernotstarke/zorgscope/internal/adapters/todoist"
 	"github.com/gernotstarke/zorgscope/internal/config"
 	"github.com/gernotstarke/zorgscope/internal/ports"
@@ -74,8 +75,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		log.Info("source enabled", "source", f.Name())
 	}
 
-	// The notifier stays nil until Task 17; the runner treats that as "announce nothing".
-	runner := refresh.New(store, fetchers, clock, nil, log)
+	notifier := buildNotifier(cfg, hc, log)
+	runner := refresh.New(store, fetchers, clock, notifier, log)
 
 	srv, err := web.New(web.Options{
 		Config: cfg,
@@ -139,6 +140,33 @@ func buildFetchers(cfg config.Config, hc *http.Client, clock ports.Clock, loc *t
 		}, hc, clock))
 	}
 	return fetchers
+}
+
+// buildNotifier builds the Slack notifier, or returns nil when nothing should be announced —
+// which the runner reads as "announce nothing" (FR-8.2 AC2, as for a source).
+//
+// Both halves have to be there: notifications switched on in the configuration file, and a webhook
+// URL in the environment. A webhook without the switch is a credential the operator has not asked
+// to use; the switch without a webhook would post nowhere and log a failure on every refresh.
+//
+// The return type is ports.Notifier and the nil is untyped on purpose. Returning a (*slack.Notifier)
+// (nil) through an interface produces a non-nil interface holding a nil pointer, and the runner's
+// "no notifier" check would miss it and dereference it on the first refresh.
+//
+// The shared HTTP client is reused deliberately: its timeout is only a ceiling here, because the
+// runner gives the whole announcement step a shorter budget of its own.
+func buildNotifier(cfg config.Config, hc *http.Client, log *slog.Logger) ports.Notifier {
+	if !cfg.Notifications.Slack.Enabled {
+		log.Info("slack notifications disabled")
+		return nil
+	}
+	if cfg.Secrets.SlackWebhook == "" {
+		// Never log the value, only its absence (QS-4.3).
+		log.Warn("slack notifications enabled but SLACK_WEBHOOK_URL is not set; announcing nothing")
+		return nil
+	}
+	log.Info("slack notifications enabled")
+	return slack.New(cfg.Secrets.SlackWebhook, hc)
 }
 
 // githubConfig derives the GitHub adapter's configuration from one setting, GITHUB_BASE_URL, which

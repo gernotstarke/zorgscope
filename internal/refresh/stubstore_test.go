@@ -27,11 +27,13 @@ type stubStore struct {
 	ports.Store
 
 	// Failures to inject.
-	acquireErr  error
-	leaseHeld   bool // AcquireRefreshLease reports the lease as already taken
-	startErr    error
-	replaceErr  map[string]error // by source name
-	recordOKErr error
+	acquireErr    error
+	leaseHeld     bool // AcquireRefreshLease reports the lease as already taken
+	startErr      error
+	replaceErr    map[string]error // by source name
+	recordOKErr   error
+	unnotifiedErr error
+	markErr       error
 
 	// What the run did, for the assertions.
 	holder     string
@@ -41,6 +43,8 @@ type stubStore struct {
 	finished   bool
 	finishedOK bool
 	detail     string
+	notified   map[string]bool
+	marked     []string
 
 	// ctxAt records the state of the context each cleanup write was called with, at the moment it
 	// was called: afterwards the runner has cancelled it, so it can only be judged from inside.
@@ -58,6 +62,7 @@ func newStubStore() *stubStore {
 		stored:     map[string]int{},
 		failures:   map[string]string{},
 		ctxAt:      map[string]ctxState{},
+		notified:   map[string]bool{},
 		AuthToken:  canarySecret,
 	}
 }
@@ -123,6 +128,33 @@ func (s *stubStore) UpsertMetrics(context.Context, []domain.Metric, time.Time) e
 
 func (s *stubStore) RecordSourceOK(_ context.Context, _ string, _ time.Time, _ int) error {
 	return s.recordOKErr
+}
+
+// UnnotifiedKeys and MarkNotified are the notification bookkeeping the runner announces through.
+// The stub keeps it in a map, which is enough to drive the runner's ordering and its two error
+// branches; that the real thing survives a restart is the store's own test.
+func (s *stubStore) UnnotifiedKeys(_ context.Context, keys []string) ([]string, error) {
+	if s.unnotifiedErr != nil {
+		return nil, s.unnotifiedErr
+	}
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		if !s.notified[k] {
+			out = append(out, k)
+		}
+	}
+	return out, nil
+}
+
+func (s *stubStore) MarkNotified(_ context.Context, keys []string, _ time.Time) error {
+	s.marked = append(s.marked, keys...)
+	if s.markErr != nil {
+		return s.markErr
+	}
+	for _, k := range keys {
+		s.notified[k] = true
+	}
+	return nil
 }
 
 func (s *stubStore) RecordSourceError(ctx context.Context, source string, _ time.Time, msg string) error {
@@ -406,4 +438,141 @@ func TestNewAcceptsDistinctSourceNamesAndANilLogger(t *testing.T) {
 	if !rep.OK || len(rep.Sources) != 2 {
 		t.Errorf("report = %+v, want both sources fine", rep)
 	}
+}
+
+// The dedup filter is the whole of FR-6.1 AC2, so the runner must not announce anything it cannot
+// filter. A store that cannot say what was already sent leaves two choices — announce everything
+// again, or announce nothing — and re-announcing every item on the dashboard is the worse one.
+func TestNothingIsAnnouncedWhenTheStoreCannotSayWhatWasAlreadySent(t *testing.T) {
+	store := newStubStore()
+	store.unnotifiedErr = errors.New("libsql: read notified: connection refused")
+	n := &recordingNotifier{}
+	r := refresh.New(store, []ports.SourceFetcher{fetcher("github", item("1"))},
+		&ports.FixedClock{T: now}, n, discardLogger())
+
+	rep, err := r.Run(context.Background(), "cron")
+	if err != nil {
+		t.Fatalf("Run must not fail because the notification bookkeeping did: %v", err)
+	}
+	if !rep.OK {
+		t.Error("report.OK = false; announcing is a courtesy (FR-6.1 AC3)")
+	}
+	if len(n.seen) != 0 {
+		t.Errorf("notifier saw %d items, want none: unfiltered items must not be announced", len(n.seen))
+	}
+	if len(store.marked) != 0 {
+		t.Errorf("marked %v, want nothing: nothing was sent", store.marked)
+	}
+}
+
+// The bookkeeping write happens after the messages are out, so its failure cannot unsend them. It
+// must not fail the run either, and the next run re-announces — the duplicate this order chooses
+// over a dropped notification.
+func TestAFailedMarkNotifiedDoesNotFailTheRun(t *testing.T) {
+	store := newStubStore()
+	store.markErr = errors.New("libsql: mark notified: connection refused")
+	n := &recordingNotifier{}
+	r := refresh.New(store, []ports.SourceFetcher{fetcher("github", item("1"))},
+		&ports.FixedClock{T: now}, n, discardLogger())
+
+	rep, err := r.Run(context.Background(), "cron")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !rep.OK {
+		t.Error("report.OK = false; a failed mark is not a failed refresh (FR-6.1 AC3)")
+	}
+	if len(n.seen) != 1 {
+		t.Fatalf("notifier saw %d items, want 1 — the message goes out before the mark", len(n.seen))
+	}
+	if want := []string{"github|1"}; len(store.marked) != 1 || store.marked[0] != want[0] {
+		t.Errorf("marked %v, want %v: exactly what was sent is what is marked", store.marked, want)
+	}
+}
+
+// One item, one message. A source that hands the same item over twice in a single fetch must not
+// produce two announcements of it — UnnotifiedKeys answers per key in the order given, so a
+// duplicated key would come back twice and be announced twice.
+func TestAnItemRepeatedInOneRunIsAnnouncedOnce(t *testing.T) {
+	store := newStubStore()
+	n := &recordingNotifier{}
+	r := refresh.New(store, []ports.SourceFetcher{fetcher("github", item("1"), item("1"))},
+		&ports.FixedClock{T: now}, n, discardLogger())
+
+	if _, err := r.Run(context.Background(), "cron"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(n.seen) != 1 {
+		t.Errorf("notifier saw %d items, want 1: the same item twice is still one announcement", len(n.seen))
+	}
+	if len(store.marked) != 1 {
+		t.Errorf("marked %v, want one key", store.marked)
+	}
+}
+
+// The announcement runs on a budget of its own, derived from the run's context. Both halves are
+// load-bearing: the deadline keeps a webhook that accepts the connection and then says nothing
+// from holding the POST /api/refresh request — and with it the Machine Fly will not stop while a
+// request is in flight (QS-2.5) — and deriving it from the run's context rather than detaching it
+// keeps a cancelled run from carrying on posting.
+func TestTheAnnouncementRunsOnItsOwnBudget(t *testing.T) {
+	store := newStubStore()
+	spy := &ctxSpyNotifier{}
+	r := refresh.New(store, []ports.SourceFetcher{fetcher("github", item("1"))},
+		&ports.FixedClock{T: now}, spy, discardLogger())
+
+	if _, err := r.Run(context.Background(), "cron"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("the notifier was never called")
+	}
+	if !spy.hasDeadline {
+		t.Fatal("Notify ran with no deadline: a webhook that never answers would hold the " +
+			"Machine awake for as long as it stayed silent (QS-2.5)")
+	}
+	if spy.budget <= 0 || spy.budget > 30*time.Second {
+		t.Errorf("Notify had %v to work with, want a budget well inside the refresh's 30 seconds",
+			spy.budget)
+	}
+
+	// Derived, not detached. The cleanup writes deliberately use context.WithoutCancel so a
+	// cancelled run can still close itself out; the announcement must not copy that. The first
+	// source succeeds, so there is something to announce, and the second cancels the run — which
+	// is what a client hanging up between two sources looks like.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	spy2 := &ctxSpyNotifier{}
+	r2 := refresh.New(newStubStore(), []ports.SourceFetcher{
+		fetcher("github", item("1")),
+		&cancelThenFetch{FakeFetcher: fetcher("todoist", task("t1")), cancel: cancel},
+	}, &ports.FixedClock{T: now}, spy2, discardLogger())
+	if _, err := r2.Run(ctx, "cron"); err != nil {
+		t.Fatalf("Run on a cancelled context: %v", err)
+	}
+	if !spy2.called {
+		t.Fatal("the notifier was never called although the first source stored an item")
+	}
+	if spy2.live {
+		t.Error("Notify ran on a live context although the run was cancelled: an announcement " +
+			"must not outlive the request that asked for it (a cleanup context here would keep " +
+			"posting to Slack after the caller hung up)")
+	}
+}
+
+// ctxSpyNotifier records the state of the context it was handed, which can only be judged from
+// the inside: the runner cancels it as soon as Notify returns.
+type ctxSpyNotifier struct {
+	called      bool
+	live        bool
+	hasDeadline bool
+	budget      time.Duration
+}
+
+func (n *ctxSpyNotifier) Notify(ctx context.Context, _ []domain.Item) error {
+	n.called, n.live = true, ctx.Err() == nil
+	if d, ok := ctx.Deadline(); ok {
+		n.hasDeadline, n.budget = true, time.Until(d)
+	}
+	return nil
 }
