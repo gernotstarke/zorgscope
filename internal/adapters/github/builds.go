@@ -75,7 +75,13 @@ func (f *BuildFetcher) Fetch(ctx context.Context) (ports.FetchResult, error) {
 		}
 	}
 
-	return ports.FetchResult{Builds: builds}, errors.Join(errs...)
+	// OwnsBuilds: this fetcher is the one that fills the builds table, so what it returns is the
+	// whole truth about it and an empty result means every watched repository has lost its build
+	// — a repository dropped from the configuration, or a fleet whose CI is gone. The runner
+	// stores it either way and the store's complement delete clears what is no longer there
+	// (FR-2.3). A partial failure never reaches that path: errs is non-nil, and the runner stores
+	// nothing from a result carrying an error.
+	return ports.FetchResult{Builds: builds, OwnsBuilds: true}, errors.Join(errs...)
 }
 
 // workflowRun is one entry of the GitHub Actions "list workflow runs" REST response. Only the

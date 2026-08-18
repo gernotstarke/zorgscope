@@ -436,7 +436,8 @@ func TestNewAcceptsDistinctSourceNamesAndANilLogger(t *testing.T) {
 	r := refresh.New(store, []ports.SourceFetcher{
 		fetcher("github", item("1")),
 		&ports.FakeFetcher{SourceName: "github-builds", Result: ports.FetchResult{
-			Builds: []domain.Build{{Repo: "org/repo"}},
+			OwnsBuilds: true,
+			Builds:     []domain.Build{{Repo: "org/repo"}},
 		}},
 	}, &ports.FixedClock{T: now}, nil, nil) // nil logger: log output is discarded, not a crash
 

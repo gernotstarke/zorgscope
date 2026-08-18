@@ -232,6 +232,32 @@ func (r *Runner) Run(ctx context.Context, trigger string) (Report, error) {
 //
 // The items of a successful source are appended to fresh, which is what the notifier is offered.
 //
+// # Which writes an empty result still performs
+//
+// The three writes answer the question "does an empty slice mean anything?" differently, and the
+// difference is not a style: it follows from whether the write deletes, and from what it is keyed
+// by.
+//
+//   - ReplaceItems is called unconditionally. It is scoped by source and it deletes the rows the
+//     incoming set omits, so a source that legitimately returns nothing has to clear its own rows
+//     — a closed issue disappears when the last one does, and no other source is touched.
+//   - UpsertBuilds is called whenever the result claims the builds table (FetchResult.OwnsBuilds),
+//     empty or not, and never otherwise. It deletes like ReplaceItems but is *not* scoped by
+//     source: the builds table is one flat set. Guarding it on len(res.Builds) > 0 skipped exactly
+//     the case its complement delete exists for — every watched repository losing CI at once, or
+//     the last one leaving the configuration — and left rows on the tile that nothing would ever
+//     refresh or remove. Guarding it on nothing at all would be worse: Todoist's empty slice would
+//     wipe GitHub's rows on every refresh.
+//   - UpsertMetrics keeps its emptiness guard, and it is the one place where the guard changes no
+//     outcome. It is a pure upsert keyed (site, window_days) with no complement delete, so calling
+//     it with an empty slice would delete nothing and write nothing; the guard only saves an empty
+//     transaction. The gap that mirrors the builds one — a site dropped from the configuration
+//     keeps its rows forever — is therefore not a guard the runner can change, but a delete the
+//     store does not have; and because the key is (site, window_days) rather than the site alone,
+//     any fix has to clear both windows of a site or leave it holding one. Nothing here can create
+//     that half-written state today: a partial Plausible fetch returns a non-nil error, and a
+//     result carrying an error is never stored at all.
+//
 // # Why the clock is read here and not at the start of the run
 //
 // The time this function passes to the store becomes the items' first_seen_at (the store stamps
@@ -268,11 +294,15 @@ func (r *Runner) runSource(ctx context.Context, f ports.SourceFetcher, fresh *[]
 	if err != nil {
 		return r.sourceFailed(ctx, source, now, fmt.Errorf("store items: %w", err))
 	}
-	if len(res.Builds) > 0 {
+	// Stored on the strength of OwnsBuilds and never of len(res.Builds): see the comment above
+	// this function for why an empty result from the builds fetcher is a fact to store and an
+	// empty one from anybody else is nothing at all.
+	if res.OwnsBuilds {
 		if err := r.store.UpsertBuilds(ctx, res.Builds, now); err != nil {
 			return r.sourceFailed(ctx, source, now, fmt.Errorf("store builds: %w", err))
 		}
 	}
+	// Metrics keep the emptiness guard, deliberately; see the comment above this function.
 	if len(res.Metrics) > 0 {
 		if err := r.store.UpsertMetrics(ctx, res.Metrics, now); err != nil {
 			return r.sourceFailed(ctx, source, now, fmt.Errorf("store metrics: %w", err))

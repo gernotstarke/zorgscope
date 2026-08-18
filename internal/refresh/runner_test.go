@@ -428,6 +428,7 @@ func TestReportCarriesDuration(t *testing.T) {
 func TestRunStoresBuildsAndMetrics(t *testing.T) {
 	store, ctx := newTestStore(t), context.Background()
 	builds := &ports.FakeFetcher{SourceName: "github-builds", Result: ports.FetchResult{
+		OwnsBuilds: true,
 		Builds: []domain.Build{{Repo: "org/repo", Workflow: "ci", Conclusion: "success",
 			Status: "completed", RunURL: "https://example/run", FinishedAt: at("2026-08-17T09:00:00Z")}},
 	}}
@@ -452,6 +453,74 @@ func TestRunStoresBuildsAndMetrics(t *testing.T) {
 	}
 	if len(ms) != 1 || ms[0].Site != "example.com" {
 		t.Errorf("metrics = %+v, want the fetched metric", ms)
+	}
+}
+
+// The complement delete in UpsertBuilds only works if the runner calls it, and the case it exists
+// for is exactly the one a "store it if there is something to store" guard skips: a fetch that
+// returns *no* builds. Every watched repository losing CI at once, or the last one being dropped
+// from the configuration, leaves the tile showing build results that nothing will ever refresh or
+// remove again.
+//
+// The empty result must therefore reach the store — but only from the fetcher that owns the builds
+// table (FetchResult.OwnsBuilds). The table is one flat set, not scoped by source the way items
+// are, so every other source's empty Builds must leave it alone; the second half of this test is
+// what keeps the fix from becoming a worse bug than the one it fixes.
+func TestABuildsFetchThatReturnsNoneClearsTheStaleRows(t *testing.T) {
+	store, ctx := newTestStore(t), context.Background()
+	fetched := &ports.FakeFetcher{SourceName: "github-builds", Result: ports.FetchResult{
+		OwnsBuilds: true,
+		Builds: []domain.Build{{Repo: "org/repo", Workflow: "ci", Conclusion: "success",
+			Status: "completed", RunURL: "https://example/run", FinishedAt: at("2026-08-17T09:00:00Z")}},
+	}}
+	if _, err := refresh.New(store, []ports.SourceFetcher{fetched},
+		&ports.FixedClock{T: now}, nil, discardLogger()).Run(ctx, "cron"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got, err := store.Builds(ctx); err != nil || len(got) != 1 {
+		t.Fatalf("builds after the first run = %+v, %v; want the one fetched build", got, err)
+	}
+
+	// The repository is gone from the configuration, so the fetch has nothing to report.
+	empty := &ports.FakeFetcher{SourceName: "github-builds",
+		Result: ports.FetchResult{OwnsBuilds: true}}
+	if _, err := refresh.New(store, []ports.SourceFetcher{empty},
+		&ports.FixedClock{T: now.Add(time.Hour)}, nil, discardLogger()).Run(ctx, "cron"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	got, err := store.Builds(ctx)
+	if err != nil {
+		t.Fatalf("Builds: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("builds after a fetch that returned none = %+v, want none: a repository that "+
+			"no longer builds must not keep its row on the tile forever", got)
+	}
+}
+
+// The other half of the same rule: a source that does not fill the builds table must never clear
+// it. UpsertBuilds is not scoped by source — one empty slice from Todoist would delete every row
+// GitHub just wrote, on every single refresh.
+func TestASourceThatDoesNotOwnBuildsLeavesThemAlone(t *testing.T) {
+	store, ctx := newTestStore(t), context.Background()
+	builds := &ports.FakeFetcher{SourceName: "github-builds", Result: ports.FetchResult{
+		OwnsBuilds: true,
+		Builds:     []domain.Build{{Repo: "org/repo", Workflow: "ci", Conclusion: "success"}},
+	}}
+	// Todoist runs after it and returns items only: no builds, and no claim on them.
+	tasks := fetcher("todoist", task("t1"))
+	r := refresh.New(store, []ports.SourceFetcher{builds, tasks}, &ports.FixedClock{T: now}, nil, discardLogger())
+
+	if _, err := r.Run(ctx, "cron"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	got, err := store.Builds(ctx)
+	if err != nil {
+		t.Fatalf("Builds: %v", err)
+	}
+	if len(got) != 1 || got[0].Repo != "org/repo" {
+		t.Errorf("builds = %+v, want the one GitHub fetched: a source with nothing to say about "+
+			"builds must not empty the table", got)
 	}
 }
 

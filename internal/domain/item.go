@@ -21,9 +21,19 @@ const (
 
 // Item is a single tracked unit from a source: a GitHub issue or pull request, or a Todoist task.
 type Item struct {
-	Source      string
-	ExternalID  string
-	Kind        Kind
+	Source     string
+	ExternalID string
+	Kind       Kind
+	// Repo is the item's container, which is not the same thing in every source: for a GitHub
+	// issue or pull request it is the repository, "owner/name"; for a Todoist task it is the
+	// project name the task sits in, which is what FR-4.1 AC1 asks to be shown beside it. The
+	// field is one column, one template variable and one adapter mapping in either case — only
+	// the name says "repository".
+	//
+	// Renaming it to something source-neutral (Container, Group) is the real fix and was
+	// deliberately deferred: it reaches the domain, the schema, every adapter and the templates,
+	// which is a migration and a broad edit for a naming defect with no behavioural consequence.
+	// It was decided, not missed.
 	Repo        string
 	Number      int
 	Title       string

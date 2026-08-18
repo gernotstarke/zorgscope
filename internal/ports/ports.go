@@ -18,6 +18,25 @@ type FetchResult struct {
 	Items   []domain.Item
 	Builds  []domain.Build
 	Metrics []domain.Metric
+
+	// OwnsBuilds declares that this fetcher fills the builds table, so Builds is the whole truth
+	// about it — and an empty Builds means "no repository has a build right now", not "this
+	// source has nothing to say about builds".
+	//
+	// The distinction cannot be read off Builds itself, and it decides whether rows are deleted.
+	// Store.UpsertBuilds deletes the repositories the incoming set omits, and unlike ReplaceItems
+	// it is not scoped by source: the builds table is one flat set. So a runner that stored every
+	// result's Builds unconditionally would have Todoist's empty slice wipe GitHub's rows on
+	// every refresh, while one that stored only non-empty slices could never clear the last row —
+	// which is precisely the case the complement delete exists for, a repository dropped from the
+	// configuration or a fleet that lost CI at once.
+	//
+	// A fetcher that produces builds must therefore set this, and one that does not must leave it
+	// false. Setting it wrongly on a fetcher with no builds empties the tile on the next refresh;
+	// forgetting it on the builds fetcher leaves the tile empty instead — loud either way, and
+	// never silent data loss, because the items path and the first-seen invariant are untouched
+	// by it.
+	OwnsBuilds bool
 }
 
 // SourceFetcher retrieves the current state of one upstream source — GitHub, Plausible or

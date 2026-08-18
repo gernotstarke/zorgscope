@@ -29,6 +29,11 @@ func TestFetchLatestCompletedRunPerRepo(t *testing.T) {
 		t.Fatalf("len(builds) = %d, want 1", len(res.Builds))
 	}
 
+	if !res.OwnsBuilds {
+		t.Error("the builds fetcher does not claim the builds table, so nothing it returns is " +
+			"stored at all (FR-2.3)")
+	}
+
 	b := res.Builds[0]
 	if b.Repo != "org/repo" {
 		t.Errorf("Repo = %q, want org/repo", b.Repo)
@@ -101,6 +106,14 @@ func TestRepoWithoutWorkflowsYieldsNoBuildAndNoError(t *testing.T) {
 	}
 	if len(res.Builds) != 0 {
 		t.Fatalf("len(builds) = %d, want 0", len(res.Builds))
+	}
+	// And the empty result still claims the builds table. This is the case the claim exists for:
+	// without it the runner cannot tell "every watched repository has lost its build" from "this
+	// source has nothing to say about builds", so it stores nothing and the rows of repositories
+	// that no longer build stay on the tile forever.
+	if !res.OwnsBuilds {
+		t.Error("a builds fetch that found none does not claim the builds table, so the stale " +
+			"rows of repositories that no longer build are never cleared (FR-2.3)")
 	}
 }
 
