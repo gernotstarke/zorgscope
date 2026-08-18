@@ -14,12 +14,15 @@
 //     held awake (QS-2.5). The runner calls this with one item at a time and records each success
 //     as it happens, so stopping early costs only the tail of one run and the next run carries on
 //     where this one stopped.
-//   - A rejection says whether retrying can help. Anything to do with the endpoint or the network
-//     — a 429, a 5xx, a timeout, a refused redirect, a 200 whose body is not Slack's "ok" — is
-//     retryable and leaves the item unannounced, to be sent again next run. A non-429 4xx is
-//     Slack refusing this payload; retrying cannot change the answer, so the error is marked
-//     permanent (see permanent) and the runner records the item as announced rather than letting
-//     it lead the queue forever.
+//   - A rejection says whether retrying can help, and the axis is whether the failure is about
+//     this message or about the endpoint. A payload Slack has looked at and refused — 400, 413,
+//     422 — will be refused identically forever, so the error is marked permanent (see permanent)
+//     and the runner records the item as announced rather than letting it lead the queue for
+//     good. Everything else is retryable and leaves the item unannounced for the next run: a
+//     revoked or moved hook (401, 403, 404, 410), a 429, a 5xx, a timeout, a refused redirect, a
+//     200 whose body is not Slack's "ok". Those answer the same way for every message, so
+//     swallowing one item per run would drain the whole backlog while an operator was still
+//     working out that the URL needs rotating.
 //
 // A post is never allowed to be redirected: 301, 302 and 303 turn a POST into a GET and drop the
 // body, so a followed redirect would answer 2xx for a message that was never delivered — and the
@@ -168,16 +171,35 @@ func (n *Notifier) post(ctx context.Context, text string) error {
 
 // isPermanentStatus reports whether a status says that retrying this message cannot help.
 //
-// A 4xx other than 429 is Slack refusing the payload — an invalid body, a message too long, a
-// webhook that no longer exists. The answer will be the same on every run, so the runner records
-// the item as announced anyway rather than letting one message it can never deliver stand at the
-// head of the queue and suppress every item behind it forever.
+// The axis is whether the failure is about *this message* or about *the endpoint*, and it is not
+// the same as 4xx versus 5xx:
 //
-// 429 is explicitly not in this class: it is the endpoint asking for less traffic, and the message
-// is fine. Neither is any 5xx, any transport error, any timeout or a refused redirect — all of
-// them leave the item unannounced and it is sent again next run.
+//   - Message-level. Slack has looked at this payload and refused it, and it will refuse the
+//     identical payload identically forever: 400 (invalid_payload), 413 (too large), 422. Nothing
+//     a human does to the webhook changes the answer, so the runner records the item as announced
+//     although it never went out — otherwise this one message stands at the head of the queue on
+//     every run and suppresses every item behind it for good.
+//   - Endpoint-level. The hook is revoked, disabled, moved, or the workspace is gone: 401, 403
+//     (action_prohibited), 404 (no_service), 410. These answer the same way for *every* message,
+//     so treating them as permanent would mark one more item as announced on every run and quietly
+//     drain the whole backlog into nothing while the operator was still working out that the URL
+//     needs rotating. They are retryable: the announcements block, visibly — the runner records
+//     the failure in the run record's detail on every run — and when the URL is rotated the queue
+//     is still there.
+//
+// Anything else in 4xx defaults to retryable, and so does everything outside it: 429, every 5xx,
+// every transport error, timeout and cancellation, and a refused redirect. Between an
+// undeliverable message blocking the queue until somebody looks and items being destroyed
+// silently, blocking is the recoverable failure, so it is the right default for a code that
+// cannot be classified confidently. A new code belongs in the permanent list only if Slack is
+// rejecting the payload itself.
 func isPermanentStatus(code int) bool {
-	return code >= 400 && code < 500 && code != http.StatusTooManyRequests
+	switch code {
+	case http.StatusBadRequest, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
+		return true
+	default:
+		return false
+	}
 }
 
 // permanent marks an error that retrying cannot fix.

@@ -833,3 +833,57 @@ func TestOnlyGitHubItemsAreAnnounced(t *testing.T) {
 		t.Errorf("the announced message was %q, want the GitHub issue", posts.messages())
 	}
 }
+
+// The mirror of the poison-message test, and the reason the permanent class is narrow.
+//
+// A revoked or moved hook answers 404 no_service (or 403 action_prohibited) to *every* message, so
+// treating it as permanent would record one more item as announced on every run and quietly drain
+// the whole backlog into nothing while the operator was still working out that the URL needs
+// rotating. An endpoint-level failure must therefore block rather than destroy: nothing is marked,
+// the block is visible in the run record's detail on every run, and when a human rotates the URL
+// the queue is still there.
+func TestARevokedWebhookBlocksTheQueueInsteadOfDrainingIt(t *testing.T) {
+	store, ctx := newTestStore(t), context.Background()
+	posts := postRecorder(t, http.StatusNotFound) // no_service, for every message, on every run
+	n := slack.New(posts.srv.URL+"/services/T0/B0/secret", posts.srv.Client())
+	fetchers := []ports.SourceFetcher{fetcher("github", item("1"), item("2"))}
+
+	for range 3 {
+		r := refresh.New(store, fetchers, &ports.FixedClock{T: now}, n, discardLogger())
+		rep, err := r.Run(ctx, "cron")
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if !rep.OK {
+			t.Error("a dead webhook is not a failed refresh (FR-6.1 AC3)")
+		}
+		if rep.NotifyErr == "" {
+			t.Error("a blocked queue has to be visible: the failure was not recorded")
+		}
+	}
+	// One failing POST per run, three runs — and the same item each time, because nothing was
+	// marked. Anything less means an announcement was swallowed.
+	if got := posts.count(); got != 3 {
+		t.Fatalf("attempted %d posts over three runs, want 3 (one per run, always the first item): "+
+			"%q", got, posts.messages())
+	}
+	if got := posts.sent("issue 1"); got != 3 {
+		t.Errorf("issue 1 was attempted %d times, want 3 — an endpoint-level failure leaves the "+
+			"item unannounced and still owed", got)
+	}
+
+	// The operator rotates the webhook. Every announcement the outage owed is still there.
+	posts.rejectWith(nil)
+	r := refresh.New(store, fetchers, &ports.FixedClock{T: now}, n, discardLogger())
+	if _, err := r.Run(ctx, "cron"); err != nil {
+		t.Fatalf("Run after the webhook was rotated: %v", err)
+	}
+	if got := posts.sent("issue 2"); got != 1 {
+		t.Errorf("issue 2 was announced %d times, want 1 — it must survive the outage rather than "+
+			"be marked announced while the hook was dead", got)
+	}
+	if got := posts.count(); got != 5 {
+		t.Errorf("posted %d messages in total, want 5: three failed attempts and then both items",
+			got)
+	}
+}

@@ -442,24 +442,33 @@ func TestAPipeInTheItemURLDoesNotTruncateTheLink(t *testing.T) {
 }
 
 // The classification the runner reads to decide whether an item may be recorded as announced.
-// Getting it wrong is expensive in both directions: too permanent and a deliverable message is
-// swallowed, too retryable and one message Slack will never accept blocks every item behind it on
-// every run forever.
+//
+// The axis is message-level versus endpoint-level, not 4xx versus 5xx. Getting it wrong is
+// expensive in both directions, and asymmetrically so: too retryable and one message Slack will
+// never accept blocks every item behind it on every run, which a human can still fix; too
+// permanent and a revoked hook quietly marks one more item announced per run until the whole
+// backlog has been destroyed, which nobody can fix.
 func TestRejectionsAreClassifiedRetryableOrPermanent(t *testing.T) {
 	cases := []struct {
 		status        int
 		wantPermanent bool
+		why           string
 	}{
-		{http.StatusBadRequest, true},   // invalid_payload: the message itself
-		{http.StatusUnauthorized, true}, // the webhook is not accepted any more
-		{http.StatusForbidden, true},    // action_prohibited
-		{http.StatusNotFound, true},     // no_service: the hook is gone
-		{http.StatusGone, true},         // channel_is_archived
-		{http.StatusRequestEntityTooLarge, true},
-		{http.StatusTooManyRequests, false}, // rate limited: the message is fine
-		{http.StatusInternalServerError, false},
-		{http.StatusBadGateway, false},
-		{http.StatusServiceUnavailable, false},
+		// Message-level: Slack looked at this payload and refused it.
+		{http.StatusBadRequest, true, "invalid_payload: this message, on every run"},
+		{http.StatusRequestEntityTooLarge, true, "the message is too large and always will be"},
+		{http.StatusUnprocessableEntity, true, "the payload cannot be processed"},
+		// Endpoint-level: the hook is revoked, disabled or gone, which is true of every message.
+		{http.StatusUnauthorized, false, "the webhook needs rotating, not the message rewriting"},
+		{http.StatusForbidden, false, "action_prohibited: the hook, not the payload"},
+		{http.StatusNotFound, false, "no_service: a rotated URL brings the queue back"},
+		{http.StatusGone, false, "the channel or workspace is gone; the items are not"},
+		{http.StatusTeapot, false, "an unknown 4xx blocks rather than destroys"},
+		// Everything else.
+		{http.StatusTooManyRequests, false, "rate limited: the message is fine"},
+		{http.StatusInternalServerError, false, "Slack is having a bad day"},
+		{http.StatusBadGateway, false, "something in between is having a bad day"},
+		{http.StatusServiceUnavailable, false, "temporary by definition"},
 	}
 	for _, tc := range cases {
 		t.Run(http.StatusText(tc.status), func(t *testing.T) {
@@ -472,7 +481,8 @@ func TestRejectionsAreClassifiedRetryableOrPermanent(t *testing.T) {
 				t.Fatalf("Notify returned nil for status %d", tc.status)
 			}
 			if got := isPermanent(err); got != tc.wantPermanent {
-				t.Errorf("status %d classified permanent=%v, want %v", tc.status, got, tc.wantPermanent)
+				t.Errorf("status %d classified permanent=%v, want %v: %s",
+					tc.status, got, tc.wantPermanent, tc.why)
 			}
 		})
 	}
