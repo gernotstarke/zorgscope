@@ -48,11 +48,11 @@ func TestFetchLatestCompletedRunPerRepo(t *testing.T) {
 	if b.FinishedAt.IsZero() {
 		t.Error("FinishedAt is zero")
 	}
-	if b.FetchedAt.IsZero() {
-		t.Error("FetchedAt is zero")
-	}
-	if loc := b.FetchedAt.Location(); loc.String() != "UTC" {
-		t.Errorf("FetchedAt location = %q, want UTC", loc)
+	// FetchedAt must stay zero here: Store.UpsertBuilds stamps it with the run's `now`, and a
+	// fetcher that filled it in would be calling time.Now outside ports.SystemClock for a value
+	// the store overwrites anyway.
+	if !b.FetchedAt.IsZero() {
+		t.Errorf("FetchedAt = %v, want the zero time — the store owns it", b.FetchedAt)
 	}
 }
 

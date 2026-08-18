@@ -326,8 +326,17 @@ func (s *Store) Items(ctx context.Context) (_ []domain.Item, err error) {
 
 // ---------------------------------------------------------------- builds and metrics
 
-// UpsertBuilds records the latest CI run per repository, stamping every row with now as its fetch
-// time.
+// UpsertBuilds makes the stored builds exactly builds: it upserts every one, keyed by repository,
+// and deletes the rows for repositories builds no longer contains — the same complement delete
+// ReplaceItems does, and for the same reason. Without it, dropping a repository from the
+// configuration leaves its build row on the tile forever, and the row cannot even go stale
+// visibly, since nothing refreshes it. Every row is stamped with now as its fetch time.
+//
+// Unlike items there is no source to scope this to: the builds table is one flat set of
+// repositories, written by one fetcher, so the incoming slice is the whole truth about it.
+//
+// Everything happens in one transaction, so a failed write leaves the previous set intact rather
+// than a half-replaced one.
 func (s *Store) UpsertBuilds(ctx context.Context, builds []domain.Build, now time.Time) (err error) {
 	defer func() { err = s.scrub.clean(err) }()
 	const q = `
@@ -338,15 +347,75 @@ ON CONFLICT(repo) DO UPDATE SET
   run_url = excluded.run_url, finished_at = excluded.finished_at, fetched_at = excluded.fetched_at`
 
 	return s.inTx(ctx, func(tx *sql.Tx) error {
+		known, err := storedBuildRepos(ctx, tx)
+		if err != nil {
+			return err
+		}
+		present := make(map[string]bool, len(builds))
 		for _, b := range builds {
+			present[b.Repo] = true
 			_, err := tx.ExecContext(ctx, q, b.Repo, b.Workflow, b.Conclusion, b.Status,
 				b.RunURL, sqlTime(b.FinishedAt), sqlTime(now))
 			if err != nil {
 				return fmt.Errorf("upsert build %s: %w", b.Repo, err)
 			}
 		}
-		return nil
+		return deleteAbsentBuilds(ctx, tx, known, present)
 	})
+}
+
+// storedBuildRepos returns the repositories that currently have a build row.
+func storedBuildRepos(ctx context.Context, tx *sql.Tx) (map[string]bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT repo FROM builds`)
+	if err != nil {
+		return nil, fmt.Errorf("read build repos: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	repos := map[string]bool{}
+	for rows.Next() {
+		var repo string
+		if err := rows.Scan(&repo); err != nil {
+			return nil, fmt.Errorf("scan build repo: %w", err)
+		}
+		repos[repo] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read build repos: %w", err)
+	}
+	return repos, nil
+}
+
+// deleteAbsentBuilds removes the build rows the new set no longer contains.
+//
+// Like deleteAbsent for items, it deletes the complement — the repositories known to be gone, in
+// chunks — rather than a `repo NOT IN (?,?,…)` list: a NOT IN list cannot be chunked, because each
+// chunk would delete the rows named in every other chunk.
+//
+// An empty incoming set needs no special case here, unlike deleteAbsent's `DELETE FROM items WHERE
+// source = ?`: known is read inside the same transaction, so with nothing present every stored
+// repository is in gone and the chunked delete empties the table by itself. A `DELETE FROM builds`
+// shortcut was written first and removed again — it changed no outcome, and a branch that changes
+// no outcome cannot be defended by a test.
+func deleteAbsentBuilds(ctx context.Context, tx *sql.Tx, known, present map[string]bool) error {
+	gone := make([]string, 0, len(known))
+	for repo := range known {
+		if !present[repo] {
+			gone = append(gone, repo)
+		}
+	}
+	for _, chunk := range chunks(gone, maxParams) {
+		args := make([]any, 0, len(chunk))
+		for _, repo := range chunk {
+			args = append(args, repo)
+		}
+		//nolint:gosec // G202: the only thing concatenated is "?,?,…"; every value is bound
+		q := `DELETE FROM builds WHERE repo IN (` + placeholders(len(chunk)) + `)`
+		if _, err := tx.ExecContext(ctx, q, args...); err != nil {
+			return fmt.Errorf("delete absent builds: %w", err)
+		}
+	}
+	return nil
 }
 
 // Builds returns every stored build.

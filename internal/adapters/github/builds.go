@@ -152,12 +152,16 @@ func (f *BuildFetcher) fetchLatestBuild(ctx context.Context, owner, name string)
 		return nil, fmt.Errorf("%d workflow run(s) returned but none had a usable run_started_at", len(body.WorkflowRuns))
 	}
 
+	// FetchedAt is deliberately left zero: Store.UpsertBuilds stamps every row with the run's
+	// `now` and never reads the value carried here, so anything set would be overwritten before it
+	// could be seen. Filling it in would mean calling time.Now outside ports.SystemClock — the one
+	// place in this system allowed to read the wall clock — to produce a value nothing uses. Same
+	// convention as Item.FirstSeenAt: the store owns the timestamps it writes.
 	b := &domain.Build{
-		Repo:      owner + "/" + name,
-		Workflow:  newest.Name,
-		Status:    newest.Status,
-		RunURL:    newest.HTMLURL,
-		FetchedAt: time.Now().UTC(),
+		Repo:     owner + "/" + name,
+		Workflow: newest.Name,
+		Status:   newest.Status,
+		RunURL:   newest.HTMLURL,
 	}
 	if newestCompleted != nil {
 		if newestCompleted.Conclusion != nil {

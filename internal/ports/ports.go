@@ -48,11 +48,16 @@ type Store interface {
 	// for items that already existed. It returns the number of items stored for source —
 	// len(items) — not the number that are new.
 	ReplaceItems(ctx context.Context, source string, items []domain.Item, now time.Time) (int, error)
-	// UpsertBuilds inserts or updates builds, keyed by repository alone: one row per repository.
-	// A repository running several workflows is represented by a single row (the one build this
-	// package's fetchers select per FR-2.3 AC2), not one row per workflow.
+	// UpsertBuilds replaces the full set of builds with builds, keyed by repository alone: one
+	// row per repository. A repository running several workflows is represented by a single row
+	// (the one build this package's fetchers select per FR-2.3 AC2), not one row per workflow.
+	// Like ReplaceItems it also deletes: a repository absent from builds loses its row, so a
+	// repository dropped from the configuration does not linger on the tile forever. Passing an
+	// empty slice therefore clears the table.
 	UpsertBuilds(ctx context.Context, builds []domain.Build, now time.Time) error
-	// UpsertMetrics inserts or updates metrics, keyed by site.
+	// UpsertMetrics inserts or updates metrics, keyed by (site, window_days) — one row per site
+	// and window, not one per site. A caller that treats the key as the site alone leaves one of
+	// the two windows blank on every write.
 	UpsertMetrics(ctx context.Context, metrics []domain.Metric, now time.Time) error
 
 	// Items returns every stored item.
@@ -65,20 +70,30 @@ type Store interface {
 	SourceStates(ctx context.Context) (map[string]domain.SourceState, error)
 
 	// RecordSourceOK records a successful fetch from source at time at, with count items
-	// fetched.
+	// fetched. It does not clear the recorded last error: the dashboard shows both, so that a
+	// source that has recovered still says what went wrong last time (FR-1.4 AC2).
 	RecordSourceOK(ctx context.Context, source string, at time.Time, count int) error
-	// RecordSourceError records a failed fetch from source at time at, with message msg.
+	// RecordSourceError records a failed fetch from source at time at, with message msg. The
+	// mirror of RecordSourceOK: it leaves the last success and the item count alone, so the
+	// dashboard can still say how old the last good data is (FR-1.4 AC2).
 	RecordSourceError(ctx context.Context, source string, at time.Time, msg string) error
 
-	// LastVisit returns the time the dashboard was last viewed.
+	// LastVisit returns the time the dashboard was last viewed, or the zero time — with a nil
+	// error — if it never was. A store that has never been visited is not an error condition;
+	// with the zero time, nothing is new (QS-1.3).
 	LastVisit(ctx context.Context) (time.Time, error)
 	// SetLastVisit records t as the time the dashboard was last viewed.
 	SetLastVisit(ctx context.Context, t time.Time) error
 
 	// AcquireRefreshLease attempts to take the refresh lease for holder, valid until ttl after
-	// now. It returns whether the lease was acquired.
+	// now. It returns whether the lease was acquired. Acquiring succeeds when the lease is free,
+	// expired, or already held by the same holder. holder must not contain '|', which separates
+	// holder from expiry in the stored value; one that does is rejected with an error rather
+	// than stored.
 	AcquireRefreshLease(ctx context.Context, holder string, now time.Time, ttl time.Duration) (bool, error)
-	// ReleaseRefreshLease releases the refresh lease held by holder.
+	// ReleaseRefreshLease releases the refresh lease if holder is the one holding it, and does
+	// nothing otherwise — a holder whose lease has expired and been taken over must not free the
+	// new holder's. Releasing a lease one does not hold is not an error.
 	ReleaseRefreshLease(ctx context.Context, holder string) error
 
 	// StartRun records the start of a refresh run triggered by trigger at time at, and returns
@@ -87,13 +102,17 @@ type Store interface {
 	// FinishRun records the end of the refresh run identified by id at time at, with outcome ok
 	// and detail message detail.
 	FinishRun(ctx context.Context, id int64, at time.Time, ok bool, detail string) error
-	// LastRun returns the most recently started refresh run.
+	// LastRun returns the most recently started refresh run, or the zero RefreshRun — with a nil
+	// error — when no run has ever been recorded. "Never run" is a state to render, not a
+	// failure, so it is not reported as one.
 	LastRun(ctx context.Context) (domain.RefreshRun, error)
 
 	// MarkNotified records that the items identified by keys have been notified about, as of
-	// time at.
+	// time at. A key already recorded keeps its original time: an item is announced once, and the
+	// first announcement is the one that counts (FR-6.1 AC2).
 	MarkNotified(ctx context.Context, keys []string, at time.Time) error
-	// UnnotifiedKeys filters keys down to those that have not yet been marked notified.
+	// UnnotifiedKeys filters keys down to those that have not yet been marked notified, in the
+	// order given.
 	UnnotifiedKeys(ctx context.Context, keys []string) ([]string, error)
 
 	// Close releases the store's underlying resources.
@@ -102,7 +121,10 @@ type Store interface {
 
 // Notifier sends a notification about new items.
 type Notifier interface {
-	// Notify sends a notification about items.
+	// Notify sends a notification about items — one message per item, in order, stopping at the
+	// first failure. A non-nil error therefore means an unknown prefix of items may already have
+	// been delivered, which is why a caller that must not announce anything twice passes one item
+	// at a time and records each success as it happens.
 	Notify(ctx context.Context, items []domain.Item) error
 }
 

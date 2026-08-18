@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"time"
 
 	"github.com/gernotstarke/zorgscope/internal/domain"
 	"github.com/gernotstarke/zorgscope/internal/ports"
@@ -138,6 +137,10 @@ func (f *Fetcher) fetchWindow(ctx context.Context, site string, days int, period
 		return domain.Metric{}, fmt.Errorf("decoding response: %w", err)
 	}
 
+	// FetchedAt is deliberately left zero: Store.UpsertMetrics stamps every row with the run's
+	// `now` and never reads the value carried here, so anything set would be overwritten before it
+	// could be seen. Filling it in would mean calling time.Now outside ports.SystemClock — the one
+	// place in this system allowed to read the wall clock — to produce a value nothing uses.
 	return domain.Metric{
 		Site:          site,
 		WindowDays:    days,
@@ -145,6 +148,5 @@ func (f *Fetcher) fetchWindow(ctx context.Context, site string, days int, period
 		Pageviews:     body.Results.Pageviews.Value,
 		PrevVisitors:  body.Results.Visitors.ComparisonValue,
 		PrevPageviews: body.Results.Pageviews.ComparisonValue,
-		FetchedAt:     time.Now().UTC(),
 	}, nil
 }

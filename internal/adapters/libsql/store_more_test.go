@@ -181,6 +181,83 @@ func TestUpsertBuildsRoundTripsAndUpdates(t *testing.T) {
 	}
 }
 
+// UpsertBuilds has the same complement delete ReplaceItems has: a repository dropped from the
+// configuration stops appearing in the incoming set, and its row must go with it. Without this,
+// the build tile keeps showing a repository nobody watches any more, frozen at whatever its last
+// run was, with nothing left to refresh it.
+func TestUpsertBuildsDeletesRepositoriesNoLongerPresent(t *testing.T) {
+	s, ctx := newStore(t), context.Background()
+	now := at("2026-08-17T10:00:00Z")
+
+	build := func(repo string) domain.Build {
+		return domain.Build{
+			Repo: repo, Workflow: "ci", Conclusion: "success", Status: "completed",
+			RunURL: "https://example/run/" + repo, FinishedAt: at("2026-08-17T09:55:00Z"),
+		}
+	}
+
+	if err := s.UpsertBuilds(ctx, []domain.Build{build("org/kept"), build("org/dropped")}, now); err != nil {
+		t.Fatalf("first UpsertBuilds: %v", err)
+	}
+	if err := s.UpsertBuilds(ctx, []domain.Build{build("org/kept")}, now); err != nil {
+		t.Fatalf("second UpsertBuilds: %v", err)
+	}
+
+	got, err := s.Builds(ctx)
+	if err != nil {
+		t.Fatalf("Builds: %v", err)
+	}
+	if len(got) != 1 || got[0].Repo != "org/kept" {
+		t.Fatalf("builds = %+v, want only org/kept — org/dropped left the incoming set and must "+
+			"not survive it", got)
+	}
+}
+
+// The degenerate case of the same rule: an empty incoming set means no repository has a build any
+// more, so no build row may remain.
+func TestUpsertBuildsWithNoBuildsClearsTheTable(t *testing.T) {
+	s, ctx := newStore(t), context.Background()
+	now := at("2026-08-17T10:00:00Z")
+
+	b := domain.Build{Repo: "org/repo", Workflow: "ci", Conclusion: "success", Status: "completed"}
+	if err := s.UpsertBuilds(ctx, []domain.Build{b}, now); err != nil {
+		t.Fatalf("UpsertBuilds: %v", err)
+	}
+	if err := s.UpsertBuilds(ctx, nil, now); err != nil {
+		t.Fatalf("UpsertBuilds(nil): %v", err)
+	}
+
+	got, err := s.Builds(ctx)
+	if err != nil {
+		t.Fatalf("Builds: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("builds = %+v, want none", got)
+	}
+}
+
+// The build rows must not be collateral damage of an item refresh, nor items of a build refresh:
+// the two sets are replaced independently (FR-5.5 AC1).
+func TestUpsertBuildsLeavesItemsAlone(t *testing.T) {
+	s, ctx := newStore(t), context.Background()
+	now := at("2026-08-17T10:00:00Z")
+
+	if _, err := s.ReplaceItems(ctx, "github", []domain.Item{item("1", "kept")}, now); err != nil {
+		t.Fatalf("ReplaceItems: %v", err)
+	}
+	if err := s.UpsertBuilds(ctx, nil, now); err != nil {
+		t.Fatalf("UpsertBuilds(nil): %v", err)
+	}
+
+	items, err := s.Items(ctx)
+	if err != nil {
+		t.Fatalf("Items: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("len(items) = %d, want 1 — replacing builds must not touch items", len(items))
+	}
+}
+
 func TestUpsertMetricsRoundTripsAndUpdates(t *testing.T) {
 	s, ctx := newStore(t), context.Background()
 	t1, t2 := at("2026-08-17T10:00:00Z"), at("2026-08-17T11:00:00Z")
