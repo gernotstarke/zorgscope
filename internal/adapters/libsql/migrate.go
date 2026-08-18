@@ -26,7 +26,8 @@ const bootstrapSQL = `CREATE TABLE IF NOT EXISTS schema_migrations (
 // yet recorded in schema_migrations, in file-name order. Each migration is applied inside one
 // transaction together with its schema_migrations row, so a half-applied migration cannot be
 // recorded as done. It is safe to call on every startup.
-func (s *Store) Migrate(ctx context.Context) error {
+func (s *Store) Migrate(ctx context.Context) (err error) {
+	defer func() { err = s.scrub.clean(err) }()
 	if _, err := s.db.ExecContext(ctx, bootstrapSQL); err != nil {
 		return fmt.Errorf("create schema_migrations: %w", err)
 	}

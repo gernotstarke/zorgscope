@@ -1,38 +1,236 @@
 package libsql
 
 import (
+	"context"
+	"database/sql"
+	"database/sql/driver"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	libsqldriver "github.com/tursodatabase/libsql-client-go/libsql"
 )
 
-// QS-4.3: the auth token travels in the DSN, so it must reach the driver — and nothing else.
-func TestDSNCarriesTheTokenAndErrorsDoNot(t *testing.T) {
-	const token = "s3cr3t-token.value"
+// canary is an auth token shaped like a real one — dots, dashes, base64 padding, a slash and a
+// space — so that its percent-encoded spellings differ from the raw one in both directions.
+const canary = "eyJhbGciOi/JIUzI1 NiJ9.canary-token.SIGNATURE=="
 
-	local, err := dsn("http://localhost:8080", "")
+// Open must hand the auth token to the driver, and it must arrive. Nothing below this line runs
+// against Turso, so the proof is a local HTTP server that reports what the driver sent it.
+//
+// This is the path that the local test database cannot exercise: TEST_TURSO_URL needs no token,
+// so every store test runs with an empty one and the token branch is never taken. That is why the
+// DSN this replaced survived: it was only ever built in production.
+func TestOpenAuthenticatesWithTheAuthToken(t *testing.T) {
+	var gotAuth, gotURL string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth, gotURL = r.Header.Get("Authorization"), r.URL.String()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"no database here"}`))
+	}))
+	defer srv.Close()
+
+	s, err := Open(srv.URL, canary)
 	if err != nil {
-		t.Fatalf("dsn: %v", err)
+		t.Fatalf("Open with an auth token: %v", err)
 	}
-	if local != "http://localhost:8080" {
-		t.Errorf("dsn without a token = %q, want the URL unchanged", local)
+	defer func() { _ = s.Close() }()
+
+	// The server answers 500, so the query fails; that it was made at all is the point.
+	if _, err := s.Items(context.Background()); err == nil {
+		t.Fatal("Items against a server answering 500 = nil error, want one")
+	}
+	if want := "Bearer " + canary; gotAuth != want {
+		t.Errorf("Authorization header = %q, want %q: the token did not reach the driver", gotAuth, want)
+	}
+	if strings.Contains(gotURL, canary) || strings.Contains(gotURL, "authToken") {
+		t.Errorf("request URL %q carries the token; it belongs in the header alone", gotURL)
+	}
+}
+
+// The approach this replaced: the token as a query parameter on the DSN. The pinned driver's
+// supported constructor refuses all three spellings of it outright, and refuses every unknown
+// query parameter besides — so a DSN is not a way to authenticate, it is an error.
+func TestTheDriverRefusesAnAuthTokenInTheURL(t *testing.T) {
+	const rawURL = "libsql://zorgscope.turso.io"
+	for _, param := range []string{"authToken", "auth_token", "jwt"} {
+		q := url.Values{param: {canary}}
+		_, err := libsqldriver.NewConnector(rawURL + "?" + q.Encode())
+		if err == nil {
+			t.Errorf("NewConnector accepted ?%s=; Open could go back to building a DSN", param)
+			continue
+		}
+		if !strings.Contains(err.Error(), "forbidden") {
+			t.Errorf("NewConnector(?%s=) error = %v, want it to name the parameter as forbidden", param, err)
+		}
+		if strings.Contains(err.Error(), canary) {
+			t.Errorf("driver error %q leaks the auth token (QS-4.3)", err)
+		}
 	}
 
-	turso, err := dsn("libsql://zorgscope.turso.io", token)
+	// What Open does instead is accepted, and yields a connector rather than an error.
+	c, err := newConnector(rawURL, canary)
 	if err != nil {
-		t.Fatalf("dsn: %v", err)
+		t.Fatalf("newConnector with an auth token: %v", err)
 	}
-	if !strings.Contains(turso, "authToken=") || !strings.Contains(turso, "s3cr3t-token.value") {
-		t.Errorf("dsn with a token = %q, want it to carry authToken", turso)
+	if c == nil || c.Driver() == nil {
+		t.Fatal("newConnector returned no usable connector")
 	}
+}
 
-	_, err = dsn("http://%zz", token)
+// Open builds the connector up front, so a URL the driver cannot use fails at startup rather than
+// at the first query — on a Machine that has just cold-started with a reader waiting. sql.Open,
+// which this replaced, is lazy and reports nothing.
+func TestOpenRejectsAnUnusableURLUpFront(t *testing.T) {
+	s, err := Open("ftp://zorgscope.turso.io", canary)
 	if err == nil {
-		t.Fatal("dsn on an unparseable URL = nil error, want one")
+		_ = s.Close()
+		t.Fatal("Open on an unsupported URL scheme = nil error, want one")
 	}
-	if strings.Contains(err.Error(), token) {
+	if !strings.Contains(err.Error(), "unsupported URL scheme") {
+		t.Errorf("Open error = %v, want it to name the unsupported scheme", err)
+	}
+	assertNoToken(t, "Open", err.Error())
+}
+
+// A local libsql-server wants no token at all, and WithAuthToken refuses an empty one, so the
+// option must not be added when there is nothing to add.
+func TestConnectorWithoutATokenAndOnABadURL(t *testing.T) {
+	if _, err := newConnector("http://localhost:8080", ""); err != nil {
+		t.Errorf("newConnector without a token: %v", err)
+	}
+	_, err := newConnector("http://%zz", canary)
+	if err == nil {
+		t.Fatal("newConnector on an unparseable URL = nil error, want one")
+	}
+	if strings.Contains(err.Error(), canary) {
 		t.Errorf("error %q leaks the auth token (QS-4.3)", err)
 	}
+}
+
+// QS-4.3: no secret value may be logged or rendered. This package's own strings never name the
+// token, but the driver's error text can quote what it dialled or sent, and %w carries that out
+// through every method here — on to source_state.last_error, Tile.Error and the dashboard. So
+// every exported method scrubs, and this test walks all of them.
+func TestNoExportedMethodLeaksTheAuthToken(t *testing.T) {
+	ctx := context.Background()
+	// A connector whose every connection fails with the token spelled out three ways.
+	poison := "dial https://db.turso.io/?authToken=" + url.QueryEscape(canary) +
+		" (path form " + url.PathEscape(canary) + ", raw " + canary + "): connection refused"
+	s := &Store{db: sql.OpenDB(failingConnector{msg: poison}), scrub: newScrubber(canary)}
+	defer func() { _ = s.Close() }()
+
+	calls := map[string]func() error{
+		"Migrate":             func() error { return s.Migrate(ctx) },
+		"ReplaceItems":        func() error { _, err := s.ReplaceItems(ctx, "github", nil, time.Now()); return err },
+		"Items":               func() error { _, err := s.Items(ctx); return err },
+		"UpsertBuilds":        func() error { return s.UpsertBuilds(ctx, nil, time.Now()) },
+		"Builds":              func() error { _, err := s.Builds(ctx); return err },
+		"UpsertMetrics":       func() error { return s.UpsertMetrics(ctx, nil, time.Now()) },
+		"Metrics":             func() error { _, err := s.Metrics(ctx); return err },
+		"RecordSourceOK":      func() error { return s.RecordSourceOK(ctx, "github", time.Now(), 1) },
+		"RecordSourceError":   func() error { return s.RecordSourceError(ctx, "github", time.Now(), "boom") },
+		"SourceStates":        func() error { _, err := s.SourceStates(ctx); return err },
+		"LastVisit":           func() error { _, err := s.LastVisit(ctx); return err },
+		"SetLastVisit":        func() error { return s.SetLastVisit(ctx, time.Now()) },
+		"AcquireRefreshLease": func() error { _, err := s.AcquireRefreshLease(ctx, "m1", time.Now(), time.Minute); return err },
+		"ReleaseRefreshLease": func() error { return s.ReleaseRefreshLease(ctx, "m1") },
+		"StartRun":            func() error { _, err := s.StartRun(ctx, "cron", time.Now()); return err },
+		"FinishRun":           func() error { return s.FinishRun(ctx, 1, time.Now(), true, "") },
+		"LastRun":             func() error { _, err := s.LastRun(ctx); return err },
+		"MarkNotified":        func() error { return s.MarkNotified(ctx, []string{"k"}, time.Now()) },
+		"UnnotifiedKeys":      func() error { _, err := s.UnnotifiedKeys(ctx, []string{"k"}); return err },
+		"TruncateAll":         func() error { return s.TruncateAll(ctx) },
+	}
+
+	// Close is the one exported method that cannot fail against a pool with no open connection;
+	// every other one must be in the table above, or a new method could ship unscrubbed.
+	covered := map[string]bool{"Close": true}
+	for name := range calls {
+		covered[name] = true
+	}
+	storeType := reflect.TypeOf(&Store{})
+	for i := range storeType.NumMethod() {
+		if name := storeType.Method(i).Name; !covered[name] {
+			t.Errorf("exported method %s is not covered by this test; does it scrub its error?", name)
+		}
+	}
+
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			err := call()
+			if err == nil {
+				t.Fatalf("%s against a dead connection = nil error, want one", name)
+			}
+			assertNoToken(t, name, err.Error())
+		})
+	}
+}
+
+// The token travels through a URL, so it can come back percent-encoded rather than raw.
+func TestScrubberReplacesEverySpellingOfTheToken(t *testing.T) {
+	scrub := newScrubber(canary)
+	text := "raw " + canary + " query " + url.QueryEscape(canary) + " path " + url.PathEscape(canary)
+	cleaned := scrub.clean(errors.New(text))
+	assertNoToken(t, "scrubber", cleaned.Error())
+	if !strings.Contains(cleaned.Error(), redacted) {
+		t.Errorf("scrubbed text %q does not mark what it removed", cleaned)
+	}
+
+	// An error with nothing to hide keeps its wrapping, so errors.Is still works for callers.
+	sentinel := errors.New("nothing secret here")
+	if got := scrub.clean(sentinel); !errors.Is(got, sentinel) {
+		t.Errorf("clean rewrote an error that needed no scrubbing: %v", got)
+	}
+	// An error that did have to be rewritten deliberately drops its cause: an Unwrap that still
+	// spelled the token out would hand the secret straight back.
+	leaky := errors.New(canary)
+	if got := scrub.clean(leaky); errors.Is(got, leaky) {
+		t.Error("clean kept a cause whose own text is the token")
+	}
+	if scrub.clean(nil) != nil {
+		t.Error("clean(nil) is not nil")
+	}
+	// No token, nothing to scrub, nothing changed.
+	if got := newScrubber("").clean(sentinel); !errors.Is(got, sentinel) {
+		t.Errorf("the empty scrubber rewrote %v", got)
+	}
+}
+
+// assertNoToken fails when text names the auth token in any spelling it could travel in.
+func assertNoToken(t *testing.T, what, text string) {
+	t.Helper()
+	for label, form := range map[string]string{
+		"raw":              canary,
+		"query-encoded":    url.QueryEscape(canary),
+		"path-encoded":     url.PathEscape(canary),
+		"signature suffix": "SIGNATURE==",
+	} {
+		if strings.Contains(text, form) {
+			t.Errorf("%s leaks the %s auth token (QS-4.3): %s", what, label, text)
+		}
+	}
+}
+
+// failingConnector stands in for a libSQL server that cannot be reached, with an error message
+// shaped like the driver's: it quotes what it tried to dial, token and all.
+type failingConnector struct{ msg string }
+
+func (c failingConnector) Connect(context.Context) (driver.Conn, error) {
+	return nil, errors.New(c.msg)
+}
+func (c failingConnector) Driver() driver.Driver { return failingDriver{} }
+
+type failingDriver struct{}
+
+func (failingDriver) Open(string) (driver.Conn, error) {
+	return nil, errors.New("failingDriver is only ever used through failingConnector")
 }
 
 func TestSQLTimeRoundTrip(t *testing.T) {

@@ -8,25 +8,35 @@
 //     string. See sqlTime and parseTime.
 //   - first_seen_at is written when an item row is inserted and never updated again. That single
 //     asymmetry, in upsertItemSQL, is what makes the NEW badge correct (FR-5.3 AC2, QS-1.2).
+//   - Every exported method passes its error through Store.scrub before returning it, so that no
+//     auth token can leave this package inside error text (QS-4.3). See scrubber.
 package libsql
 
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
-	_ "github.com/tursodatabase/libsql-client-go/libsql" // registers the "libsql" sql driver
+	libsqldriver "github.com/tursodatabase/libsql-client-go/libsql"
 
 	"github.com/gernotstarke/zorgscope/internal/domain"
 	"github.com/gernotstarke/zorgscope/internal/ports"
 )
 
 // Store is the libSQL-backed ports.Store.
-type Store struct{ db *sql.DB }
+//
+// scrub holds the auth token for one purpose only: removing it again from any error text on the
+// way out (QS-4.3). See scrubber.
+type Store struct {
+	db    *sql.DB
+	scrub scrubber
+}
 
 // A signature drift between ports.Store and this adapter must fail the build here, not four tasks
 // later.
@@ -45,38 +55,97 @@ const maxParams = 400
 // Open connects to the libSQL server at rawURL, authenticating with authToken when it is not
 // empty (Turso needs one; a local libsql-server does not).
 //
-// No error returned from this package ever contains the DSN: the auth token lives in it, and a
-// secret must not reach a log (QS-4.3).
+// The token is handed to the driver as an option and never as part of the URL. That is not a
+// stylistic choice: libsql-client-go's NewConnector rejects a URL carrying the token outright —
+// "'authToken' usage forbidden. Please use 'WithAuthToken' option instead", and the same for
+// 'auth_token' and 'jwt' — and rejects every unknown query parameter besides. A DSN is therefore
+// not a supported way to authenticate at all, only the option is. (The driver's older, connector-
+// less Driver.Open still tolerates the parameter, which is the only reason the DSN this replaced
+// ever reached Turso; it is the deprecated path and not one to go back to.)
+//
+// No error returned from this package ever contains the auth token: a secret must not reach a
+// log, and least of all the dashboard (QS-4.3). See scrubber.
 func Open(rawURL, authToken string) (*Store, error) {
-	dsn, err := dsn(rawURL, authToken)
+	scrub := newScrubber(authToken)
+	connector, err := newConnector(rawURL, authToken)
 	if err != nil {
-		return nil, err
+		return nil, scrub.clean(err)
 	}
-	db, err := sql.Open("libsql", dsn)
+	return &Store{db: sql.OpenDB(connector), scrub: scrub}, nil
+}
+
+// newConnector builds the driver connector for rawURL, carrying the auth token in the driver's
+// WithAuthToken option when there is one. WithAuthToken refuses an empty token, so the option is
+// added only when there is something to add — a local libsql-server wants no token at all.
+//
+// Its errors name the host at most, never the token; Open scrubs them regardless.
+func newConnector(rawURL, authToken string) (driver.Connector, error) {
+	if _, err := url.Parse(rawURL); err != nil {
+		return nil, errors.New("invalid database URL")
+	}
+	opts := make([]libsqldriver.Option, 0, 1)
+	if authToken != "" {
+		opts = append(opts, libsqldriver.WithAuthToken(authToken))
+	}
+	connector, err := libsqldriver.NewConnector(rawURL, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("open libsql database: %w", err)
 	}
-	return &Store{db: db}, nil
+	return connector, nil
 }
 
-// dsn builds the driver DSN, appending the auth token as a query parameter when there is one.
-// Its errors name the host at most, never the DSN (QS-4.3).
-func dsn(rawURL, authToken string) (string, error) {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return "", errors.New("invalid database URL")
-	}
+// redacted stands in for the auth token wherever it would otherwise have appeared.
+const redacted = "[REDACTED]"
+
+// scrubber removes the auth token from error text.
+//
+// This package's own error strings never contain it. The driver's make no such promise: a failed
+// connection or request can quote the URL it dialled or the payload it sent, and %w carries that
+// text out through every method here. From there the path to a user's screen is complete —
+// internal/refresh's runner puts it in source_state.last_error, which becomes Tile.Error, which is
+// rendered. No layer above this one holds the token and so none of them can redact it; this one
+// does (QS-4.3).
+//
+// Both spellings are replaced: the raw token, and the percent-encoded forms it takes when it
+// travels inside a URL.
+type scrubber struct{ r *strings.Replacer }
+
+// newScrubber builds the scrubber for one auth token. The zero scrubber — for the empty token of
+// a local libsql-server — is a no-op, because there is nothing to hide.
+func newScrubber(authToken string) scrubber {
 	if authToken == "" {
-		return u.String(), nil
+		return scrubber{}
 	}
-	q := u.Query()
-	q.Set("authToken", authToken)
-	u.RawQuery = q.Encode()
-	return u.String(), nil
+	pairs := []string{authToken, redacted}
+	for _, encoded := range []string{url.QueryEscape(authToken), url.PathEscape(authToken)} {
+		if encoded != authToken && !slices.Contains(pairs, encoded) {
+			pairs = append(pairs, encoded, redacted)
+		}
+	}
+	return scrubber{r: strings.NewReplacer(pairs...)}
+}
+
+// clean returns err with every occurrence of the auth token replaced by redacted.
+//
+// When nothing had to be replaced — the ordinary case — the error comes back untouched, wrapping
+// and all. When something did, the wrapping is deliberately dropped: an error whose text is clean
+// but whose wrapped cause still spells the token out would hand the secret back to anyone who
+// called errors.Unwrap. Nothing in this repository matches on a store error's cause.
+func (s scrubber) clean(err error) error {
+	if err == nil || s.r == nil {
+		return err
+	}
+	msg := err.Error()
+	cleaned := s.r.Replace(msg)
+	if cleaned == msg {
+		return err
+	}
+	return errors.New(cleaned)
 }
 
 // Close releases the underlying connection pool.
-func (s *Store) Close() error {
+func (s *Store) Close() (err error) {
+	defer func() { err = s.scrub.clean(err) }()
 	if err := s.db.Close(); err != nil {
 		return fmt.Errorf("close database: %w", err)
 	}
@@ -122,7 +191,8 @@ const itemColumns = `
 //
 // Everything happens in one transaction, so a failed refresh leaves the previous set intact
 // rather than a half-replaced one.
-func (s *Store) ReplaceItems(ctx context.Context, source string, items []domain.Item, now time.Time) (int, error) {
+func (s *Store) ReplaceItems(ctx context.Context, source string, items []domain.Item, now time.Time) (_ int, err error) {
+	defer func() { err = s.scrub.clean(err) }()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("begin: %w", err)
@@ -221,7 +291,8 @@ func deleteAbsent(ctx context.Context, tx *sql.Tx, source string, known, present
 }
 
 // Items returns every stored item, newest sighting first.
-func (s *Store) Items(ctx context.Context) ([]domain.Item, error) {
+func (s *Store) Items(ctx context.Context) (_ []domain.Item, err error) {
+	defer func() { err = s.scrub.clean(err) }()
 	q := `SELECT ` + itemColumns + ` FROM items ORDER BY first_seen_at DESC, source, external_id`
 	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
@@ -257,7 +328,8 @@ func (s *Store) Items(ctx context.Context) ([]domain.Item, error) {
 
 // UpsertBuilds records the latest CI run per repository, stamping every row with now as its fetch
 // time.
-func (s *Store) UpsertBuilds(ctx context.Context, builds []domain.Build, now time.Time) error {
+func (s *Store) UpsertBuilds(ctx context.Context, builds []domain.Build, now time.Time) (err error) {
+	defer func() { err = s.scrub.clean(err) }()
 	const q = `
 INSERT INTO builds (repo, workflow, conclusion, status, run_url, finished_at, fetched_at)
 VALUES (?,?,?,?,?,?,?)
@@ -278,7 +350,8 @@ ON CONFLICT(repo) DO UPDATE SET
 }
 
 // Builds returns every stored build.
-func (s *Store) Builds(ctx context.Context) ([]domain.Build, error) {
+func (s *Store) Builds(ctx context.Context) (_ []domain.Build, err error) {
+	defer func() { err = s.scrub.clean(err) }()
 	const q = `
 SELECT repo, COALESCE(workflow,''), COALESCE(conclusion,''), COALESCE(status,''),
        COALESCE(run_url,''), COALESCE(finished_at,''), COALESCE(fetched_at,'')
@@ -315,7 +388,8 @@ FROM builds ORDER BY repo`
 
 // UpsertMetrics records an analytics snapshot per site and window, stamping every row with now as
 // its fetch time.
-func (s *Store) UpsertMetrics(ctx context.Context, metrics []domain.Metric, now time.Time) error {
+func (s *Store) UpsertMetrics(ctx context.Context, metrics []domain.Metric, now time.Time) (err error) {
+	defer func() { err = s.scrub.clean(err) }()
 	const q = `
 INSERT INTO metrics (site, window_days, visitors, pageviews, prev_visitors, prev_pageviews, fetched_at)
 VALUES (?,?,?,?,?,?,?)
@@ -337,7 +411,8 @@ ON CONFLICT(site, window_days) DO UPDATE SET
 }
 
 // Metrics returns every stored metric.
-func (s *Store) Metrics(ctx context.Context) ([]domain.Metric, error) {
+func (s *Store) Metrics(ctx context.Context) (_ []domain.Metric, err error) {
+	defer func() { err = s.scrub.clean(err) }()
 	const q = `
 SELECT site, COALESCE(window_days,0), COALESCE(visitors,0), COALESCE(pageviews,0),
        COALESCE(prev_visitors,0), COALESCE(prev_pageviews,0), COALESCE(fetched_at,'')
@@ -374,7 +449,8 @@ FROM metrics ORDER BY site, window_days`
 
 // RecordSourceOK records a successful fetch. It writes only the success columns: a success must
 // not erase the record of the last error, and vice versa (FR-1.4 AC2).
-func (s *Store) RecordSourceOK(ctx context.Context, source string, at time.Time, count int) error {
+func (s *Store) RecordSourceOK(ctx context.Context, source string, at time.Time, count int) (err error) {
+	defer func() { err = s.scrub.clean(err) }()
 	const q = `
 INSERT INTO source_state (source, last_success_at, last_error, last_error_at, item_count)
 VALUES (?,?,'','',?)
@@ -389,7 +465,8 @@ ON CONFLICT(source) DO UPDATE SET
 
 // RecordSourceError records a failed fetch. It leaves last_success_at and item_count alone, so
 // the dashboard can still say how old the last good data is (FR-1.4 AC2).
-func (s *Store) RecordSourceError(ctx context.Context, source string, at time.Time, msg string) error {
+func (s *Store) RecordSourceError(ctx context.Context, source string, at time.Time, msg string) (err error) {
+	defer func() { err = s.scrub.clean(err) }()
 	const q = `
 INSERT INTO source_state (source, last_success_at, last_error, last_error_at, item_count)
 VALUES (?,'',?,?,0)
@@ -403,7 +480,8 @@ ON CONFLICT(source) DO UPDATE SET
 }
 
 // SourceStates returns the last known health of every source, keyed by source name.
-func (s *Store) SourceStates(ctx context.Context) (map[string]domain.SourceState, error) {
+func (s *Store) SourceStates(ctx context.Context) (_ map[string]domain.SourceState, err error) {
+	defer func() { err = s.scrub.clean(err) }()
 	const q = `
 SELECT source, COALESCE(last_success_at,''), COALESCE(last_error,''),
        COALESCE(last_error_at,''), COALESCE(item_count,0)
@@ -440,7 +518,8 @@ FROM source_state`
 // ---------------------------------------------------------------- last visit
 
 // LastVisit returns when the dashboard was last viewed, or the zero time if it never was (QS-1.3).
-func (s *Store) LastVisit(ctx context.Context) (time.Time, error) {
+func (s *Store) LastVisit(ctx context.Context) (_ time.Time, err error) {
+	defer func() { err = s.scrub.clean(err) }()
 	v, err := s.appState(ctx, lastVisitKey)
 	if err != nil {
 		return time.Time{}, err
@@ -453,7 +532,8 @@ func (s *Store) LastVisit(ctx context.Context) (time.Time, error) {
 }
 
 // SetLastVisit records t as the moment the dashboard was last viewed.
-func (s *Store) SetLastVisit(ctx context.Context, t time.Time) error {
+func (s *Store) SetLastVisit(ctx context.Context, t time.Time) (err error) {
+	defer func() { err = s.scrub.clean(err) }()
 	return s.setAppState(ctx, lastVisitKey, sqlTime(t))
 }
 
@@ -490,7 +570,8 @@ func (s *Store) setAppState(ctx context.Context, key, value string) error {
 // ON CONFLICT clause admits the write only when the stored lease has expired or is held by the
 // same holder — RFC 3339 UTC strings compare lexicographically, so the expiry test is a plain
 // string comparison. One affected row means the lease is ours.
-func (s *Store) AcquireRefreshLease(ctx context.Context, holder string, now time.Time, ttl time.Duration) (bool, error) {
+func (s *Store) AcquireRefreshLease(ctx context.Context, holder string, now time.Time, ttl time.Duration) (_ bool, err error) {
+	defer func() { err = s.scrub.clean(err) }()
 	if strings.Contains(holder, "|") {
 		return false, errors.New("refresh lease holder must not contain '|'")
 	}
@@ -514,7 +595,8 @@ WHERE substr(app_state.value, instr(app_state.value, '|') + 1) <= ?
 
 // ReleaseRefreshLease drops the lease if holder is the one holding it. Releasing a lease someone
 // else has taken over — after this holder's own lease expired, say — must not free theirs.
-func (s *Store) ReleaseRefreshLease(ctx context.Context, holder string) error {
+func (s *Store) ReleaseRefreshLease(ctx context.Context, holder string) (err error) {
+	defer func() { err = s.scrub.clean(err) }()
 	const q = `DELETE FROM app_state
 	           WHERE key = ? AND substr(value, 1, instr(value, '|') - 1) = ?`
 	if _, err := s.db.ExecContext(ctx, q, leaseKey, holder); err != nil {
@@ -526,7 +608,8 @@ func (s *Store) ReleaseRefreshLease(ctx context.Context, holder string) error {
 // ---------------------------------------------------------------- refresh runs
 
 // StartRun records the beginning of a refresh run and returns its id.
-func (s *Store) StartRun(ctx context.Context, trigger string, at time.Time) (int64, error) {
+func (s *Store) StartRun(ctx context.Context, trigger string, at time.Time) (_ int64, err error) {
+	defer func() { err = s.scrub.clean(err) }()
 	const q = `INSERT INTO refresh_run (started_at, finished_at, "trigger", ok, detail)
 	           VALUES (?, '', ?, 0, '')`
 	res, err := s.db.ExecContext(ctx, q, sqlTime(at), trigger)
@@ -541,7 +624,8 @@ func (s *Store) StartRun(ctx context.Context, trigger string, at time.Time) (int
 }
 
 // FinishRun records the outcome of the refresh run with the given id.
-func (s *Store) FinishRun(ctx context.Context, id int64, at time.Time, ok bool, detail string) error {
+func (s *Store) FinishRun(ctx context.Context, id int64, at time.Time, ok bool, detail string) (err error) {
+	defer func() { err = s.scrub.clean(err) }()
 	const q = `UPDATE refresh_run SET finished_at = ?, ok = ?, detail = ? WHERE id = ?`
 	if _, err := s.db.ExecContext(ctx, q, sqlTime(at), boolToInt(ok), detail, id); err != nil {
 		return fmt.Errorf("finish run %d: %w", id, err)
@@ -551,7 +635,8 @@ func (s *Store) FinishRun(ctx context.Context, id int64, at time.Time, ok bool, 
 
 // LastRun returns the most recently started refresh run. A store that has never run one is not an
 // error: the zero RefreshRun comes back with a nil error, and its StartedAt is the zero time.
-func (s *Store) LastRun(ctx context.Context) (domain.RefreshRun, error) {
+func (s *Store) LastRun(ctx context.Context) (_ domain.RefreshRun, err error) {
+	defer func() { err = s.scrub.clean(err) }()
 	const q = `
 SELECT id, COALESCE(started_at,''), COALESCE(finished_at,''), COALESCE("trigger",''),
        COALESCE(ok,0), COALESCE(detail,'')
@@ -562,7 +647,7 @@ FROM refresh_run ORDER BY id DESC LIMIT 1`
 		started, finished string
 		ok                int
 	)
-	err := s.db.QueryRowContext(ctx, q).Scan(&run.ID, &started, &finished, &run.Trigger, &ok, &run.Detail)
+	err = s.db.QueryRowContext(ctx, q).Scan(&run.ID, &started, &finished, &run.Trigger, &ok, &run.Detail)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.RefreshRun{}, nil
 	}
@@ -582,7 +667,8 @@ FROM refresh_run ORDER BY id DESC LIMIT 1`
 
 // MarkNotified records that keys have been announced. An existing row keeps its original sent_at:
 // an item is announced once, and the first announcement is the one that counts (FR-6.1 AC2).
-func (s *Store) MarkNotified(ctx context.Context, keys []string, at time.Time) error {
+func (s *Store) MarkNotified(ctx context.Context, keys []string, at time.Time) (err error) {
+	defer func() { err = s.scrub.clean(err) }()
 	const q = `INSERT INTO notified (key, sent_at) VALUES (?,?) ON CONFLICT(key) DO NOTHING`
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		for _, k := range keys {
@@ -596,7 +682,8 @@ func (s *Store) MarkNotified(ctx context.Context, keys []string, at time.Time) e
 
 // UnnotifiedKeys returns those of keys that have not been announced yet, in the order given. The
 // lookup runs in chunks so a long list cannot exceed SQLite's variable limit.
-func (s *Store) UnnotifiedKeys(ctx context.Context, keys []string) ([]string, error) {
+func (s *Store) UnnotifiedKeys(ctx context.Context, keys []string) (_ []string, err error) {
+	defer func() { err = s.scrub.clean(err) }()
 	sent := make(map[string]bool, len(keys))
 	for _, chunk := range chunks(keys, maxParams) {
 		args := make([]any, 0, len(chunk))
@@ -642,7 +729,8 @@ func (s *Store) collectSent(ctx context.Context, q string, args []any, sent map[
 
 // TruncateAll empties every table except schema_migrations. It exists for the tests, which is why
 // it is a method on *Store and not part of ports.Store.
-func (s *Store) TruncateAll(ctx context.Context) error {
+func (s *Store) TruncateAll(ctx context.Context) (err error) {
+	defer func() { err = s.scrub.clean(err) }()
 	tables := []string{"items", "builds", "metrics", "refresh_run", "source_state", "app_state", "notified"}
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		for _, t := range tables {
