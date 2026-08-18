@@ -41,7 +41,7 @@ var embedded embed.FS
 // pageFiles are the page templates, each of which supplies the "content" block that layout.html
 // wraps. They are parsed one page at a time — layout plus that page — because every page defines a
 // block of the same name, so a single template set would have them overwrite each other.
-var pageFiles = []string{"login.html", "dashboard.html"}
+var pageFiles = []string{"login.html", "dashboard.html", "docs.html", "docs_index.html"}
 
 // tileGlob matches the per-tile fragment templates. They are parsed twice on purpose: into every
 // page set, so that dashboard.html can compose the page out of them, and into a set of their own,
@@ -83,18 +83,22 @@ type Options struct {
 // Server holds the HTTP layer's state: the parsed templates, the session codec, the sign-in and
 // bearer rate limiters, and the built handler.
 type Server struct {
-	cfg     config.Config
-	store   ports.Store
-	runner  *refresh.Runner
-	clock   ports.Clock
-	log     *slog.Logger
-	pages   map[string]*template.Template
-	tiles   *template.Template
-	assets  map[string]staticAsset
-	session *sessionCodec
-	signIn  *rateLimiter
-	bearer  *rateLimiter
-	handler http.Handler
+	cfg    config.Config
+	store  ports.Store
+	runner *refresh.Runner
+	clock  ports.Clock
+	log    *slog.Logger
+	pages  map[string]*template.Template
+	tiles  *template.Template
+	assets map[string]staticAsset
+	// docs maps a documentation URL to its rendered page, and docIndex is the same pages grouped
+	// for /docs. Both are built once, at start-up, by loadDocs.
+	docs     map[string]*docPage
+	docIndex []docCategory
+	session  *sessionCodec
+	signIn   *rateLimiter
+	bearer   *rateLimiter
+	handler  http.Handler
 	// trustFlyClientIP is the decision behind clientIP: only a process actually running behind
 	// Fly's proxy may believe the Fly-Client-IP header.
 	trustFlyClientIP bool
@@ -140,6 +144,11 @@ func New(o Options) (*Server, error) {
 		return nil, fmt.Errorf("web: static assets: %w", err)
 	}
 
+	docs, docIndex, err := loadDocs()
+	if err != nil {
+		return nil, fmt.Errorf("web: documentation: %w", err)
+	}
+
 	trustFly := behindFlyProxy()
 	if o.BehindFlyProxy != nil {
 		trustFly = *o.BehindFlyProxy
@@ -154,12 +163,14 @@ func New(o Options) (*Server, error) {
 		pages:            pages,
 		tiles:            tiles,
 		assets:           assets,
+		docs:             docs,
+		docIndex:         docIndex,
 		session:          newSessionCodec(o.Config.Secrets.AppToken),
 		signIn:           newRateLimiter(signInAttempts, signInWindow),
 		bearer:           newRateLimiter(signInAttempts, signInWindow),
 		trustFlyClientIP: trustFly,
 	}
-	s.handler = securityHeaders(s.mux())
+	s.handler = securityHeaders(canonicalPath(s.mux()))
 	return s, nil
 }
 
@@ -260,6 +271,44 @@ func (s *Server) wrap(rt route) http.Handler {
 	return h
 }
 
+// canonicalPath answers any request whose path is not already in canonical form with 404, before
+// the mux can see it.
+//
+// Left alone, http.ServeMux answers "/docs/../../etc/passwd" with a 307 to "/etc/passwd": it
+// cleans the path and redirects to the result. That is not a traversal — nothing here ever touches
+// a file system — but it is a worse answer than the truth. It echoes the request back in a
+// Location header, it makes an attempt to escape /docs look like it went somewhere, and it means
+// the paths a handler sees depend on a rewrite the handler cannot see. A request for a path no
+// client would have sent is simply not a request for anything (QS-4.4).
+//
+// Real clients are unaffected: browsers resolve dot segments before sending, and every route in
+// the table is already canonical.
+func canonicalPath(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != cleanPath(r.URL.Path) {
+			http.NotFound(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// cleanPath is net/http's own notion of a canonical path: path.Clean of an absolute path, with a
+// trailing slash preserved, because "/docs" and "/docs/" are two different routes.
+func cleanPath(p string) string {
+	if p == "" {
+		return "/"
+	}
+	if p[0] != '/' {
+		p = "/" + p
+	}
+	cleaned := path.Clean(p)
+	if cleaned != "/" && p[len(p)-1] == '/' {
+		cleaned += "/"
+	}
+	return cleaned
+}
+
 // securityHeaders wraps the whole mux, so the headers are on every response — including the 404s
 // and 405s the mux itself produces (QS-4.4).
 func securityHeaders(next http.Handler) http.Handler {
@@ -286,12 +335,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 
 // handleRefresh and handleAPIRefresh live in refresh.go.
 
-// handleDocs serves the embedded documentation. Task 16 replaces this placeholder with the
-// goldmark rendering of docs/ and its link rewriting.
-func (s *Server) handleDocs(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte("<!doctype html><title>Documentation</title><p>Documentation.\n"))
-}
+// handleDocs lives in docs.go.
 
 // handleStatic serves the embedded assets: the stylesheet and vendored htmx.
 //
@@ -457,6 +501,10 @@ type pageData struct {
 	// Error is a message written for the visitor. It is never an error's own text: those can
 	// carry a DSN or a token (QS-4.3).
 	Error string
+	// Doc is the rendered documentation page docs.html shows; nil on every other page.
+	Doc *docPage
+	// Docs is the grouped list docs_index.html shows; nil on every other page.
+	Docs []docCategory
 }
 
 // render executes a page template into a buffer before writing anything, so a template failing

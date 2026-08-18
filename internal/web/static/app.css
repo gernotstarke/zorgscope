@@ -256,3 +256,65 @@ button:hover { filter: brightness(1.08); }
 .change-flat, .change-unknown { color: var(--muted); }
 
 .empty { margin: 0; color: var(--muted); }
+
+/* Documentation pages (FR-7.1). Nothing here is inline: the Markdown is rendered by goldmark with
+   raw HTML disabled, so a document cannot bring a style of its own, and every rule it needs has to
+   live in this file (QS-4.4). */
+.docs-index { max-width: 48rem; }
+.docs-lead { color: var(--muted); margin: 0 0 1.5rem; }
+.docs-group { margin: 0 0 1.5rem; }
+.docs-group h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
+.docs-list { list-style: none; margin: 0; padding: 0; }
+.docs-list li { padding: 0.3rem 0; border-bottom: 1px solid var(--border); }
+.docs-list li:last-child { border-bottom: 0; }
+.docs-list a, .doc-nav a { color: var(--accent); text-decoration: none; }
+.docs-list a:hover, .doc-nav a:hover { text-decoration: underline; }
+
+.doc-nav { margin: 0 0 1rem; font-size: 0.85rem; }
+.doc { max-width: 52rem; overflow-wrap: break-word; }
+.doc h1 { font-size: 1.5rem; margin: 0 0 1rem; }
+.doc h2 { font-size: 1.2rem; margin: 2rem 0 0.75rem; }
+.doc h3 { font-size: 1.02rem; margin: 1.5rem 0 0.5rem; }
+.doc p, .doc li { color: var(--text); }
+.doc a { color: var(--accent); }
+.doc code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.05rem 0.28rem;
+}
+.doc pre {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+}
+.doc pre code { background: none; border: 0; padding: 0; font-size: 0.85rem; }
+.doc blockquote {
+  margin: 1rem 0;
+  padding: 0.1rem 1rem;
+  border-left: 3px solid var(--border);
+  color: var(--muted);
+}
+.doc table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  font-size: 0.9rem;
+}
+.doc th, .doc td {
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.55rem;
+  vertical-align: top;
+}
+.doc th { background: var(--surface); font-weight: 600; text-align: left; }
+/* goldmark renders a column's alignment as an align attribute rather than the inline style it
+   would otherwise emit, because style-src carries no 'unsafe-inline' (see newDocMarkdown). These
+   two rules are what honour it, and they outrank the th rule above. */
+.doc [align="center"] { text-align: center; }
+.doc [align="right"] { text-align: right; }
+.doc hr { border: 0; border-top: 1px solid var(--border); margin: 2rem 0; }
+.doc img { max-width: 100%; height: auto; }
