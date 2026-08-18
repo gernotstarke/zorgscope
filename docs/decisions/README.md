@@ -6,14 +6,14 @@ the old record stays, because the reasoning is the point.
 
 | # | Decision | File | Status |
 |---|----------|------|--------|
-| 0001 | Go modular monolith with a hexagonal core | `0001-go-modular-monolith.md` | planned |
-| 0002 | Server-rendered `html/template` plus htmx, no JavaScript build | `0002-server-rendered-htmx.md` | planned |
-| 0003 | Fly.io scaled to zero, refreshed by an external cron trigger | `0003-fly-scale-to-zero-external-cron.md` | planned |
-| 0004 | Turso and libSQL for persistence, `libsql-server` locally | `0004-turso-libsql.md` | planned |
-| 0005 | Embedded SQL migrations rather than a schema tool | `0005-embedded-sql-migrations.md` | planned |
-| 0006 | First-seen versus last-visit as the definition of "new" | `0006-first-seen-versus-last-visit.md` | planned |
-| 0007 | Token sign-in with a session cookie derived from the token | `0007-token-sign-in-derived-cookie.md` | planned |
-| 0008 | Docker and make as the only local toolchain | `0008-docker-and-make-only.md` | planned |
+| 0001 | Go modular monolith with a hexagonal core | `0001-go-modular-monolith.md` | accepted |
+| 0002 | Server-rendered `html/template` plus htmx, no JavaScript build | `0002-server-rendered-htmx.md` | accepted |
+| 0003 | Fly.io scaled to zero, refreshed by an external cron trigger | `0003-fly-scale-to-zero-external-cron.md` | accepted |
+| 0004 | Turso and libSQL for persistence, `libsql-server` locally | `0004-turso-libsql.md` | accepted |
+| 0005 | Embedded SQL migrations rather than a schema tool | `0005-embedded-sql-migrations.md` | accepted |
+| 0006 | First-seen versus last-visit as the definition of "new" | `0006-first-seen-versus-last-visit.md` | accepted |
+| 0007 | Token sign-in with a session cookie derived from the token | `0007-token-sign-in-derived-cookie.md` | accepted |
+| 0008 | Docker and make as the only local toolchain | `0008-docker-and-make-only.md` | accepted |
 
 The records themselves are written in Task 19 of the
 [implementation plan](../superpowers/plans/2026-08-17-zorgscope-v1.md); the decisions they document
