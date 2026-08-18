@@ -70,7 +70,22 @@ type docCategory struct {
 //
 // It runs in two passes because link rewriting needs to know the whole corpus before any of it is
 // rendered: a link in the first file may point at the last one.
+//
+// There is no allow-list of documents anywhere in here, and that is the decision: docs/ is the
+// single source, so a Markdown file added to one of the three published categories is published
+// and linked from the index the moment it exists. What a visitor may read is therefore decided
+// once, by the embed patterns in docsfs.go, rather than twice — in an allow-list that a new
+// document has to be remembered into, and that would silently keep it off the site when it is not.
+// TestAMarkdownFileInAPublishedCategoryIsPublishedWithoutBeingListed states that as a property,
+// and the embed patterns are pinned by TestOnlyTheThreePublishedCategoriesAreEmbedded.
 func loadDocs() (map[string]*docPage, []docCategory, error) {
+	return loadDocsFrom(zorgscope.DocsFS)
+}
+
+// loadDocsFrom is loadDocs against a given corpus. The parameter exists for the tests: the
+// published corpus is embedded at build time and cannot be varied, so a synthetic one is the only
+// way to state what happens to a document nobody has written yet.
+func loadDocsFrom(fsys fs.FS) (map[string]*docPage, []docCategory, error) {
 	// sources maps a document's embedded path — "docs/decisions/0004-turso-libsql.md" — to its
 	// URL on this site. It is what a rewritten link is resolved against, and it is the complete
 	// list of documents this site publishes.
@@ -78,7 +93,7 @@ func loadDocs() (map[string]*docPage, []docCategory, error) {
 	files := make(map[string][]string, len(docCategories))
 	for _, c := range docCategories {
 		dir := path.Join(docsRoot, c.Dir)
-		entries, err := fs.ReadDir(zorgscope.DocsFS, dir)
+		entries, err := fs.ReadDir(fsys, dir)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -108,7 +123,7 @@ func loadDocs() (map[string]*docPage, []docCategory, error) {
 	for _, c := range docCategories {
 		category := docCategory{Title: c.Title}
 		for _, file := range files[c.Dir] {
-			src, err := fs.ReadFile(zorgscope.DocsFS, file)
+			src, err := fs.ReadFile(fsys, file)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -177,7 +192,31 @@ func renderDoc(md goldmark.Markdown, src []byte, dir string, sources map[string]
 	// The conversion to template.HTML is what newDocMarkdown's settings pay for: this is
 	// goldmark's own output, with raw HTML disabled and dangerous URL schemes dropped, so nothing
 	// a source document wrote reaches the page as markup.
-	return firstHeading(doc, src), template.HTML(buf.String()), nil
+	//
+	// gosec flags every template.HTML conversion (G203), and it is right to: the conversion turns
+	// off html/template's escaping, so it is only ever as safe as the thing that produced the
+	// string. Here that holds for two reasons, and the annotation below is valid only while both
+	// of them do:
+	//
+	//   - The input is trusted by construction. src comes from zorgscope.DocsFS — the three
+	//     directories embedded from docs/ at build time by the //go:embed patterns in docsfs.go.
+	//     It is repository content, fixed when the binary was linked. No request, no header, no
+	//     form field and no file system reaches this function; there is no path by which a visitor
+	//     can influence a byte of it. TestOnlyTheThreePublishedCategoriesAreEmbedded pins that set.
+	//   - The output carries no markup of the document's own. newDocMarkdown leaves goldmark's raw
+	//     HTML disabled, so a <script>, a <style> or a style="…" written into a source document is
+	//     dropped rather than passed through, and dangerous URL schemes are dropped with it. Every
+	//     tag in buf is one goldmark emitted itself. TestRawHTMLInMarkdownIsNotEmitted is the
+	//     guard, on input the repository does not contain.
+	//
+	// Both are load-bearing, and either can be taken away from a distance. Adding
+	// html.WithUnsafe() to newDocMarkdown — or html.WithXHTML, or any renderer option that lets a
+	// source document's own markup through — invalidates this annotation, and so does rendering
+	// Markdown here that did not come from the embedded set: a README fetched over HTTP, a
+	// document uploaded by a visitor, anything read from disk at run time. In either case the
+	// conversion becomes an XSS hole on an unauthenticated page (/docs needs no session, FR-7.1
+	// AC3), and this #nosec is no longer telling the truth. Take it out and sanitise instead.
+	return firstHeading(doc, src), template.HTML(buf.String()), nil // #nosec G203 -- see above
 }
 
 // rewriteDocLinks implements FR-7.2 AC2: a link to another document has to work inside the
@@ -192,14 +231,25 @@ func renderDoc(md goldmark.Markdown, src []byte, dir string, sources map[string]
 // site deliberately does not serve — loses its link and keeps its text, so no page offers a
 // visitor a URL that answers 404. Everything else, including absolute and external links, is left
 // exactly as written.
+//
+// Images are walked too, under docImageResolves' stricter rule. An image is not a link the reader
+// can decline to follow: a destination that names nothing this site serves is a broken picture the
+// moment the page is opened, so it degrades to its alt text here rather than shipping. Skipping
+// *ast.Image would leave the one node type that can point at a file with no rule at all.
 func rewriteDocLinks(doc ast.Node, dir string, sources map[string]string) {
-	// The links are collected before any of them is changed: unlinking splices a node out of its
+	// The nodes are collected before any of them is changed: unlinking splices a node out of its
 	// parent, and doing that to the node the walk is standing on cuts the walk short.
 	var links []*ast.Link
+	var images []*ast.Image
 	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if entering {
-			if l, ok := n.(*ast.Link); ok {
-				links = append(links, l)
+			// *ast.Image embeds ast.Link by value, so it is not an *ast.Link and has to be named
+			// in its own case; the order matters only in that both cases exist.
+			switch node := n.(type) {
+			case *ast.Image:
+				images = append(images, node)
+			case *ast.Link:
+				links = append(links, node)
 			}
 		}
 		return ast.WalkContinue, nil
@@ -213,6 +263,11 @@ func rewriteDocLinks(doc ast.Node, dir string, sources map[string]string) {
 			unlink(l)
 		default:
 			l.Destination = []byte(target)
+		}
+	}
+	for _, img := range images {
+		if !docImageResolves(string(img.Destination)) {
+			unlink(img)
 		}
 	}
 }
@@ -238,13 +293,43 @@ func docLinkTarget(dir, dest string, sources map[string]string) (target string, 
 	if !ok {
 		return "", true
 	}
+	// Everything the author wrote after the path is carried over, in the order a URL has it. No
+	// page here reads a query — handleDocs looks a page up by r.URL.Path alone — but a rewrite
+	// that silently dropped one would change what the author wrote into something else and give
+	// no sign of it; a link that arrives with a query the site ignores is the smaller surprise,
+	// and the one a Markdown viewer already shows.
+	if u.RawQuery != "" || u.ForceQuery {
+		published += "?" + u.RawQuery
+	}
 	if u.Fragment != "" {
 		published += "#" + u.EscapedFragment()
 	}
 	return published, true
 }
 
-// unlink replaces a link with its own children, so the text survives and the anchor does not.
+// docImageResolves reports whether an image's destination can name something this site actually
+// serves, and it is deliberately stricter than the rule for links.
+//
+// A relative destination cannot: /docs publishes rendered pages and nothing else — no file under
+// docs/ is ever served as itself — so "![diagram](../logo/zorgscope-logo.jpeg)" would be a broken
+// image on a public page, with the alt text hidden behind a browser's own placeholder. The .doc img
+// rule in the stylesheet invites exactly that, so this is the case worth being explicit about.
+// rewriteDocLinks answers it the way it answers a link to an unpublished document: the markup goes
+// and the text stays, so the reader sees the alt text as prose rather than a broken picture.
+//
+// Anything rooted at this site ("/static/logo.png"), and anything with a scheme or a host — an
+// external URL, a data: URI, both of which the img-src policy allows — is somebody else's
+// destination and is left exactly as written.
+func docImageResolves(dest string) bool {
+	u, err := url.Parse(dest)
+	if err != nil {
+		return false
+	}
+	return u.Scheme != "" || u.Host != "" || strings.HasPrefix(u.Path, "/")
+}
+
+// unlink replaces a link or an image with its own children, so the text survives and the markup
+// does not: a link keeps its text without the anchor, an image keeps its alt text without the tag.
 func unlink(n ast.Node) {
 	parent := n.Parent()
 	if parent == nil {

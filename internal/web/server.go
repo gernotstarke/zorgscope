@@ -103,7 +103,7 @@ type Server struct {
 	handler  http.Handler
 	// ceiling is how long one refresh run may take; New sets it to refreshCeiling. It is a field
 	// rather than a bare use of the constant so that a test can exercise the ceiling actually
-	// firing without waiting two minutes for it — see refresh.go for what the value has to be.
+	// firing without waiting the whole ceiling out — see refresh.go for what the value has to be.
 	ceiling time.Duration
 	// trustFlyClientIP is the decision behind clientIP: only a process actually running behind
 	// Fly's proxy may believe the Fly-Client-IP header.

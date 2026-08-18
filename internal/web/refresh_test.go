@@ -463,7 +463,7 @@ func TestTheCeilingStaysInsideTheLease(t *testing.T) {
 
 // The ceiling firing is not a hypothetical: sources are fetched sequentially against a 20-second
 // per-call timeout, and GitHub and Plausible each fan out inside one Fetch, so an ordinary
-// configuration can exceed two minutes (see refreshCeiling for the arithmetic). This pins what the
+// configuration can exceed the ceiling (see refreshCeiling for the arithmetic). This pins what the
 // caller and the dashboard are then told — every source the run had not reached records "context
 // deadline exceeded" and shows up as a broken source that was never broken (FR-1.4 AC3), which is
 // the cost of the ceiling being too small for its configuration.
@@ -477,7 +477,7 @@ func TestTheCeilingFiringIsReportedAsSuchPerSource(t *testing.T) {
 
 	store := newLeaseStore()
 	s := newRefreshServer(t, store, &ports.FixedClock{T: testNow}, hung, later)
-	// The real ceiling is two minutes; the behaviour under it is the same at fifty milliseconds.
+	// The real ceiling is four minutes; the behaviour under it is the same at fifty milliseconds.
 	s.ceiling = 50 * time.Millisecond
 	h := s.Handler()
 
@@ -815,7 +815,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 }
 
 // deadlineFetcher records the deadline of the context its fetch was handed, which is how the
-// ceiling is observed without waiting two minutes for it.
+// ceiling is observed without waiting the whole four minutes out.
 type deadlineFetcher struct {
 	name string
 	mu   sync.Mutex

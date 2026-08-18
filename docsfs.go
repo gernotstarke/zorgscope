@@ -22,5 +22,13 @@ import "embed"
 // published categories means an unlisted document cannot become reachable by accident — the set of
 // files in the binary is already the set of files the site is allowed to serve.
 //
+// Widening the patterns is therefore a security change, not a build detail, and it is the change
+// this file is most likely to suffer: "all:docs" or a bare "docs" looks tidier, passes every test
+// about rendering, and ships the working plans and the logo sources to an unauthenticated page.
+// internal/web's TestOnlyTheThreePublishedCategoriesAreEmbedded walks this file system and fails on
+// anything outside the three directories, so that edit cannot pass in silence. It is also what the
+// #nosec G203 in internal/web/docs.go leans on: the rendered Markdown may skip escaping because
+// every byte of it is repository content named right here.
+//
 //go:embed docs/requirements docs/decisions docs/concepts
 var DocsFS embed.FS

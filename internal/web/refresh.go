@@ -20,11 +20,11 @@ import (
 // Machine with a request in flight, so an upstream that accepts a connection and then never
 // answers would keep this process billed and running for as long as it stayed silent.
 //
-// It is two minutes rather than thirty seconds because the runner's three closing writes — release
-// the lease, finish the run record, record a source error — each carry their own five-second
-// deadline, deliberately independent of this context so that a cancelled run can still record why
-// it failed. A run can therefore legitimately linger some fifteen seconds past its own budget, and
-// a ceiling sized to the budget would cut those writes off precisely when they matter most.
+// It is minutes rather than thirty seconds because the runner's three closing writes — release the
+// lease, finish the run record, record a source error — each carry their own five-second deadline,
+// deliberately independent of this context so that a cancelled run can still record why it failed.
+// A run can therefore legitimately linger some fifteen seconds past its own budget, and a ceiling
+// sized to the budget would cut those writes off precisely when they matter most.
 //
 // # The invariant: refreshCeiling must stay strictly below internal/refresh's leaseTTL
 //
@@ -49,16 +49,26 @@ import (
 // — GitHub's issue and build fetchers make one call per configured repository each, Plausible
 // makes one per site per window and there are two windows (FR-3.1), Todoist makes one, and the
 // announcement step is bounded by the runner's own 10-second notifyBudget. One repository and one
-// site is 110 s, which is inside this ceiling by ten seconds. Two repositories, or a second site,
-// is not: at 150 s the ceiling fires mid-run and every source it has not reached records
-// "context deadline exceeded" — rendered on the dashboard as a broken source that was never broken
-// (FR-1.4 AC3), which is the fabricated-error failure the WithoutCancel below exists to prevent,
-// one layer up. TestTheCeilingFiringIsReportedAsSuchPerSource pins what that looks like.
+// site is 110 s; two repositories and one site is 150 s, which is why this is four minutes and not
+// two — the smaller ceiling fired on a configuration this size.
 //
-// So this value is a decision about configuration size, and adding a repository or a site is a
-// decision to revisit it. The headroom above the ceiling is bounded too: leaseTTL minus the
-// ceiling has to leave room for the closing writes above, which run past it.
-const refreshCeiling = 2 * time.Minute
+// # What this ceiling deliberately does not cover
+//
+// It does not stretch to the pathological worst case at the representative configuration, and it
+// cannot. Ten repositories and four sites is 29 upstream calls, some 590 s if every one of them
+// times out — past leaseTTL, so no ceiling that keeps the invariant above can accommodate it. That
+// is the right outcome rather than a gap: if every upstream is dead, cutting the run short is what
+// should happen. The sources record their errors, the dashboard shows them as failing (FR-1.4 AC3)
+// and the next trigger tries again. This ceiling exists to bound how long the Machine stays awake,
+// not to give total upstream failure room to finish. QS-2.5's ≤30 s figure is about normal
+// latency; it says nothing about a run in which everything times out.
+//
+// What the ceiling firing looks like is pinned by TestTheCeilingFiringIsReportedAsSuchPerSource:
+// every source the run had not reached records "context deadline exceeded" and is rendered as a
+// source that failed. The headroom above the ceiling is bounded on the other side too — leaseTTL
+// minus the ceiling has to leave room for the closing writes above, which run past it, and a
+// minute is ample for three writes carrying a five-second deadline each.
+const refreshCeiling = 4 * time.Minute
 
 // busyNotice is what a visitor is told when another refresh already holds the lease. The API says
 // the same thing in JSON; see refresh.ErrBusy.
