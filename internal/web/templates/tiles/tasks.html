@@ -1,0 +1,21 @@
+{{/* Overdue and due-today tasks, in the urgency order BuildDashboard produced: new first, then by
+     due date ascending (FR-4.1 AC2). Nothing is re-sorted here — SortItems' recency order would
+     bury a task overdue by a week under one edited five minutes ago. */}}
+{{define "tile-tasks"}}
+{{if .Items}}
+<ul class="items">
+  {{range .Items}}
+  <li class="item{{if .New}} is-new{{end}}{{if .Overdue}} is-overdue{{end}}">
+    <p class="item-line">
+      {{if .New}}<span class="badge badge-new">NEW</span>{{end}}
+      {{if .Priority}}<span class="badge badge-priority">{{.Priority}}</span>{{end}}
+      {{if .URL}}<a class="item-title" href="{{.URL}}" target="_blank" rel="noopener noreferrer">{{.Title}}</a>{{else}}<span class="item-title">{{.Title}}</span>{{end}}
+    </p>
+    <p class="item-meta">{{if .HasDue}}<time datetime="{{.DueAt}}">{{.Due}}</time>{{else}}no due date{{end}}</p>
+  </li>
+  {{end}}
+</ul>
+{{else}}
+<p class="empty">Nothing due.</p>
+{{end}}
+{{end}}

@@ -4,18 +4,37 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>{{.Title}} · zorgscope</title>
+{{/* FR-1.2 AC3: the tab title is prefixed with the total new count, and only when it is greater
+     than zero. The dashboard leaves Title empty, because the dashboard is the site. */}}
+<title>{{if gt .NewCount 0}}({{.NewCount}}) {{end}}{{with .Title}}{{.}} · {{end}}zorgscope</title>
 <link rel="stylesheet" href="/static/app.css">
 <script src="/static/htmx.min.js" defer></script>
 </head>
 <body>
 <header class="topbar">
-  <a class="brand" href="/">zorgscope</a>
+  <a class="brand" href="/">
+    {{/* The logo is inline SVG rather than an image file: it costs no second request, it inherits
+         the text colour in both appearances, and it needs no inline style (QS-4.4). */}}
+    <svg class="logo" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"
+         fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+      <circle cx="12" cy="12" r="9"></circle>
+      <circle cx="12" cy="12" r="3.25"></circle>
+      <path d="M12 1.5v3.5M12 19v3.5M1.5 12h3.5M19 12h3.5"></path>
+    </svg>
+    <span class="brand-name">zorgscope</span>
+  </a>
+  {{with .Dashboard}}
+  {{/* FR-1.1 AC3: the header carries the logo and the time of the last refresh run. */}}
+  <p class="topbar-status">{{if .LastRun.Known}}Last refresh <time datetime="{{.LastRun.Absolute}}">{{.LastRun.Relative}}</time>{{else}}No refresh has run yet{{end}}</p>
+  {{end}}
   <nav><a href="/docs">Docs</a></nav>
 </header>
 <main>
 {{template "content" .}}
 </main>
+<footer class="footer">
+  <a href="/docs">Requirements, decisions and concepts</a>
+</footer>
 </body>
 </html>
 {{end}}

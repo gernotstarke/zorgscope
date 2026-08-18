@@ -11,6 +11,8 @@
   --muted: #5b6169;
   --accent: #2f5bd7;
   --danger: #b3261e;
+  --warn: #8a5300;
+  --ok: #1f7a3d;
   --radius: 10px;
   --gap: 1rem;
 }
@@ -24,6 +26,8 @@
     --muted: #9aa1ab;
     --accent: #7fa2ff;
     --danger: #f2836f;
+    --warn: #e0a03c;
+    --ok: #6bc98a;
   }
 }
 
@@ -110,3 +114,145 @@ button:hover { filter: brightness(1.08); }
   border: 1px solid var(--border);
   border-radius: var(--radius);
 }
+
+/* ---------------------------------------------------------------- the dashboard */
+
+.brand { display: inline-flex; align-items: center; gap: 0.45rem; }
+.logo { flex: none; color: var(--accent); }
+.brand-name { font-weight: 600; }
+
+.topbar-status { margin: 0; color: var(--muted); font-size: 0.85rem; }
+
+.footer {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 1rem 1.25rem 2rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+
+.footer a { color: var(--muted); }
+
+.dash-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 1.25rem;
+}
+
+.dash-summary { margin: 0; margin-right: auto; color: var(--muted); }
+
+.dash-actions form { margin: 0; }
+.dash-actions button { margin-top: 0; }
+
+.action button {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  font-weight: 500;
+}
+
+/* A grid rather than fixed columns, so the four tiles reflow down to one column on a phone
+   without a media query or a breakpoint to keep in step with the tile count (FR-1.1 AC1). */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
+  gap: var(--gap);
+  align-items: start;
+}
+
+.tile-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.tile-title { margin: 0; font-size: 1.05rem; font-weight: 600; }
+.tile-count { color: var(--accent); font-size: 0.85rem; font-weight: 600; }
+.tile-age { margin-left: auto; color: var(--muted); font-size: 0.8rem; }
+
+/* Every state says what it is in words as well as in colour (FR-1.5 AC2). */
+.notice {
+  margin: 0 0 0.75rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.notice-error { border-color: var(--danger); color: var(--danger); }
+.notice-stale { border-color: var(--warn); color: var(--warn); }
+.notice-disabled { color: var(--muted); }
+
+.items, .builds, .sites { list-style: none; margin: 0; padding: 0; }
+
+.item, .build, .site {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.item:last-child, .build:last-child, .site:last-child { border-bottom: 0; }
+
+.item-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0;
+}
+
+.item-title { color: var(--text); overflow-wrap: anywhere; }
+.item-meta { margin: 0.15rem 0 0; color: var(--muted); font-size: 0.8rem; overflow-wrap: anywhere; }
+
+.is-new .item-title { font-weight: 600; }
+
+.badge {
+  flex: none;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.badge-new { border-color: var(--accent); color: var(--accent); }
+.badge-priority { border-color: var(--muted); color: var(--muted); }
+.badge-ok { border-color: var(--ok); color: var(--ok); }
+.badge-fail { border-color: var(--danger); color: var(--danger); }
+.badge-running { border-color: var(--warn); color: var(--warn); }
+.badge-other, .badge-unknown { border-color: var(--muted); color: var(--muted); }
+
+.is-overdue .item-meta { color: var(--danger); }
+
+.site-name { margin: 0 0 0.2rem; font-weight: 600; }
+
+.window {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0.1rem 0;
+  font-size: 0.85rem;
+}
+
+.window-days {
+  min-width: 2.5rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.figure { color: var(--muted); }
+.figure b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+.change-up { color: var(--ok); }
+.change-down { color: var(--danger); }
+.change-flat, .change-unknown { color: var(--muted); }
+
+.empty { margin: 0; color: var(--muted); }

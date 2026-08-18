@@ -1,0 +1,20 @@
+{{/* Open issues and pull requests, in the order BuildDashboard produced: new first, then most
+     recently updated (FR-2.2 AC2). Nothing is re-sorted here. */}}
+{{define "tile-github"}}
+{{if .Items}}
+<ul class="items">
+  {{range .Items}}
+  <li class="item{{if .New}} is-new{{end}}">
+    <p class="item-line">
+      {{if .New}}<span class="badge badge-new">NEW</span>{{end}}
+      <a class="item-title" href="{{.URL}}" target="_blank" rel="noopener noreferrer">{{.Title}}</a>
+    </p>
+    <p class="item-meta">{{.Repo}}{{if .Number}} #{{.Number}}{{end}} · {{.Kind}}{{if .Author}} · {{.Author}}{{end}}</p>
+    <p class="item-meta">opened <time datetime="{{.Created.Absolute}}">{{.Created.Relative}}</time>{{if .Updated.Known}}, updated <time datetime="{{.Updated.Absolute}}">{{.Updated.Relative}}</time>{{end}}</p>
+  </li>
+  {{end}}
+</ul>
+{{else}}
+<p class="empty">Nothing open.</p>
+{{end}}
+{{end}}

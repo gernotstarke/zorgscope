@@ -1,0 +1,26 @@
+{{/* The frame every tile shares: its title, its new count, the age of its data and its health.
+     The same template serves the page and the /tile/{source} fragment, so a poll can never drift
+     from what the page drew (FR-1.6 AC1). Dispatch to the body is an explicit chain over the four
+     names the domain assembles rather than a computed template name. */}}
+{{define "tile"}}
+<section class="tile tile-{{.Name}}" id="tile-{{.Name}}"
+         hx-get="/tile/{{.Name}}" hx-trigger="every {{.PollSecs}}s" hx-swap="outerHTML">
+  <header class="tile-head">
+    <h2 class="tile-title">{{.Title}}</h2>
+    {{if gt .NewCount 0}}<span class="tile-count">{{.NewCount}} new</span>{{end}}
+    <span class="tile-age">{{if .LastOK.Known}}<time datetime="{{.LastOK.Absolute}}">{{.LastOK.Relative}}</time>{{else}}never fetched{{end}}</span>
+  </header>
+  {{if .Disabled}}
+  <p class="notice notice-disabled" role="status">Disabled — no credential is configured for this source.</p>
+  {{else if .Error}}
+  <p class="notice notice-error" role="alert">Failing — {{.Error}} (last success {{if .LastOK.Known}}<time datetime="{{.LastOK.Absolute}}">{{.LastOK.Relative}}</time>{{else}}never{{end}})</p>
+  {{else if .Stale}}
+  <p class="notice notice-stale" role="status">Stale — nothing has been fetched for this source recently.</p>
+  {{end}}
+  {{if eq .Name "github"}}{{template "tile-github" .}}
+  {{else if eq .Name "builds"}}{{template "tile-builds" .}}
+  {{else if eq .Name "sites"}}{{template "tile-sites" .}}
+  {{else if eq .Name "tasks"}}{{template "tile-tasks" .}}
+  {{end}}
+</section>
+{{end}}

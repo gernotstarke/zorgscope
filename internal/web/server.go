@@ -29,13 +29,20 @@ import (
 	"github.com/gernotstarke/zorgscope/internal/refresh"
 )
 
-//go:embed templates/*.html static
+//go:embed templates static
 var embedded embed.FS
 
 // pageFiles are the page templates, each of which supplies the "content" block that layout.html
 // wraps. They are parsed one page at a time — layout plus that page — because every page defines a
 // block of the same name, so a single template set would have them overwrite each other.
 var pageFiles = []string{"login.html", "dashboard.html"}
+
+// tileGlob matches the per-tile fragment templates. They are parsed twice on purpose: into every
+// page set, so that dashboard.html can compose the page out of them, and into a set of their own,
+// so that GET /tile/{source} can execute one without a layout (FR-1.6 AC1). One definition, two
+// ways of reaching it — a poll therefore cannot return markup that differs from what the page
+// drew.
+const tileGlob = "templates/tiles/*.html"
 
 // strictTransportSecurity is sent on every response (QS-4.4). Fly terminates TLS in front of this
 // process and only ever serves it over HTTPS, so there is no plaintext deployment for the header
@@ -66,6 +73,7 @@ type Server struct {
 	clock   ports.Clock
 	log     *slog.Logger
 	pages   map[string]*template.Template
+	tiles   *template.Template
 	static  http.Handler
 	session *sessionCodec
 	signIn  *rateLimiter
@@ -95,11 +103,17 @@ func New(o Options) (*Server, error) {
 
 	pages := make(map[string]*template.Template, len(pageFiles))
 	for _, name := range pageFiles {
-		t, err := template.New("layout").ParseFS(embedded, "templates/layout.html", "templates/"+name)
+		t, err := template.New("layout").ParseFS(embedded,
+			"templates/layout.html", "templates/"+name, tileGlob)
 		if err != nil {
 			return nil, fmt.Errorf("web: parsing %s: %w", name, err)
 		}
 		pages[name] = t
+	}
+
+	tiles, err := template.New("tiles").ParseFS(embedded, tileGlob)
+	if err != nil {
+		return nil, fmt.Errorf("web: parsing the tile fragments: %w", err)
 	}
 
 	staticDir, err := fs.Sub(embedded, "static")
@@ -114,6 +128,7 @@ func New(o Options) (*Server, error) {
 		clock:   o.Clock,
 		log:     o.Log,
 		pages:   pages,
+		tiles:   tiles,
 		static:  http.StripPrefix("/static/", http.FileServer(http.FS(staticDir))),
 		session: newSessionCodec(o.Config.Secrets.AppToken),
 		signIn:  newRateLimiter(signInAttempts, signInWindow),
@@ -229,25 +244,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
-// handleDashboard renders the dashboard shell. Task 14 replaces the body with the tile grid.
-func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, http.StatusOK, "dashboard.html", pageData{Title: "Dashboard"})
-}
-
-// handleTile renders one tile fragment. Task 14 replaces this placeholder with the real tile
-// templates; the source name is escaped rather than interpolated raw, because the wildcard is
-// whatever the caller put in the path.
-func (s *Server) handleTile(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = fmt.Fprintf(w, "<section class=\"tile\" data-source=\"%s\"></section>\n",
-		template.HTMLEscapeString(r.PathValue("source")))
-}
-
-// handleSeen marks everything as seen. Task 14 replaces this placeholder with the write to
-// Store.SetLastVisit and the re-rendered tiles; until then it records nothing and says so with 204.
-func (s *Server) handleSeen(w http.ResponseWriter, _ *http.Request) {
-	w.WriteHeader(http.StatusNoContent)
-}
+// handleDashboard, handleTile and handleSeen live in dashboard.go.
 
 // handleRefresh is the dashboard's own refresh button. Task 15 replaces this placeholder with the
 // runner call, its 409 on refresh.ErrBusy and the re-rendered tiles.
@@ -278,7 +275,14 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 
 // pageData is what every page template is executed with. Later tasks add their own fields.
 type pageData struct {
+	// Title is the page's own name, joined to the site name in the tab title. The dashboard
+	// leaves it empty, because the dashboard is the site rather than a page within it.
 	Title string
+	// NewCount prefixes the tab title when it is greater than zero (FR-1.2 AC3).
+	NewCount int
+	// Dashboard is set only by handleDashboard. The layout reads it for the header's last-refresh
+	// line, and dashboard.html for the tiles; every other page leaves it nil.
+	Dashboard *dashboardView
 	// Error is a message written for the visitor. It is never an error's own text: those can
 	// carry a DSN or a token (QS-4.3).
 	Error string
