@@ -1,4 +1,7 @@
 {{define "content"}}
+{{/* A notice the page itself has to carry, rather than an error's own text: the only thing that
+     sets it is a refresh that could not start because one was already running (FR-5.2 AC2). */}}
+{{with .Error}}<p class="notice notice-error" role="alert">{{.}}</p>{{end}}
 {{with .Dashboard}}
 <div class="dash-actions">
   <p class="dash-summary">{{if gt .NewTotal 0}}{{.NewTotal}} new since your last visit{{if .LastVisit.Known}} <time datetime="{{.LastVisit.Absolute}}">{{.LastVisit.Relative}}</time>{{end}}{{else}}Nothing new since your last visit{{if .LastVisit.Known}} <time datetime="{{.LastVisit.Absolute}}">{{.LastVisit.Relative}}</time>{{end}}{{end}}</p>

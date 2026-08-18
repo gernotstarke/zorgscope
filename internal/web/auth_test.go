@@ -429,6 +429,21 @@ func TestNoResponseEverContainsASecret(t *testing.T) {
 		}
 		o.Store = store
 		o.Log = slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug}))
+		// The refresh endpoints are the one place a dependency's own error text is handed
+		// straight to the caller: POST /api/refresh reports, per source, what failed. So the
+		// runner the canary drives has a source that fails with the canary in its message, and
+		// the JSON body below has to come back without it.
+		//
+		// The runner is given a discarding logger of its own: what a source's error does to a
+		// log is internal/refresh's contract with its adapters — every adapter keeps credentials
+		// out of its error text — while what it does to a *response* is this package's, and that
+		// is what this test is for.
+		o.Runner = refresh.New(store, []ports.SourceFetcher{
+			&ports.FakeFetcher{
+				SourceName: "github",
+				Err:        errors.New("github rejected " + canary + "-github"),
+			},
+		}, &ports.FixedClock{T: testNow}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	})
 	h := s.Handler()
 

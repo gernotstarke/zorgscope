@@ -284,18 +284,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 
 // handleDashboard, handleTile and handleSeen live in dashboard.go.
 
-// handleRefresh is the dashboard's own refresh button. Task 15 replaces this placeholder with the
-// runner call, its 409 on refresh.ErrBusy and the re-rendered tiles.
-func (s *Server) handleRefresh(w http.ResponseWriter, _ *http.Request) {
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// handleAPIRefresh is the endpoint cron-job.org calls. Task 15 replaces this placeholder with the
-// runner call and its JSON report; the bearer authentication in front of it is not a placeholder.
-func (s *Server) handleAPIRefresh(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_, _ = w.Write([]byte("{\"ok\":true}\n"))
-}
+// handleRefresh and handleAPIRefresh live in refresh.go.
 
 // handleDocs serves the embedded documentation. Task 16 replaces this placeholder with the
 // goldmark rendering of docs/ and its link rewriting.
