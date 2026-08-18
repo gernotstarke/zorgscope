@@ -199,7 +199,7 @@ func (r *Runner) Run(ctx context.Context, trigger string) (Report, error) {
 	var fresh []domain.Item
 
 	for _, f := range r.fetchers {
-		sr := r.runSource(ctx, f, started, &fresh)
+		sr := r.runSource(ctx, f, &fresh)
 		if sr.Err != "" {
 			rep.OK = false
 		}
@@ -231,10 +231,34 @@ func (r *Runner) Run(ctx context.Context, trigger string) (Report, error) {
 // intact (FR-5.5 AC1).
 //
 // The items of a successful source are appended to fresh, which is what the notifier is offered.
-func (r *Runner) runSource(ctx context.Context, f ports.SourceFetcher, now time.Time, fresh *[]domain.Item) SourceReport {
+//
+// # Why the clock is read here and not at the start of the run
+//
+// The time this function passes to the store becomes the items' first_seen_at (the store stamps
+// the INSERT with it), and first_seen_at is one half of the comparison the NEW badge is: an item
+// is new while first_seen_at > last_visit_at (FR-1.2 AC1, QS-1.2). The other half is written by
+// POST /seen at the wall-clock instant of the click.
+//
+// Reading the clock once for the whole run made the two halves incomparable. A run starting at
+// 12:00:00 stamped every item it stored with 12:00:00, however long the fetch took; a visitor
+// pressing "mark all seen" at 12:00:30 moved the watermark past that stamp; and every item the
+// run stored afterwards was born already-seen — not until the next visit, but for good, because
+// first_seen_at is deliberately never updated (FR-5.3 AC2). Nothing reported it: the item simply
+// never carried a badge.
+//
+// Reading it after the fetch returned makes "first seen" mean what the column says — the instant
+// zorgscope first held the item — and shrinks the window in which a click can still overtake a
+// store from the length of the whole run to the length of one source's writes. FR-5.3 AC1's "the
+// time of that refresh run" is still satisfied: this reading lies inside the run it belongs to.
+//
+// The residual window is not zero, and cannot be closed here: a click landing between this line
+// and ReplaceItems' commit still stamps an item just behind the watermark. Closing it entirely
+// needs the watermark and the stamp to be taken under one lock — a store change, not a runner one.
+func (r *Runner) runSource(ctx context.Context, f ports.SourceFetcher, fresh *[]domain.Item) SourceReport {
 	source := f.Name()
 
 	res, err := f.Fetch(ctx)
+	now := r.clock.Now()
 	if err != nil {
 		// Deliberately not storing res: a non-nil error means the result may be partial.
 		return r.sourceFailed(ctx, source, now, fmt.Errorf("fetch: %w", err))

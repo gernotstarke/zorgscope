@@ -887,3 +887,86 @@ func TestARevokedWebhookBlocksTheQueueInsteadOfDrainingIt(t *testing.T) {
 			got)
 	}
 }
+
+// QS-1.3's second half — "an item first seen after the click is new again" — across the one seam
+// no per-task test could see: the runner's clock and POST /seen's.
+//
+// The scenario is the ordinary one, not a contrived race. A refresh may legitimately run for
+// minutes (refreshCeiling is four), and the user is looking at the dashboard the whole time:
+//
+//	12:00:00  cron fires; the run takes the lease and starts fetching.
+//	12:00:30  the user presses "mark all seen"; last_visit_at = 12:00:30.
+//	12:01:00  the fetch returns and the items are stored.
+//
+// While the runner stamped first_seen_at with the run's *start*, every item stored after that
+// click was born at 12:00:00 — behind a watermark of 12:00:30 — and therefore never carried a NEW
+// badge, on that visit or any later one, because first_seen_at is never updated (FR-5.3 AC2). The
+// dashboard's whole product is that badge, so the item was, in the only sense that matters,
+// invisible.
+//
+// This is deliberately driven through the real store and the real domain rule: the stamp is
+// written by the INSERT, the watermark by SetLastVisit, and the verdict by domain.Item.IsNew. A
+// stub for any of the three would let the bug back in.
+func TestAMarkAllSeenDuringARunDoesNotSwallowThatRunsNewItems(t *testing.T) {
+	store, ctx := newTestStore(t), context.Background()
+	clock := &ports.FixedClock{T: now}
+
+	// The click lands in the middle of the fetch, exactly as it would from a browser: the
+	// watermark is the wall-clock instant of the click, and the fetch goes on afterwards.
+	click := now.Add(30 * time.Second)
+	source := &fetcherDoing{
+		name:  "github",
+		items: []domain.Item{item("1"), item("2")},
+		during: func() {
+			clock.T = click
+			if err := store.SetLastVisit(ctx, clock.Now()); err != nil {
+				t.Errorf("SetLastVisit: %v", err)
+			}
+			clock.T = click.Add(30 * time.Second) // the fetch runs on for another half minute
+		},
+	}
+	r := refresh.New(store, []ports.SourceFetcher{source}, clock, nil, discardLogger())
+
+	if _, err := r.Run(ctx, "cron"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	lastVisit, err := store.LastVisit(ctx)
+	if err != nil {
+		t.Fatalf("LastVisit: %v", err)
+	}
+	if !lastVisit.Equal(click) {
+		t.Fatalf("last visit = %v, want the click at %v — the fixture is wrong", lastVisit, click)
+	}
+	items := mustItems(t, store, ctx)
+	if len(items) != 2 {
+		t.Fatalf("len(items) = %d, want 2", len(items))
+	}
+	for _, it := range items {
+		if !it.IsNew(lastVisit) {
+			t.Errorf("item %s: first seen %v, last visit %v — an item stored after the click "+
+				"must still be NEW (FR-1.2 AC1, QS-1.3). Stamping first_seen_at with the run's "+
+				"start time hides every item a long run stores after a mark-all-seen, for good.",
+				it.ExternalID, it.FirstSeenAt, lastVisit)
+		}
+	}
+}
+
+// fetcherDoing is a SourceFetcher that runs during while it is fetching — the stand-in for
+// everything that can happen to the database in the minutes a real fetch takes. ports.FakeFetcher
+// can block on a channel but cannot act, and acting is the whole point here.
+type fetcherDoing struct {
+	name   string
+	items  []domain.Item
+	during func()
+}
+
+func (f *fetcherDoing) Name() string { return f.name }
+
+func (f *fetcherDoing) Fetch(ctx context.Context) (ports.FetchResult, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.FetchResult{}, err
+	}
+	f.during()
+	return ports.FetchResult{Items: f.items}, nil
+}
