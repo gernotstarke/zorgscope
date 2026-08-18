@@ -995,3 +995,35 @@ func (s *leaseStore) leaseHeld() (bool, string) {
 	defer s.mu.Unlock()
 	return s.holder != "", s.holder
 }
+
+// FR-5.2 AC2 and FR-1.1 AC3 meeting on the one page where the contradiction was guaranteed. This
+// page is reached only while another run holds the lease — that is what it is for — so the run the
+// header reads is always the open one, and reading its finishing time alone made every 409 say
+// that no refresh had ever run, directly under a notice saying one was running right now.
+func TestTheBusyPageDoesNotClaimThatNoRefreshHasEverRun(t *testing.T) {
+	block := make(chan struct{})
+	f := &ports.FakeFetcher{SourceName: "github", Block: block}
+	store := newLeaseStore()
+	h := newRefreshServer(t, store, &ports.FixedClock{T: testNow}, f).Handler()
+	session := signIn(t, h)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		postBearer(t, h, "/api/refresh", testSecret)
+	}()
+	waitFor(t, "the cron refresh to start fetching", func() bool { return f.CallCount() > 0 })
+
+	body := postAs(h, "/refresh", url.Values{}, session).Body.String()
+
+	if strings.Contains(body, "No refresh has run yet") {
+		t.Errorf("the 409 page says no refresh has ever run while telling the visitor one is "+
+			"running (FR-1.1 AC3):\n%s", body)
+	}
+	if !strings.Contains(body, "Refreshing now") {
+		t.Errorf("the 409 page does not report the run that is holding the lease:\n%s", body)
+	}
+
+	close(block)
+	<-done
+}

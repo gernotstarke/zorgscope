@@ -279,3 +279,70 @@ func tileByName(t *testing.T, d domain.Dashboard, name string) domain.Tile {
 	t.Fatalf("no tile named %q", name)
 	return domain.Tile{}
 }
+
+// FR-1.1 AC3. The header shows the time of the last *successful* refresh run, and the outcome
+// travels with it so that a run which is open, or which failed, can never be presented as one.
+func TestTheLastRunIsReportedWithItsOutcome(t *testing.T) {
+	now := at("2026-08-17T12:00:00Z")
+	started := at("2026-08-17T11:58:00Z")
+	finished := at("2026-08-17T11:59:00Z")
+
+	tests := []struct {
+		name    string
+		run     domain.RefreshRun
+		outcome domain.RunOutcome
+		at      time.Time
+	}{
+		{
+			name:    "never",
+			run:     domain.RefreshRun{},
+			outcome: domain.RunNever,
+		},
+		{
+			// The case the 409 "a refresh is already running" page is always in.
+			name:    "still running",
+			run:     domain.RefreshRun{ID: 4, StartedAt: started},
+			outcome: domain.RunRunning,
+			at:      started,
+		},
+		{
+			name:    "succeeded",
+			run:     domain.RefreshRun{ID: 4, StartedAt: started, FinishedAt: finished, OK: true},
+			outcome: domain.RunSucceeded,
+			at:      finished,
+		},
+		{
+			// Every upstream down: each tick opens a run, fails every source and closes it. The
+			// header must not offer that as a refresh (FR-1.1 AC3 says "successful").
+			name:    "failed",
+			run:     domain.RefreshRun{ID: 4, StartedAt: started, FinishedAt: finished},
+			outcome: domain.RunFailed,
+			at:      finished,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			d := domain.BuildDashboard(domain.DashboardInput{Now: now, LastRun: tc.run})
+			if d.LastRun != tc.outcome {
+				t.Errorf("LastRun = %q, want %q", d.LastRun, tc.outcome)
+			}
+			if !d.LastRunAt.Equal(tc.at) {
+				t.Errorf("LastRunAt = %v, want %v", d.LastRunAt, tc.at)
+			}
+		})
+	}
+}
+
+// FR-6.1 AC3 has the announcement step record its failure without failing the run, and the run
+// record's detail is where it is recorded. It reaches the dashboard or it reaches nobody: a
+// revoked Slack webhook changes nothing else on the page.
+func TestTheRunDetailReachesTheDashboard(t *testing.T) {
+	const detail = "github: 12; todoist: 4; notify: post to slack: 404"
+	d := domain.BuildDashboard(domain.DashboardInput{
+		Now:     at("2026-08-17T12:00:00Z"),
+		LastRun: domain.RefreshRun{ID: 4, StartedAt: at("2026-08-17T11:58:00Z"), FinishedAt: at("2026-08-17T11:59:00Z"), OK: true, Detail: detail},
+	})
+	if d.LastRunDetail != detail {
+		t.Errorf("LastRunDetail = %q, want %q — the only signal a blocked webhook has", d.LastRunDetail, detail)
+	}
+}

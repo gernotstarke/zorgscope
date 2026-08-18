@@ -1110,3 +1110,177 @@ func linkedStaticAssets(page string) []string {
 	sort.Strings(out)
 	return out
 }
+
+// FR-1.1 AC3, the in-flight case. The store returns the most recently *started* run, so during a
+// refresh the run the page reads has no finishing time — the same zero a database with no runs at
+// all returns. Read as a timestamp alone it made the header announce "No refresh has run yet" on a
+// database holding a month of them, for the whole length of every slow run.
+func TestTheHeaderSaysARefreshIsRunningRatherThanThatNoneHasEverRun(t *testing.T) {
+	store := &dashStore{
+		lastRun: domain.RefreshRun{ID: 9, StartedAt: testNow.Add(-90 * time.Second)},
+		states:  healthyStates(testNow),
+	}
+	body := getAuthed(t, dashHandler(t, store), "/").Body.String()
+
+	if strings.Contains(body, "No refresh has run yet") {
+		t.Errorf("the header calls an open run no run at all (FR-1.1 AC3):\n%s",
+			firstLineContaining(body, "topbar-status"))
+	}
+	if !strings.Contains(body, "Refreshing now") {
+		t.Errorf("the header does not say a refresh is under way:\n%s",
+			firstLineContaining(body, "topbar-status"))
+	}
+}
+
+// FR-1.1 AC3 names the last *successful* refresh run, and OK is stored on every run for exactly
+// this. A run in which every upstream was down must not be offered as a refresh that worked; with
+// only the last run to read from, the header says the last one failed and when, which is the
+// truthful half of what the requirement asks for.
+func TestAFailedRunIsNeverPresentedAsASuccessfulRefresh(t *testing.T) {
+	store := &dashStore{
+		lastRun: domain.RefreshRun{
+			ID:         9,
+			StartedAt:  testNow.Add(-21 * time.Minute),
+			FinishedAt: testNow.Add(-20 * time.Minute),
+			OK:         false,
+		},
+		states: healthyStates(testNow),
+	}
+	body := getAuthed(t, dashHandler(t, store), "/").Body.String()
+
+	if strings.Contains(body, "Last successful refresh") {
+		t.Errorf("a failed run is shown as the last successful refresh (FR-1.1 AC3):\n%s",
+			firstLineContaining(body, "topbar-status"))
+	}
+	if !strings.Contains(body, "Last refresh failed") {
+		t.Errorf("the header does not say the last run failed:\n%s",
+			firstLineContaining(body, "topbar-status"))
+	}
+	if !strings.Contains(body, "20 minutes ago") {
+		t.Error("the header drops when the failure happened; the visitor cannot tell how stale the page is")
+	}
+}
+
+// FR-6.1 AC3 + QS-4.3. A Slack failure never fails a refresh, so nothing else on the page changes
+// when the webhook is revoked: the run record's detail is the only signal, and it is worth nothing
+// until it is rendered. It carries upstream error text, so it goes through Redact like every other
+// borrowed string here.
+func TestTheRunDetailIsRenderedAndScrubbed(t *testing.T) {
+	const secret = "https://hooks.slack.example/services/T0/B0/canary-value"
+	store := &dashStore{
+		lastRun: domain.RefreshRun{
+			ID:         9,
+			StartedAt:  testNow.Add(-2 * time.Minute),
+			FinishedAt: testNow.Add(-time.Minute),
+			OK:         true,
+			Detail:     "github: 12; todoist: 4; notify: post to " + secret + ": 404 no_service",
+		},
+		states: healthyStates(testNow),
+	}
+	s := newTestServerWith(t, func(o *Options) {
+		credentialAllSources(o)
+		o.Config.Secrets.SlackWebhook = secret
+		o.Store = store
+	})
+	body := getAuthed(t, s.Handler(), "/").Body.String()
+
+	if !strings.Contains(body, "404 no_service") {
+		t.Error("the run detail is not rendered anywhere, so a revoked webhook has no visible " +
+			"signal at all (FR-6.1 AC3)")
+	}
+	if !strings.Contains(body, "github: 12") {
+		t.Error("the run detail is rendered without its per-source outcome")
+	}
+	if strings.Contains(body, secret) {
+		t.Error("the run detail put the webhook URL on the page (QS-4.3)")
+	}
+	if !strings.Contains(body, "[redacted]") {
+		t.Error("the detail was dropped rather than scrubbed; the operator loses the diagnosis")
+	}
+}
+
+// FR-1.2 AC3 under polling. A poll swaps one tile, and the total count lives in two places outside
+// every tile — the tab title and the summary line. Without them coming back with the fragment the
+// page starts contradicting itself at the first poll: the tile says three new, the tab says none.
+func TestAPolledTileBringsTheTotalCountBackWithIt(t *testing.T) {
+	store := &dashStore{
+		lastVisit: testNow.Add(-2 * time.Hour),
+		items: []domain.Item{
+			ghItem(1, "One", testNow.Add(-time.Hour)),
+			ghItem(2, "Two", testNow.Add(-time.Hour)),
+		},
+		states: healthyStates(testNow),
+	}
+	h := dashHandler(t, store)
+	fragment := getAuthed(t, h, "/tile/github").Body.String()
+
+	for _, want := range []string{
+		// htmx lifts a top-level <title> out of the response and writes it into the document's
+		// own, so the title needs no out-of-band marker — see templates/tiles/counts.html.
+		"<title>(2) zorgscope</title>",
+		`id="dash-summary" hx-swap-oob="true"`,
+		"2 new since your last visit",
+	} {
+		if !strings.Contains(fragment, want) {
+			t.Errorf("the polled fragment does not carry %q, so the count goes stale after the "+
+				"first swap (FR-1.2 AC3):\n%s", want, fragment)
+		}
+	}
+	// QS-4.4: the mechanism is markup, not script. The CSP carries no 'unsafe-inline', and the
+	// page has to stay correct for a visitor with JavaScript switched off (FR-1.3 AC3).
+	if strings.Contains(fragment, "<script") || regexp.MustCompile(`\son[a-z]+\s*=`).MatchString(fragment) {
+		t.Errorf("the fragment updates the count with script rather than markup (QS-4.4):\n%s", fragment)
+	}
+
+	// The page itself draws the very same two elements, plainly: an out-of-band marker on a full
+	// page load would ask htmx to swap elements into a document it has just replaced.
+	page := getAuthed(t, h, "/").Body.String()
+	if strings.Contains(page, "hx-swap-oob") {
+		t.Errorf("the page marks its own elements as out-of-band swaps:\n%s",
+			firstLineContaining(page, "hx-swap-oob"))
+	}
+	if !strings.Contains(page, `id="dash-summary"`) {
+		t.Error("the page does not carry the id a swap addresses, so a poll can never find it")
+	}
+}
+
+// GET / used to be registered as the mux's catch-all, so every path no other route claimed —
+// /admin, a typo, a fragment path with a segment too many — answered 200 with the whole dashboard.
+func TestAnUnknownPathIsNotTheDashboard(t *testing.T) {
+	h := dashHandler(t, &dashStore{states: healthyStates(testNow)})
+	c := signIn(t, h)
+
+	for _, path := range []string{"/admin", "/no-such-page", "/tile/github/extra"} {
+		rec := getAs(h, path, c)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404: an unknown path must not render the dashboard",
+				path, rec.Code)
+		}
+		if strings.Contains(rec.Body.String(), `class="tiles"`) {
+			t.Errorf("GET %s answered with the dashboard", path)
+		}
+	}
+	if rec := getAs(h, "/", c); rec.Code != http.StatusOK {
+		t.Errorf("GET / = %d, want 200: the dashboard itself still has to answer", rec.Code)
+	}
+}
+
+// FR-8.2 AC2 is about the credential. Config.Enabled is false both when the secret is missing and
+// when there is nothing configured to watch, and the tile said "no credential is configured" for
+// both — sending an operator who had commented out the repos: list after a Fly secrets problem
+// that did not exist.
+func TestAConfiguredSourceWithNothingToWatchDoesNotBlameTheCredential(t *testing.T) {
+	s := newTestServerWith(t, func(o *Options) {
+		credentialAllSources(o)
+		o.Config.GitHub.Repos = nil // the token is set and correct; the watch list is empty
+		o.Store = &dashStore{states: healthyStates(testNow)}
+	})
+	body := getAuthed(t, s.Handler(), "/").Body.String()
+
+	if strings.Contains(body, "no credential is configured") {
+		t.Error("an empty repos list is reported as a missing credential (FR-8.2 AC2)")
+	}
+	if n := strings.Count(body, "no repositories are configured to watch"); n != 2 {
+		t.Errorf("%d of the 2 GitHub tiles name the empty watch list, want 2", n)
+	}
+}

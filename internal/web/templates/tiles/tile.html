@@ -14,7 +14,10 @@
     <span class="tile-age">{{if .LastOK.Known}}<time datetime="{{.LastOK.Absolute}}">{{.LastOK.Relative}}</time>{{else if .Disabled}}not fetching{{else}}never fetched{{end}}</span>
   </header>
   {{if .Disabled}}
-  <p class="notice notice-disabled" role="status">Disabled — no credential is configured for this source.{{if .HasContent}} What follows is the data that was stored before it went away.{{end}}</p>
+  {{/* The reason is computed in Go rather than fixed here: a missing credential and an empty
+       watch list both disable a source (FR-8.2 AC2), and saying "no credential" for the second
+       sends the operator after a secret that is present and correct. */}}
+  <p class="notice notice-disabled" role="status">Disabled — {{.DisabledReason}}.{{if .HasContent}} What follows is the data that was stored before it went away.{{end}}</p>
   {{else if .Error}}
   <p class="notice notice-error" role="alert">Failing — {{.Error}} (last success {{if .LastOK.Known}}<time datetime="{{.LastOK.Absolute}}">{{.LastOK.Relative}}</time>{{else}}never{{end}})</p>
   {{else if .Stale}}

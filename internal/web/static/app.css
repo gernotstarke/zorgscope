@@ -122,6 +122,18 @@ button:hover { filter: brightness(1.08); }
 .brand-name { font-weight: 600; }
 
 .topbar-status { margin: 0; color: var(--muted); font-size: 0.85rem; }
+/* The header states the outcome in words as well, so colour only reinforces it (FR-1.5 AC2). */
+.status-failed { color: var(--danger); }
+
+/* The run record's per-source detail. Present on every dashboard, because the failures it is the
+   only signal for do not announce themselves — and quiet, because most days it says four sources
+   and their counts. */
+.run-detail {
+  margin: -0.75rem 0 1.25rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
 
 .footer {
   max-width: 72rem;

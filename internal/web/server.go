@@ -251,7 +251,14 @@ func (s *Server) routes() []route {
 		{http.MethodGet, "/docs/", authPublic, s.handleDocs, "/docs/requirements/01-goals"},
 		{http.MethodGet, "/static/", authPublic, s.handleStatic, "/static/app.css"},
 
-		{http.MethodGet, "/", authSessionPage, s.handleDashboard, ""},
+		// "/{$}" and not "/": the bare pattern is the mux's catch-all and matches every path no
+		// other route claims, so /admin, /no-such-page and /tile/github/extra all answered 200
+		// with the whole dashboard — a typo rendering the page it was not asking for, and a
+		// fragment request answered with a document. "{$}" ends the pattern, so it matches the
+		// root and nothing else and the mux answers everything else with its own 404, before any
+		// handler and therefore before any credential is even considered. The probe is what the
+		// tests that drive every route request, since the pattern is not itself a path.
+		{http.MethodGet, "/{$}", authSessionPage, s.handleDashboard, "/"},
 		{http.MethodGet, "/tile/{source}", authSessionFragment, s.handleTile, "/tile/github"},
 		{http.MethodPost, "/seen", authSessionFragment, s.handleSeen, ""},
 		{http.MethodPost, "/refresh", authSessionFragment, s.handleRefresh, ""},

@@ -70,3 +70,25 @@ func TestRefreshRunIsAPlainRecord(t *testing.T) {
 		t.Fatalf("unexpected RefreshRun: %+v", run)
 	}
 }
+
+// An open run and a database that has never refreshed both carry a zero FinishedAt, and telling
+// them apart is what keeps "no refresh has run yet" off a page rendered mid-refresh.
+func TestRefreshRunIsRunningOnlyWhileItIsOpen(t *testing.T) {
+	started := at("2026-08-17T10:00:00Z")
+	tests := []struct {
+		name string
+		run  domain.RefreshRun
+		want bool
+	}{
+		{"open", domain.RefreshRun{ID: 1, StartedAt: started}, true},
+		{"finished", domain.RefreshRun{ID: 1, StartedAt: started, FinishedAt: started.Add(time.Minute)}, false},
+		{"never run", domain.RefreshRun{}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.run.Running(); got != tc.want {
+				t.Errorf("Running() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

@@ -62,6 +62,26 @@ func (s *Server) handleTile(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, r, "rendering a tile", err)
 			return
 		}
+		// The total count is not inside any tile — it is the tab title (FR-1.2 AC3) and the
+		// summary line — so a swap that carried only the tile would leave both showing the figure
+		// the page was loaded with, and the page would contradict itself from the first poll on.
+		// They travel back with the fragment as htmx out-of-band swaps, addressed by id, which
+		// keeps this a property of the markup: no inline script, which the CSP forbids anyway
+		// (QS-4.4), and nothing to run for a visitor who has JavaScript switched off, for whom a
+		// full page load is the only thing that ever happens and is correct on its own
+		// (FR-1.3 AC3).
+		for _, oob := range []struct {
+			name string
+			data any
+		}{
+			{"tab-title", titleView{NewCount: d.NewTotal}},
+			{"dash-summary", newSummaryView(d, true)},
+		} {
+			if err := s.tiles.ExecuteTemplate(&buf, oob.name, oob.data); err != nil {
+				s.fail(w, r, "rendering a tile", err)
+				return
+			}
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(buf.Bytes())
 		return
@@ -144,6 +164,52 @@ func (s *Server) disabledSources() []string {
 	return out
 }
 
+// noAuthNotice is FR-8.2 AC2's case: the source's secret is not in the environment. The
+// identifier avoids the word the sentence itself uses, because gosec's G101 reads any constant
+// named after a credential as being one.
+const noAuthNotice = "no credential is configured for this source"
+
+// tileCredential maps a tile to the configured source whose credential and watch list decide
+// whether it is dark. Both GitHub tiles hang off the one entry, because issues and builds are two
+// fetchers over a single token.
+var tileCredential = map[string]string{
+	"github": "github",
+	"builds": "github",
+	"sites":  "plausible",
+	"tasks":  "todoist",
+}
+
+// disabledReason says why a tile is dark, in words that point at the thing that is actually
+// missing.
+//
+// Config.Enabled answers one question with two meanings: it is false when the credential is absent
+// and also when there is nothing configured to watch — no repositories, no sites, no filter. The
+// tile used to render both as "no credential is configured", so an operator who had commented out
+// the repos: list while testing was sent hunting a Fly secrets problem that did not exist, with a
+// correct token in place. Enabled is where the two are conflated and it may not be changed here,
+// so the distinction is drawn where the sentence is written: the credential is checked first, and
+// only when it is present does the empty watch list get named.
+func (s *Server) disabledReason(tile string) string {
+	switch tileCredential[tile] {
+	case "github":
+		if s.cfg.Secrets.GitHubToken == "" {
+			return noAuthNotice
+		}
+		return "no repositories are configured to watch"
+	case "plausible":
+		if s.cfg.Secrets.PlausibleKey == "" {
+			return noAuthNotice
+		}
+		return "no sites are configured to watch"
+	case "todoist":
+		if s.cfg.Secrets.TodoistToken == "" {
+			return noAuthNotice
+		}
+		return "no task filter is configured"
+	}
+	return noAuthNotice
+}
+
 // pollSeconds is the htmx poll interval for every tile (FR-1.6 AC1): the configured refresh
 // interval, because a tile cannot change between refreshes and polling faster would only wake a
 // machine that is meant to scale to zero.
@@ -165,10 +231,54 @@ func (s *Server) pollSeconds() int {
 
 // dashboardView is the whole page.
 type dashboardView struct {
+	NewTotal int
+	// LastRun is when the run the header describes reached the state LastRunState names, and
+	// LastRunState is which of "never", "running", "succeeded" and "failed" that is. A time on
+	// its own cannot carry it: the same zero means "never" and "still running", and the same
+	// stamp means "succeeded then" and "failed then" (FR-1.1 AC3).
+	LastRun      timeView
+	LastRunState string
+	// LastRunDetail is the run record's per-source outcome, already scrubbed of every configured
+	// secret (QS-4.3). It is quiet on the page and is the only place a blocked Slack webhook
+	// shows up at all.
+	LastRunDetail string
+	LastVisit     timeView
+	Tiles         []tileData
+}
+
+// Summary is the summary line's own data, so that the line the page draws and the one a poll
+// swaps back in are the same markup executed twice rather than two copies that can drift.
+func (v dashboardView) Summary() summaryView {
+	return summaryView{NewTotal: v.NewTotal, LastVisit: v.LastVisit}
+}
+
+// titleView is the tab title (FR-1.2 AC3), and summaryView the "N new since your last visit" line.
+// Both are outside every tile and both state the *total*, so a poll that swapped a tile without
+// them would leave the page disagreeing with itself. The fragment therefore carries both — the
+// title as a plain <title>, which htmx lifts out of any response and applies to the document, the
+// summary as an out-of-band swap, which is what OOB marks. See templates/tiles/counts.html.
+type titleView struct {
+	Title    string
+	NewCount int
+}
+
+type summaryView struct {
+	OOB       bool
 	NewTotal  int
-	LastRun   timeView
 	LastVisit timeView
-	Tiles     []tileData
+}
+
+// TitleView lets the layout draw its <title> from the same block the polled fragment sends back.
+func (d pageData) TitleView() titleView {
+	return titleView{Title: d.Title, NewCount: d.NewCount}
+}
+
+func newSummaryView(d domain.Dashboard, oob bool) summaryView {
+	return summaryView{
+		OOB:       oob,
+		NewTotal:  d.NewTotal,
+		LastVisit: newTimeView(d.LastVisitAt, d.GeneratedAt),
+	}
 }
 
 // tileData is one tile, and is what both the page and the /tile/{source} fragment execute the
@@ -179,6 +289,10 @@ type tileData struct {
 	NewCount int
 	Stale    bool
 	Disabled bool
+	// DisabledReason is why the tile is dark, set only when Disabled is. It names the credential
+	// or the empty watch list, whichever is actually missing — never both, and never the wrong
+	// one (FR-8.2 AC2).
+	DisabledReason string
 	// Error is upstream error text, already scrubbed of every configured secret (QS-4.3).
 	Error    string
 	LastOK   timeView
@@ -266,10 +380,15 @@ type changeView struct {
 // dashboardView turns the assembled domain dashboard into the page's presentation data.
 func (s *Server) dashboardView(d domain.Dashboard) dashboardView {
 	v := dashboardView{
-		NewTotal:  d.NewTotal,
-		LastRun:   newTimeView(d.LastRunAt, d.GeneratedAt),
-		LastVisit: newTimeView(d.LastVisitAt, d.GeneratedAt),
-		Tiles:     make([]tileData, 0, len(d.Tiles)),
+		NewTotal:     d.NewTotal,
+		LastRun:      newTimeView(d.LastRunAt, d.GeneratedAt),
+		LastRunState: string(d.LastRun),
+		// The detail is assembled from upstream error text — a source's failure message and the
+		// reason an announcement did not go out — and it is rendered, so it goes through Redact
+		// like every other borrowed string on this page (QS-4.3).
+		LastRunDetail: Redact(s.cfg.Secrets, d.LastRunDetail),
+		LastVisit:     newTimeView(d.LastVisitAt, d.GeneratedAt),
+		Tiles:         make([]tileData, 0, len(d.Tiles)),
 	}
 	for _, tile := range d.Tiles {
 		v.Tiles = append(v.Tiles, s.tileData(tile, d.GeneratedAt, d.LastVisitAt))
@@ -293,6 +412,9 @@ func (s *Server) tileData(t domain.Tile, now, lastVisit time.Time) tileData {
 		Error:    Redact(s.cfg.Secrets, t.Error),
 		LastOK:   newTimeView(t.LastOKAt, now),
 		PollSecs: s.pollSeconds(),
+	}
+	if t.Disabled {
+		td.DisabledReason = s.disabledReason(t.Name)
 	}
 	for _, it := range t.Items {
 		td.Items = append(td.Items, newItemView(it, now, it.IsNew(lastVisit)))

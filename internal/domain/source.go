@@ -31,3 +31,18 @@ type RefreshRun struct {
 	OK                    bool
 	Detail                string
 }
+
+// Running reports whether this run is still open: it was started and nothing has finished it.
+//
+// The distinction is not a nicety. A store returns the most recently *started* run, so the run a
+// dashboard rendered during a refresh is the open one, and an open run carries a zero FinishedAt —
+// the same zero a database holding no runs at all returns. Told apart by FinishedAt alone the two
+// are the same value, and the second reading is the one that reaches the page: "no refresh has
+// run yet", on a database holding a month of them. It is guaranteed on the 409 page, whose whole
+// purpose is to say that a refresh is running.
+//
+// StartedAt rather than ID is what separates them, because it is the field an open run is
+// certain to carry whatever recorded it.
+func (r RefreshRun) Running() bool {
+	return !r.StartedAt.IsZero() && r.FinishedAt.IsZero()
+}

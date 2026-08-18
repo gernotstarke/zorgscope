@@ -20,11 +20,12 @@ import (
 // Machine with a request in flight, so an upstream that accepts a connection and then never
 // answers would keep this process billed and running for as long as it stayed silent.
 //
-// It is minutes rather than thirty seconds because the runner's three closing writes — release the
-// lease, finish the run record, record a source error — each carry their own five-second deadline,
-// deliberately independent of this context so that a cancelled run can still record why it failed.
-// A run can therefore legitimately linger some fifteen seconds past its own budget, and a ceiling
-// sized to the budget would cut those writes off precisely when they matter most.
+// It is minutes rather than thirty seconds because the runner's closing writes — one
+// RecordSourceError per source the run never reached, then FinishRun, then ReleaseRefreshLease —
+// each carry their own five-second deadline, deliberately independent of this context so that a
+// cancelled run can still record why it failed. A run can therefore legitimately linger past its
+// own budget, and a ceiling sized to the budget would cut those writes off precisely when they
+// matter most. How far past is `(len(fetchers) + 2) × 5s`; see the headroom paragraph below.
 //
 // # The invariant: refreshCeiling must stay strictly below internal/refresh's leaseTTL
 //
@@ -65,9 +66,24 @@ import (
 //
 // What the ceiling firing looks like is pinned by TestTheCeilingFiringIsReportedAsSuchPerSource:
 // every source the run had not reached records "context deadline exceeded" and is rendered as a
-// source that failed. The headroom above the ceiling is bounded on the other side too — leaseTTL
-// minus the ceiling has to leave room for the closing writes above, which run past it, and a
-// minute is ample for three writes carrying a five-second deadline each.
+// source that failed.
+//
+// # The headroom on the other side: leaseTTL − refreshCeiling
+//
+// The closing writes run *past* the ceiling, so the minute between it and leaseTTL has to cover
+// them or the lease expires underneath a run that is still writing. There are not three of them.
+// When the ceiling fires mid-run, every source the run has not reached still goes through
+// sourceFailed → RecordSourceError, each on its own five-second cleanup context, and only then
+// come FinishRun and ReleaseRefreshLease. The worst case is therefore
+//
+//	(len(fetchers) + 2) × cleanupTimeout
+//
+// which at the four production fetchers (github, github-builds, plausible, todoist) is 6 × 5 s =
+// 30 s of the 60 s available — half the headroom, not a quarter of it. It stays inside the lease
+// up to eleven fetchers (13 × 5 s = 65 s > 60 s), so adding fetchers is not free: past that, a run
+// whose ceiling fired can still be writing when its lease is handed to the next trigger, which is
+// the concurrency the ceiling exists to prevent. Re-derive both constants if a fifth source is
+// wired.
 const refreshCeiling = 4 * time.Minute
 
 // busyNotice is what a visitor is told when another refresh already holds the lease. The API says

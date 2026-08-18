@@ -50,14 +50,44 @@ type DashboardInput struct {
 	Disabled    []string // sources without a credential (FR-8.2 AC2)
 }
 
+// RunOutcome is what may honestly be said about the last refresh run (FR-1.1 AC3). It exists
+// because one timestamp cannot carry the answer: a zero time means both "never" and "still
+// running", and a non-zero one means both "succeeded then" and "failed then".
+type RunOutcome string
+
+// The four states a header line can be in.
+const (
+	// RunNever: nothing has ever been recorded.
+	RunNever RunOutcome = "never"
+	// RunRunning: a run is open right now. Its time is when it started.
+	RunRunning RunOutcome = "running"
+	// RunSucceeded: the last run finished with every source stored. Its time is the one FR-1.1
+	// AC3 asks for — the time of the last successful refresh run.
+	RunSucceeded RunOutcome = "succeeded"
+	// RunFailed: the last run finished with at least one source failing. Its time is when that
+	// failure happened, and it is deliberately not offered as a successful refresh: FR-1.1 AC3
+	// names the successful run, so a failed one may say when it failed and nothing more.
+	RunFailed RunOutcome = "failed"
+)
+
 // Dashboard is the fully assembled page: one tile per source group, plus the header's counts and
 // timestamps.
 type Dashboard struct {
 	GeneratedAt time.Time
 	LastVisitAt time.Time
-	LastRunAt   time.Time
-	NewTotal    int
-	Tiles       []Tile
+	// LastRun says what the last refresh run did, and LastRunAt when: the finishing time of a run
+	// that is over, the starting time of one still running, zero when there has never been one.
+	// The two are read together — a time without its outcome is what made the header claim a
+	// failed run as a refresh and an open one as no refresh at all.
+	LastRun   RunOutcome
+	LastRunAt time.Time
+	// LastRunDetail is the run record's per-source outcome, plus the reason the announcement step
+	// stopped if it did. It is the only signal a permanently blocked Slack webhook has: such a
+	// failure never fails a run (FR-6.1 AC3), so nothing else on the page changes when the hook is
+	// revoked. It carries upstream error text and must be scrubbed before it is rendered (QS-4.3).
+	LastRunDetail string
+	NewTotal      int
+	Tiles         []Tile
 }
 
 // Tile is one section of the dashboard — GitHub items, builds, site statistics or tasks (FR-1.1
@@ -95,11 +125,14 @@ func BuildDashboard(in DashboardInput) Dashboard {
 		disabled[s] = true
 	}
 
+	outcome, at := lastRun(in.LastRun)
 	d := Dashboard{
-		GeneratedAt: in.Now,
-		LastVisitAt: in.LastVisitAt,
-		LastRunAt:   in.LastRun.FinishedAt,
-		Tiles:       make([]Tile, 0, len(tileOrder)),
+		GeneratedAt:   in.Now,
+		LastVisitAt:   in.LastVisitAt,
+		LastRun:       outcome,
+		LastRunAt:     at,
+		LastRunDetail: in.LastRun.Detail,
+		Tiles:         make([]Tile, 0, len(tileOrder)),
 	}
 
 	for _, name := range tileOrder {
@@ -108,6 +141,40 @@ func BuildDashboard(in DashboardInput) Dashboard {
 		d.Tiles = append(d.Tiles, tile)
 	}
 	return d
+}
+
+// lastRun reduces the last refresh run to what the header may say about it, and when.
+//
+// The store hands back the most recently *started* run, which is three different situations
+// wearing one shape, and the header used to read a single field of it — FinishedAt — as though it
+// were one:
+//
+//   - A run that is still open has no finishing time. Reading FinishedAt made an in-flight refresh
+//     indistinguishable from a database that has never refreshed at all, so the header announced
+//     "no refresh has run yet" during every slow run, and always on the 409 page that exists to
+//     say a refresh is already running.
+//   - A run that failed has a finishing time like any other. Reading FinishedAt made a run in
+//     which every upstream was down read as a refresh — while FR-1.1 AC3 asks for the last
+//     *successful* run, and OK, stored and read back on every run, was consulted nowhere.
+//
+// What this deliberately does not do is reach back for the last successful run when the most
+// recent one failed, which is what FR-1.1 AC3 would have the header show. It cannot: the store
+// offers the last run and no other, so the earlier success is not in this input at all. Between
+// the two honest options — a stale claim about success or a truthful statement about the failure —
+// this returns RunFailed with the failure's own time, and the header says the last refresh failed.
+// Showing a failed run's timestamp under the words "last refresh" is the reading that is simply
+// wrong, and it is the one that was there.
+func lastRun(run RefreshRun) (RunOutcome, time.Time) {
+	switch {
+	case run.StartedAt.IsZero() && run.FinishedAt.IsZero():
+		return RunNever, time.Time{}
+	case run.Running():
+		return RunRunning, run.StartedAt
+	case run.OK:
+		return RunSucceeded, run.FinishedAt
+	default:
+		return RunFailed, run.FinishedAt
+	}
 }
 
 // buildTile assembles a single tile: its content first, then its health. Disabled is checked
