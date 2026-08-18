@@ -126,8 +126,9 @@ func buildTile(name string, in DashboardInput, disabled map[string]bool) Tile {
 	case "tasks":
 		// Not SortItems: that orders new-first then most-recently-updated, which would
 		// silently destroy due-date order (FR-4.1 AC2 needs overdue before due-today).
+		// NewCount is still counted — on this tile newness is a badge, not a rank.
 		items := itemsBySource(in.Items, source)
-		sortTasks(items, in.LastVisitAt)
+		sortTasks(items)
 		tile.Items = items
 		tile.NewCount = CountNew(items, in.LastVisitAt)
 	case "builds":
@@ -163,16 +164,17 @@ func itemsBySource(items []Item, source string) []Item {
 	return out
 }
 
-// sortTasks orders the tasks tile new-first, then by due date ascending — overdue tasks before
-// those due today or later (FR-4.1 AC2) — the order the Todoist adapter already fetches in. Equal
-// due dates tie-break on ExternalID so the order is deterministic and cannot flip between
-// refreshes that change nothing about the tasks themselves.
-func sortTasks(items []Item, lastVisit time.Time) {
+// sortTasks orders the tasks tile by due date ascending — overdue tasks before those due today
+// (FR-4.1 AC2) — the order the Todoist adapter already fetches in. Equal due dates tie-break on
+// ExternalID so the order is deterministic and cannot flip between refreshes that change nothing
+// about the tasks themselves.
+//
+// Newness is deliberately not a sort key here. On this tile NEW is a badge, not a rank: a task
+// first seen since the last visit is not more urgent than one overdue by a week, and sorting new
+// first would bury the overdue one below it — which is exactly what FR-4.1 AC2 forbids. The GitHub
+// tile is the other way round (SortItems, new first), because there newness *is* the urgency.
+func sortTasks(items []Item) {
 	sort.SliceStable(items, func(i, j int) bool {
-		iNew, jNew := items[i].IsNew(lastVisit), items[j].IsNew(lastVisit)
-		if iNew != jNew {
-			return iNew
-		}
 		if !items[i].DueAt.Equal(items[j].DueAt) {
 			return items[i].DueAt.Before(items[j].DueAt)
 		}

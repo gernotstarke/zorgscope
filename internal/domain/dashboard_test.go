@@ -215,6 +215,51 @@ func TestTasksTileSortsByDueDateNotLastUpdate(t *testing.T) {
 	}
 }
 
+// FR-4.1 AC2: "Overdue tasks are distinguished from those due today and listed first." That holds
+// unconditionally, so a task first seen since the last visit — which carries a NEW badge — must
+// still sort below a task that is overdue. On the tasks tile newness is a badge, not a sort key.
+func TestTasksTileListsOverdueBeforeANewerTaskDueLater(t *testing.T) {
+	visit := at("2026-08-16T00:00:00Z")
+	now := at("2026-08-17T12:00:00Z")
+
+	in := domain.DashboardInput{
+		Now:         now,
+		LastVisitAt: visit,
+		Items: []domain.Item{
+			{
+				Source: "todoist", ExternalID: "new-due-tonight", Kind: domain.KindTask,
+				DueAt: at("2026-08-17T20:00:00Z"),
+				// First seen since the last visit, so this one is new.
+				FirstSeenAt: at("2026-08-17T09:00:00Z"),
+				UpdatedAt:   at("2026-08-17T09:00:00Z"),
+			},
+			{
+				Source: "todoist", ExternalID: "overdue-a-week", Kind: domain.KindTask,
+				DueAt: at("2026-08-10T09:00:00Z"),
+				// Seen long before the last visit, so this one carries no badge.
+				FirstSeenAt: at("2026-08-01T09:00:00Z"),
+				UpdatedAt:   at("2026-08-10T09:00:00Z"),
+			},
+		},
+	}
+
+	tile := tileByName(t, domain.BuildDashboard(in), "tasks")
+	if len(tile.Items) != 2 {
+		t.Fatalf("len(Items) = %d, want 2", len(tile.Items))
+	}
+	if tile.Items[0].ExternalID != "overdue-a-week" {
+		t.Errorf("Items[0] = %q, want %q — an overdue task is listed first even when a newer "+
+			"task is due later today (FR-4.1 AC2)", tile.Items[0].ExternalID, "overdue-a-week")
+	}
+	// The badge survives the sort: newness is still reported, it just does not reorder the tile.
+	if tile.NewCount != 1 {
+		t.Errorf("NewCount = %d, want 1 — NEW is a badge on this tile, not a rank", tile.NewCount)
+	}
+	if !tile.Items[1].IsNew(visit) {
+		t.Error("the task due tonight lost its new flag")
+	}
+}
+
 func TestTilesAppearEvenWhenEmpty(t *testing.T) {
 	now := at("2026-08-17T12:00:00Z")
 	in := domain.DashboardInput{Now: now}
