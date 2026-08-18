@@ -35,6 +35,7 @@ import (
 	"github.com/gernotstarke/zorgscope/internal/config"
 	"github.com/gernotstarke/zorgscope/internal/ports"
 	"github.com/gernotstarke/zorgscope/internal/refresh"
+	"github.com/gernotstarke/zorgscope/internal/version"
 )
 
 //go:embed templates static
@@ -43,7 +44,7 @@ var embedded embed.FS
 // pageFiles are the page templates, each of which supplies the "content" block that layout.html
 // wraps. They are parsed one page at a time — layout plus that page — because every page defines a
 // block of the same name, so a single template set would have them overwrite each other.
-var pageFiles = []string{"login.html", "dashboard.html", "docs.html", "docs_index.html"}
+var pageFiles = []string{"login.html", "dashboard.html", "problems.html", "docs.html", "docs_index.html"}
 
 // tileGlob matches the per-tile fragment templates. They are parsed twice on purpose: into every
 // page set, so that dashboard.html can compose the page out of them, and into a set of their own,
@@ -259,6 +260,7 @@ func (s *Server) routes() []route {
 		// handler and therefore before any credential is even considered. The probe is what the
 		// tests that drive every route request, since the pattern is not itself a path.
 		{http.MethodGet, "/{$}", authSessionPage, s.handleDashboard, "/"},
+		{http.MethodGet, "/problems", authSessionPage, s.handleProblems, ""},
 		{http.MethodGet, "/tile/{source}", authSessionFragment, s.handleTile, "/tile/github"},
 		{http.MethodPost, "/seen", authSessionFragment, s.handleSeen, ""},
 		{http.MethodPost, "/refresh", authSessionFragment, s.handleRefresh, ""},
@@ -480,9 +482,12 @@ type staticAsset struct {
 
 // compressibleStatic are the extensions worth gzipping. Everything else — the PNGs and the ICO of
 // the logo — is already compressed, and gzipping it costs bytes rather than saving them.
+// Deliberately absent: .png and .ico's larger cousins. A PNG is already deflate-compressed, so
+// gzipping it again spends CPU on a cold start to add a few bytes. .ico is here because it is
+// not: an ICO is uncompressed bitmap data and gzips to a fraction of its size.
 var compressibleStatic = map[string]bool{
 	".css": true, ".js": true, ".svg": true, ".json": true, ".html": true, ".txt": true,
-	".xml": true, ".map": true,
+	".xml": true, ".map": true, ".ico": true,
 }
 
 // staticContentTypes pins the types this application actually serves, rather than depending on
@@ -592,6 +597,11 @@ type pageData struct {
 	Doc *docPage
 	// Docs is the grouped list docs_index.html shows; nil on every other page.
 	Docs []docCategory
+	// Version is the build's semantic version, shown in the footer of every page. render fills
+	// it in for every page rather than each handler doing so, because a footer that silently
+	// lost its version on one page is exactly the kind of omission nobody notices until they
+	// need to know which build they are looking at.
+	Version string
 }
 
 // render executes a page template into a buffer before writing anything, so a template failing
@@ -602,6 +612,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, page
 		s.fail(w, r, "rendering", fmt.Errorf("no such page template: %s", page))
 		return
 	}
+	data.Version = version.String()
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, "layout", data); err != nil {
 		s.fail(w, r, "rendering", err)

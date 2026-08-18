@@ -76,6 +76,10 @@ func (s *Server) handleTile(w http.ResponseWriter, r *http.Request) {
 		}{
 			{"tab-title", titleView{NewCount: d.NewTotal}},
 			{"dash-summary", newSummaryView(d, true)},
+			// FR-1.4: a source that starts failing while a tab sits open has to raise the box
+			// then, not at the next page load — which on a dashboard meant to be left open may
+			// be tomorrow.
+			{"dash-alert", newAlertView(d, true)},
 		} {
 			if err := s.tiles.ExecuteTemplate(&buf, oob.name, oob.data); err != nil {
 				s.fail(w, r, "rendering a tile", err)
@@ -101,6 +105,27 @@ func (s *Server) handleSeen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// handleProblems renders the details page behind the dashboard's warning box (FR-1.4): every
+// external interface, what state it is in, and — for the ones that are failing — the upstream
+// text, scrubbed of every configured secret (QS-4.3).
+//
+// It reads the same assembled dashboard the main page does, so the two can never disagree about
+// what is wrong: the box that sent the visitor here and the list that greets them are two
+// renderings of one Dashboard, not two independent judgements of health.
+func (s *Server) handleProblems(w http.ResponseWriter, r *http.Request) {
+	d, err := s.dashboard(r.Context())
+	if err != nil {
+		s.fail(w, r, "assembling the problem details", err)
+		return
+	}
+	view := s.dashboardView(d)
+	s.render(w, r, http.StatusOK, "problems.html", pageData{
+		Title:     "Warnings and errors",
+		NewCount:  d.NewTotal,
+		Dashboard: &view,
+	})
 }
 
 // ---------------------------------------------------------------- assembly
@@ -168,6 +193,14 @@ func (s *Server) disabledSources() []string {
 	}
 	if !s.cfg.Enabled("todoist") {
 		out = append(out, "todoist")
+	}
+	// Slack is not a fetcher and so is not a case Config.Enabled knows about, but the problems
+	// page lists it as an external interface all the same — it is the one service whose failures
+	// never fail a run (FR-6.1 AC3) and therefore the one most worth naming. The two conditions
+	// are the same ones buildNotifier in cmd/zorgscope applies when it decides whether to build a
+	// notifier at all, so the page says "not configured" exactly when nothing is being sent.
+	if !s.cfg.Notifications.Slack.Enabled || s.cfg.Secrets.SlackWebhook == "" {
+		out = append(out, "slack")
 	}
 	return out
 }
@@ -258,6 +291,54 @@ type dashboardView struct {
 	LastRunDetail string
 	LastVisit     timeView
 	Tiles         []tileData
+	// Problems is every external interface's health, worst first, and ProblemCount how many of
+	// them are actually wrong. The count is what the dashboard's warning box is drawn from: a
+	// deployment with a source switched off is not a deployment with a problem, and a box that
+	// appeared for it would be dismissed by the second day (FR-1.4).
+	Problems     []problemView
+	ProblemCount int
+	// Alert is the warning box the dashboard draws, empty when nothing is wrong.
+	Alert alertView
+}
+
+// alertView is the warning box (FR-1.4). Like summaryView it carries an OOB flag, because the
+// page draws it and a polled tile sends the same block back: trouble that starts between two page
+// loads has to reach a tab that is sitting open, which is the only kind of tab this dashboard
+// really has.
+type alertView struct {
+	OOB bool
+	// Count is how many interfaces are wrong; zero renders an empty slot rather than a box.
+	Count int
+	// Severity is the worst of them, which is what the box is coloured by.
+	Severity string
+	// Summary is the sentence, already in the right grammatical number.
+	Summary string
+}
+
+// newAlertView reduces the assembled dashboard to what the box needs. Problems arrive worst first,
+// so the first entry that is wrong is the worst one.
+func newAlertView(d domain.Dashboard, oob bool) alertView {
+	v := alertView{OOB: oob, Count: d.ProblemCount}
+	if v.Count == 0 {
+		return v
+	}
+	for _, p := range d.Problems {
+		if p.Wrong() {
+			v.Severity = string(p.Severity)
+			break
+		}
+	}
+	v.Summary = problemSentence(d.ProblemCount)
+	return v
+}
+
+// problemSentence says how many services are affected rather than naming them: the box is a
+// signpost, and the names, the times and the upstream text are all one click away on /problems.
+func problemSentence(n int) string {
+	if n == 1 {
+		return "1 external service needs attention"
+	}
+	return strconv.Itoa(n) + " external services need attention"
 }
 
 // Summary is the summary line's own data, so that the line the page draws and the one a poll
@@ -318,6 +399,24 @@ type tileData struct {
 	// disabled source holding items is the case that needs it: the tile must say that what is
 	// below is the last stored data rather than pretend nothing was ever fetched.
 	HasContent bool
+}
+
+// problemView is one external interface on the warning box and the details page. Severity is the
+// machine word the stylesheet keys off; Label is the same state in a word a person reads, so
+// colour is never the only carrier of the meaning (FR-1.5 AC2). Detail is upstream text that has
+// already been through Redact (QS-4.3).
+type problemView struct {
+	Source   string
+	Title    string
+	Severity string
+	Label    string
+	Summary  string
+	Detail   string
+	At       timeView
+	LastOK   timeView
+	// Wrong marks the entries the warning box counts: errors and warnings, never an interface
+	// that is simply switched off.
+	Wrong bool
 }
 
 // timeView is one timestamp rendered twice: an absolute stamp for the <time> element's machine
@@ -404,11 +503,52 @@ func (s *Server) dashboardView(d domain.Dashboard) dashboardView {
 		LastRunDetail: Redact(s.cfg.Secrets, d.LastRunDetail),
 		LastVisit:     newTimeView(d.LastVisitAt, d.GeneratedAt),
 		Tiles:         make([]tileData, 0, len(d.Tiles)),
+		ProblemCount:  d.ProblemCount,
+		Problems:      make([]problemView, 0, len(d.Problems)),
+		Alert:         newAlertView(d, false),
 	}
 	for _, tile := range d.Tiles {
 		v.Tiles = append(v.Tiles, s.tileData(tile, d.GeneratedAt, d.LastVisitAt))
 	}
+	for _, p := range d.Problems {
+		v.Problems = append(v.Problems, s.problemView(p, d.GeneratedAt))
+	}
 	return v
+}
+
+// problemView renders one interface's health. The upstream error goes through Redact for the same
+// reason every other borrowed string on these pages does: it was written by a library talking to
+// a service this process authenticates against, and it may quote the credential it used (QS-4.3).
+func (s *Server) problemView(p domain.Problem, now time.Time) problemView {
+	return problemView{
+		Source:   p.Source,
+		Title:    p.Title,
+		Severity: string(p.Severity),
+		Label:    severityLabel(p.Severity),
+		Summary:  p.Summary,
+		Detail:   Redact(s.cfg.Secrets, p.Detail),
+		At:       newTimeView(p.At, now),
+		LastOK:   newTimeView(p.LastOKAt, now),
+		Wrong:    p.Wrong(),
+	}
+}
+
+// severityLabel is the word shown beside the state's colour. Every severity has one, including
+// the healthy state: the details page lists healthy interfaces too, so that "nothing is wrong"
+// is something the page says rather than something the reader has to infer from an empty list.
+func severityLabel(sev domain.Severity) string {
+	switch sev {
+	case domain.SeverityError:
+		return "Error"
+	case domain.SeverityWarning:
+		return "Warning"
+	case domain.SeverityOff:
+		return "Not configured"
+	case domain.SeverityOK:
+		return "OK"
+	default:
+		return string(sev)
+	}
 }
 
 // tileData turns one domain tile into its presentation data. It preserves the order the domain

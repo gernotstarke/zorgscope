@@ -3,6 +3,16 @@
      sets it is a refresh that could not start because one was already running (FR-5.2 AC2). */}}
 {{with .Error}}<p class="notice notice-error" role="alert">{{.}}</p>{{end}}
 {{with .Dashboard}}
+{{/* FR-1.4: when an external interface has gone wrong, the page says so in a sentence and hands
+     over a way to read the whole story, rather than leaving the reader to notice a grey line or a
+     tile that stopped changing. The box counts errors and warnings only — a source that is simply
+     switched off is a decision, not a fault, and a box that appeared for it would be dismissed
+     unread within a week, which is the failure mode this exists to avoid.
+
+     It is drawn from the shared block, because a polled tile sends the same block back so that
+     trouble appearing between page loads is not silent until the next one — see
+     templates/tiles/alert.html. */}}
+{{template "dash-alert" .Alert}}
 <div class="dash-actions">
   {{/* The summary states the total, which no single tile knows, so a polled tile sends this very
        block back as an out-of-band swap; see templates/tiles/counts.html. */}}

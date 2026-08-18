@@ -201,8 +201,11 @@ logo: ## Regenerate the static logo assets from docs/logo/zorgscope-logo-sheet.j
 	  -fill none -floodfill +0+0 "srgb(38,39,43)" -fill none -floodfill +1119+0 "srgb(38,39,43)" \
 	  -fill none -floodfill +0+919 "srgb(38,39,43)" -fill none -floodfill +1119+919 "srgb(38,39,43)" \
 	  -trim +repage -background none -gravity center -extent 816x816 /w/.logo-master.png
+	@# 96 px, not 256: the only thing that renders logo.png is the page header, at around 28 px,
+	@# and 96 covers a 3x display exactly. PNG does not gzip, so every byte of it is a byte on the
+	@# wire against QS-2.3 — 256 px would spend seven kilobytes to draw a 28 px mark.
 	docker run --rm --entrypoint magick -v "$(CURDIR)":/w -w /w $(IMAGEMAGICK) /w/.logo-master.png \
-	  -resize 256x256 -colors 32 -strip -define png:compression-level=9 internal/web/static/logo.png
+	  -resize 96x96 -colors 32 -strip -define png:compression-level=9 internal/web/static/logo.png
 	docker run --rm --entrypoint magick -v "$(CURDIR)":/w -w /w $(IMAGEMAGICK) /w/.logo-master.png \
 	  -resize 180x180 -colors 32 -strip -define png:compression-level=9 internal/web/static/apple-touch-icon.png
 	docker run --rm --entrypoint magick -v "$(CURDIR)":/w -w /w $(IMAGEMAGICK) /w/.logo-master.png \

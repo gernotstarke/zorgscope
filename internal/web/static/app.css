@@ -42,7 +42,7 @@ body {
 
 .topbar {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: var(--gap);
   padding: 0.75rem 1.25rem;
@@ -117,11 +117,23 @@ button:hover { filter: brightness(1.08); }
 
 /* ---------------------------------------------------------------- the dashboard */
 
-.brand { display: inline-flex; align-items: center; gap: 0.45rem; }
-.logo { flex: none; color: var(--accent); }
+.brand { display: inline-flex; align-items: center; gap: 0.5rem; }
+/* The mark is a raster file with its intrinsic size declared in the markup, so the box is
+   reserved before it loads and the header does not jump. */
+.logo { flex: none; display: block; }
 .brand-name { font-weight: 600; }
 
-.topbar-status { margin: 0; color: var(--muted); font-size: 0.85rem; }
+/* The two header dates stack, so the header stays one line tall on a wide screen and folds
+   without overlapping on a narrow one. */
+.topbar-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.topbar-status,
+.topbar-visit { margin: 0; color: var(--muted); font-size: 0.85rem; }
 /* The header states the outcome in words as well, so colour only reinforces it (FR-1.5 AC2). */
 .status-failed { color: var(--danger); }
 
@@ -330,3 +342,154 @@ button:hover { filter: brightness(1.08); }
 .doc [align="right"] { text-align: right; }
 .doc hr { border: 0; border-top: 1px solid var(--border); margin: 2rem 0; }
 .doc img { max-width: 100%; height: auto; }
+
+/* ---------------------------------------------------------------- header controls */
+
+.topbar-nav { display: inline-flex; align-items: center; gap: 0.6rem; }
+
+/* An icon-only control. The disabled state is what the settings cog is in for the whole of v1,
+   so it is styled as the ordinary case rather than as an exception: dimmed, no pointer, and no
+   hover response, which together say "not now" without a tooltip having to be discovered. */
+.icon-button {
+  margin: 0;
+  padding: 0.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.icon-button:hover:not(:disabled) { color: var(--accent); filter: none; }
+
+/* Dimmed rather than nearly invisible: the cog has to be legible enough to be recognised as a
+   settings control that is unavailable, otherwise it reads as a rendering fault. */
+.icon-button:disabled {
+  color: var(--muted);
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.cog { display: block; }
+
+/* ---------------------------------------------------------------- the warning box */
+
+/* FR-1.4. It sits above the dashboard's own controls, states the count in words, and carries one
+   link to the details. Colour is the last thing it uses, never the first: the sentence says what
+   happened on its own (FR-1.5 AC2). */
+.alert {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--warn);
+  border-left-width: 4px;
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.alert-error { border-color: var(--danger); }
+.alert-warning { border-color: var(--warn); }
+
+.alert-text { margin: 0; }
+.alert-error .alert-text { color: var(--danger); }
+.alert-warning .alert-text { color: var(--warn); }
+
+/* A link that reads as the button the box needs, without being a form or a script. */
+.alert-action {
+  flex: none;
+  padding: 0.45rem 0.9rem;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: #ffffff;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.alert-action:hover { filter: brightness(1.08); }
+
+/* ---------------------------------------------------------------- the details page */
+
+.page-lead { margin: 0 0 1.5rem; color: var(--muted); max-width: 46rem; }
+
+.problems { list-style: none; margin: 0 0 2rem; padding: 0; display: grid; gap: 0.75rem; }
+
+.problem {
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.problem-error { border-left-color: var(--danger); }
+.problem-warning { border-left-color: var(--warn); }
+.problem-ok { border-left-color: var(--ok); }
+.problem-off { border-left-color: var(--border); }
+
+.problem-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0 0 0.35rem;
+}
+
+.problem-title { font-weight: 600; }
+
+.badge {
+  padding: 0.1rem 0.5rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.badge-error { color: var(--danger); }
+.badge-warning { color: var(--warn); }
+.badge-ok { color: var(--ok); }
+.badge-off { color: var(--muted); }
+
+.problem-summary { margin: 0 0 0.35rem; }
+
+/* Upstream text. It can be a single unbroken line of hundreds of characters, so it wraps
+   anywhere rather than pushing the page sideways. */
+.problem-detail { margin: 0 0 0.35rem; }
+.problem-detail code {
+  display: block;
+  padding: 0.5rem 0.6rem;
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.problem-times {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.run-detail-page { margin: 0 0 1.5rem; }
+
+.back { margin: 0; }
+
+/* ---------------------------------------------------------------- the footer */
+
+.footer-made { margin: 0 0 0.25rem; color: var(--muted); }
+.heart { color: var(--danger); }
+.footer-meta { margin: 0; color: var(--muted); }
+.footer-sep { margin: 0 0.35rem; }
+.version { font-variant-numeric: tabular-nums; }

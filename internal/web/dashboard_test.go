@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path"
 	"regexp"
 	"sort"
 	"strconv"
@@ -896,13 +897,6 @@ func TestStaticAssetsFitTheirBudgetOnTheWire(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("GET %s = %d, want 200", asset, rec.Code)
 		}
-		if got := rec.Header().Get("Content-Encoding"); got != "gzip" {
-			t.Errorf("GET %s: Content-Encoding = %q, want gzip (QS-2.3)", asset, got)
-		}
-		if got := rec.Header().Get("Vary"); !strings.Contains(got, "Accept-Encoding") {
-			t.Errorf("GET %s: Vary = %q, want it to name Accept-Encoding", asset, got)
-		}
-
 		transferred := rec.Body.Len()
 		total += transferred
 		t.Logf("%s: %d bytes on the wire", asset, transferred)
@@ -911,6 +905,28 @@ func TestStaticAssetsFitTheirBudgetOnTheWire(t *testing.T) {
 		stored, err := fs.ReadFile(embedded, "static"+strings.TrimPrefix(asset, "/static"))
 		if err != nil {
 			t.Fatalf("reading the embedded %s: %v", asset, err)
+		}
+
+		// A PNG is already deflate-compressed, so it is served as it is stored and gzipping it
+		// again would cost CPU to add bytes. It still counts against the budget in full — the
+		// budget is about what crosses the wire, and a byte that cannot be compressed is the most
+		// expensive kind there is.
+		if !compressibleStatic[strings.ToLower(path.Ext(asset))] {
+			if got := rec.Header().Get("Content-Encoding"); got != "" {
+				t.Errorf("GET %s: Content-Encoding = %q, want none — the file is already compressed",
+					asset, got)
+			}
+			if !bytes.Equal(rec.Body.Bytes(), stored) {
+				t.Errorf("GET %s: the body is not the stored asset", asset)
+			}
+			continue
+		}
+
+		if got := rec.Header().Get("Content-Encoding"); got != "gzip" {
+			t.Errorf("GET %s: Content-Encoding = %q, want gzip (QS-2.3)", asset, got)
+		}
+		if got := rec.Header().Get("Vary"); !strings.Contains(got, "Accept-Encoding") {
+			t.Errorf("GET %s: Vary = %q, want it to name Accept-Encoding", asset, got)
 		}
 		zr, err := gzip.NewReader(bytes.NewReader(rec.Body.Bytes()))
 		if err != nil {
@@ -1128,11 +1144,11 @@ func representativeStore() *dashStore {
 // the read methods the dashboard uses — plus the one write it performs — are overridden.
 type dashStore struct {
 	fakeStore
-	items     []domain.Item
-	builds    []domain.Build
-	metrics   []domain.Metric
-	states    map[string]domain.SourceState
-	lastRun   domain.RefreshRun
+	items   []domain.Item
+	builds  []domain.Build
+	metrics []domain.Metric
+	states  map[string]domain.SourceState
+	lastRun domain.RefreshRun
 	// lastSuccessfulRun is the store's second answer about runs, and the fixture keeps it
 	// separate from lastRun on purpose: a test that sets only lastRun describes a database whose
 	// latest run is its only one, which is what most of them mean.

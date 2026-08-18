@@ -102,6 +102,14 @@ type Dashboard struct {
 	LastRunDetail string
 	NewTotal      int
 	Tiles         []Tile
+	// Problems is the health of every external interface, worst first (FR-1.4). Every configured
+	// interface is listed, healthy ones included, so that the details page can answer "is
+	// anything wrong?" positively rather than with an empty list.
+	Problems []Problem
+	// ProblemCount is how many of them are actually wrong — errors and warnings, never an
+	// interface that is merely switched off. It is what decides whether the dashboard shows its
+	// warning box at all, so a page with nothing configured stays quiet.
+	ProblemCount int
 }
 
 // Tile is one section of the dashboard — GitHub items, builds, site statistics or tasks (FR-1.1
@@ -157,6 +165,13 @@ func BuildDashboard(in DashboardInput) Dashboard {
 		tile := buildTile(name, in, disabled)
 		d.NewTotal += tile.NewCount
 		d.Tiles = append(d.Tiles, tile)
+	}
+
+	d.Problems = buildProblems(in, disabled)
+	for _, p := range d.Problems {
+		if p.Wrong() {
+			d.ProblemCount++
+		}
 	}
 	return d
 }

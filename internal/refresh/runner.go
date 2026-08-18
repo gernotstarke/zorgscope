@@ -520,9 +520,9 @@ func detail(rep Report) string {
 		parts = append(parts, fmt.Sprintf("%s: %d", sr.Source, sr.Stored))
 	}
 	if rep.NotifyErr != "" {
-		parts = append(parts, "notify: "+rep.NotifyErr)
+		parts = append(parts, domain.NotifyDetailPrefix+rep.NotifyErr)
 	}
-	return clip(strings.Join(parts, "; "), maxDetailLen)
+	return clip(strings.Join(parts, domain.DetailSeparator), maxDetailLen)
 }
 
 // clip shortens s to at most n bytes, marking that it was shortened. It backs up to a rune
