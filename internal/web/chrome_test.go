@@ -46,10 +46,10 @@ func failingStates(at time.Time, source, message string) map[string]domain.Sourc
 func TestTheHeaderCarriesTheLogoAndAnInertSettingsControl(t *testing.T) {
 	body := getAuthed(t, dashHandler(t, representativeStore()), "/").Body.String()
 
-	if !strings.Contains(body, `src="/static/logo.png"`) {
+	if !strings.Contains(body, `src="/static/logo.png?`) {
 		t.Error("the header does not show the logo")
 	}
-	if !strings.Contains(body, `href="/static/favicon.ico"`) {
+	if !strings.Contains(body, `href="/static/favicon.ico?`) {
 		t.Error("no favicon is linked, so every first request of every visit is a 404")
 	}
 

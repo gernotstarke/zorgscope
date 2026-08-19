@@ -15,6 +15,7 @@ package web
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
 	"embed"
 	"errors"
 	"fmt"
@@ -188,6 +189,17 @@ func New(o Options) (*Server, error) {
 	}
 	s.handler = securityHeaders(s.recoverPanics(canonicalPath(s.mux())))
 	return s, nil
+}
+
+// assetURLs is every static asset's versioned URL, keyed by file name. It is built per render
+// rather than once, because it is a handful of string concatenations over a map that never
+// changes size, and a cached copy would be one more thing that can be stale.
+func (s *Server) assetURLs() map[string]string {
+	out := make(map[string]string, len(s.assets))
+	for name := range s.assets {
+		out[name] = s.assetURL(name)
+	}
+	return out
 }
 
 // Handler returns the server's HTTP handler: the route table behind the panic-recovery and
@@ -446,20 +458,74 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	body, etag := a.stored, a.etag
+	gzipped := a.gzipped != nil && acceptsGzip(r)
+	if gzipped {
+		body, etag = a.gzipped, strings.TrimSuffix(a.etag, `"`)+`-gzip"`
+	}
+
 	h := w.Header()
 	h.Set("Content-Type", a.contentType)
 	// The response varies by Accept-Encoding even when this particular request did not accept
 	// gzip, so a shared cache must not hand the compressed body to a client that cannot read it.
 	h.Set("Vary", "Accept-Encoding")
-	h.Set("Cache-Control", "public, max-age=3600")
+	h.Set("ETag", etag)
+	h.Set("Cache-Control", cacheControlFor(r, a))
 
-	body := a.stored
-	if a.gzipped != nil && acceptsGzip(r) {
+	if noneMatch(r, etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
+	if gzipped {
 		h.Set("Content-Encoding", "gzip")
-		body = a.gzipped
 	}
 	h.Set("Content-Length", strconv.Itoa(len(body)))
 	_, _ = w.Write(body)
+}
+
+// cacheControlFor decides how long this response may be reused, and the answer turns entirely on
+// whether the request named a version.
+//
+// A URL carrying the current content hash cannot go stale: a changed file is a different URL, so
+// the copy a browser holds is correct forever. Everything the layout links is such a URL, so this
+// is the ordinary case and it costs no request at all after the first.
+//
+// A URL without the hash — typed by hand, or held in a bookmark from before the versions existed
+// — is the case that broke: it names a moving target, and any max-age at all is a window in which
+// a browser renders new HTML against an old stylesheet. no-cache does not mean "do not store", it
+// means "revalidate before reuse", so the browser still keeps the bytes and the check costs a 304
+// with no body.
+func cacheControlFor(r *http.Request, a staticAsset) string {
+	if r.URL.Query().Get(assetVersionParam) == a.version {
+		return "public, max-age=31536000, immutable"
+	}
+	return "public, no-cache"
+}
+
+// noneMatch reports whether the client already holds this exact representation. The header is a
+// list, and a client that has both encodings sends both entity tags.
+func noneMatch(r *http.Request, etag string) bool {
+	for _, candidate := range strings.Split(r.Header.Get("If-None-Match"), ",") {
+		if strings.TrimSpace(candidate) == etag {
+			return true
+		}
+	}
+	return false
+}
+
+// assetVersionParam is the query parameter carrying an asset's content hash.
+const assetVersionParam = "v"
+
+// assetURL is the versioned URL of a static asset, which is what every template links. An unknown
+// name returns the plain path rather than failing the render: a missing asset is a 404 on one
+// request, and a page that refuses to render at all is a worse answer to the same mistake.
+func (s *Server) assetURL(name string) string {
+	a, ok := s.assets[name]
+	if !ok {
+		return "/static/" + name
+	}
+	return "/static/" + name + "?" + assetVersionParam + "=" + a.version
 }
 
 // acceptsGzip reports whether the client said it can read a gzip-encoded body. A client that did
@@ -484,7 +550,24 @@ type staticAsset struct {
 	// gzipped is the gzip encoding of stored, or nil when the type does not compress or the
 	// compression did not actually save anything.
 	gzipped []byte
+	// version is a short content hash, and it is what makes a stylesheet change actually reach a
+	// browser. Without it the layout links a fixed URL, so a client that fetched /static/app.css
+	// before a deploy keeps its copy until the max-age runs out — and a page whose HTML has
+	// changed with a stylesheet that has not is not a stale cache, it is a broken page. It went
+	// wrong exactly that way once: the document started carrying data-theme and the cached
+	// stylesheet had never heard of it, so the appearance switch changed the icon and nothing
+	// else.
+	version string
+	// etag identifies the *identity* representation. The gzip encoding gets its own, derived
+	// from it, because a shared cache keyed on Vary: Accept-Encoding stores the two separately
+	// and one ETag for both would let it answer a plain request with the compressed bytes.
+	etag string
 }
+
+// assetVersionLen is how much of the content hash goes into the URL. Seven hex characters is 28
+// bits: enough that two versions of one file never collide in practice, short enough that the
+// links stay readable in the page source.
+const assetVersionLen = 7
 
 // compressibleStatic are the extensions worth gzipping. Everything else — the PNGs and the ICO of
 // the logo — is already compressed, and gzipping it costs bytes rather than saving them.
@@ -529,7 +612,14 @@ func loadStatic() (map[string]staticAsset, error) {
 		name := strings.TrimPrefix(p, "static/")
 		ext := strings.ToLower(path.Ext(name))
 
-		a := staticAsset{contentType: contentTypeFor(ext, body), stored: body}
+		sum := sha256.Sum256(body)
+		hex := fmt.Sprintf("%x", sum)
+		a := staticAsset{
+			contentType: contentTypeFor(ext, body),
+			stored:      body,
+			version:     hex[:assetVersionLen],
+			etag:        `"` + hex[:32] + `"`,
+		}
 		if compressibleStatic[ext] {
 			gz, err := gzipBytes(body)
 			if err != nil {
@@ -614,7 +704,14 @@ type pageData struct {
 	// lost its version on one page is exactly the kind of omission nobody notices until they
 	// need to know which build they are looking at.
 	Version string
+	// assets maps a static file name to its versioned URL. It is unexported and reached through
+	// the Asset method, so a template cannot accidentally link an unversioned path by indexing
+	// the map with a name that is not in it.
+	assets map[string]string
 }
+
+// Asset is the versioned URL of a static file, for the templates: {{.Asset "app.css"}}.
+func (d pageData) Asset(name string) string { return d.assets[name] }
 
 // ThemeAttr is the document's data-theme value, empty when the visitor follows the system. The
 // attribute is then absent rather than present-and-saying-"system", so the stylesheet has one
@@ -645,6 +742,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, page
 	data.Version = version.String()
 	data.Theme = themeOf(r)
 	data.Path = r.URL.Path
+	data.assets = s.assetURLs()
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, "layout", data); err != nil {
 		s.fail(w, r, "rendering", err)

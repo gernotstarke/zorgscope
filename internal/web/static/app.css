@@ -6,37 +6,46 @@
 :root {
   /* One palette, not two. light-dark() takes the light value when the document's colour scheme
      resolves to light and the dark one when it resolves to dark, so the whole theme is decided by
-     `color-scheme` alone — which is what the switch below sets. Before it, this file carried the
-     dark palette a second time inside a prefers-color-scheme media query, and every colour had to
-     be changed in two places or the two appearances quietly drifted apart.
-
-     Each token is declared twice on purpose. A browser that does not know light-dark() discards
-     the second declaration and keeps the first, so it gets the complete light theme rather than a
-     page with no colours at all. A browser that does know it overwrites the first with the
-     second, which is how the cascade works within a single rule. */
+     `color-scheme` alone — which is the only thing the appearance switch sets. This file used to
+     carry the dark palette a second time inside a prefers-color-scheme media query, and every
+     colour had to be changed in two places or the two appearances quietly drifted apart. */
   color-scheme: light dark;
 
-  --bg: #fbfbfc;
   --bg: light-dark(#fbfbfc, #16181c);
-  --surface: #ffffff;
   --surface: light-dark(#ffffff, #1e2126);
-  --border: #dcdfe4;
   --border: light-dark(#dcdfe4, #31353c);
-  --text: #1c1e21;
   --text: light-dark(#1c1e21, #e7e9ec);
-  --muted: #5b6169;
   --muted: light-dark(#5b6169, #9aa1ab);
-  --accent: #2f5bd7;
   --accent: light-dark(#2f5bd7, #7fa2ff);
-  --danger: #b3261e;
   --danger: light-dark(#b3261e, #f2836f);
-  --warn: #8a5300;
   --warn: light-dark(#8a5300, #e0a03c);
-  --ok: #1f7a3d;
   --ok: light-dark(#1f7a3d, #6bc98a);
 
   --radius: 10px;
   --gap: 1rem;
+}
+
+/* A browser without light-dark() gets the light palette and stays there.
+
+   The guard has to be @supports, and cannot be the usual trick of declaring each token twice and
+   letting the cascade drop the value it cannot parse. A custom property that has not been
+   registered accepts any token sequence at all, so light-dark(...) is a *valid* declaration
+   everywhere — it fails later, when it is substituted into the property that uses it, and by then
+   the earlier declaration is long gone. The page would lose every colour rather than fall back to
+   one. Only the light values are repeated here: an old browser gets a readable page in one
+   appearance, which is a better answer than a second copy of a palette to keep in step. */
+@supports not (color: light-dark(#000000, #ffffff)) {
+  :root {
+    --bg: #fbfbfc;
+    --surface: #ffffff;
+    --border: #dcdfe4;
+    --text: #1c1e21;
+    --muted: #5b6169;
+    --accent: #2f5bd7;
+    --danger: #b3261e;
+    --warn: #8a5300;
+    --ok: #1f7a3d;
+  }
 }
 
 /* The appearance switch (FR-1.5). The server writes data-theme on <html> from a cookie, so the

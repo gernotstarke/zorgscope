@@ -13,13 +13,18 @@
      from the shared block, because a polled tile sends the same block back to keep the count
      true — see templates/tiles/counts.html. */}}
 {{template "tab-title" .TitleView}}
-<link rel="stylesheet" href="/static/app.css">
+{{/* Every static URL carries its file's content hash. Without it the browser holds a stylesheet
+     for as long as its max-age allows while the HTML around it changes on every deploy, and new
+     markup against an old stylesheet is not a stale cache — it is a broken page. That is exactly
+     how the appearance switch first shipped: the document began carrying data-theme and the
+     cached stylesheet had never heard of it, so the control cycled and nothing changed colour. */}}
+<link rel="stylesheet" href="{{.Asset "app.css"}}">
 {{/* The icons are declared here rather than left to the browser's default probe for /favicon.ico:
      that path is not a route, so an unlinked favicon is a 404 on every first request of every
      visit. Both files come from `make logo`. */}}
-<link rel="icon" href="/static/favicon.ico" sizes="16x16 32x32">
-<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-<script src="/static/htmx.min.js" defer></script>
+<link rel="icon" href="{{.Asset "favicon.ico"}}" sizes="16x16 32x32">
+<link rel="apple-touch-icon" href="{{.Asset "apple-touch-icon.png"}}">
+<script src="{{.Asset "htmx.min.js"}}" defer></script>
 </head>
 <body>
 <header class="topbar">
@@ -29,7 +34,7 @@
          mark covers a 3x display and costs less on the wire than the base64 of the same bytes
          would. alt is empty on purpose — the name is right beside it, so a screen reader that
          announced the logo too would say "zorgscope zorgscope". */}}
-    <img class="logo" src="/static/logo.png" width="28" height="28" alt="" decoding="async">
+    <img class="logo" src="{{.Asset "logo.png"}}" width="28" height="28" alt="" decoding="async">
     <span class="brand-name">zorgscope</span>
   </a>
   {{with .Dashboard}}

@@ -633,7 +633,8 @@ func TestNoRenderedHTMLNeedsUnsafeInline(t *testing.T) {
 			}
 			// Any script at all has to be the vendored htmx file: a full page carries exactly
 			// that one, and a fragment carries none.
-			vendored := strings.Count(body, `<script src="/static/htmx.min.js"`)
+			// The URL carries a content hash, so the prefix is what is stable about it.
+			vendored := strings.Count(body, `<script src="/static/htmx.min.js?`)
 			if n := strings.Count(body, "<script"); n != vendored {
 				t.Errorf("has %d script tags of which %d are the vendored htmx file; the rest "+
 					"would need 'unsafe-inline' (QS-4.4)", n, vendored)
