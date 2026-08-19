@@ -82,6 +82,9 @@ func (s *Server) handleTile(w http.ResponseWriter, r *http.Request) {
 			// then, not at the next page load — which on a dashboard meant to be left open may
 			// be tomorrow.
 			{"dash-alert", newAlertView(d, true)},
+			// The build indicator is outside every tile too, and a build that breaks while the
+			// tab sits open has to turn it red then rather than at the next page load.
+			{"build-status", s.buildStatusView(d, true)},
 		} {
 			if err := s.tiles.ExecuteTemplate(&buf, oob.name, oob.data); err != nil {
 				s.fail(w, r, "rendering a tile", err)
@@ -125,6 +128,27 @@ func (s *Server) handleProblems(w http.ResponseWriter, r *http.Request) {
 	view := s.dashboardView(d)
 	s.render(w, r, http.StatusOK, "problems.html", pageData{
 		Title:     "Warnings and errors",
+		NewCount:  d.NewTotal,
+		Dashboard: &view,
+	})
+}
+
+// handleBuilds renders the page behind the front page's build indicator (FR-2.3): one row per
+// watched repository, worst first, with the workflow, the outcome and a link to the run.
+//
+// It exists because the front page does not. The dashboard answers "does anything need me right
+// now", and for builds that answer is one colour — a list of one row per repository is a report,
+// and a report on the front page pushes the issues and pull requests that do need handling below
+// the fold.
+func (s *Server) handleBuilds(w http.ResponseWriter, r *http.Request) {
+	d, err := s.dashboard(r.Context())
+	if err != nil {
+		s.fail(w, r, "assembling the build details", err)
+		return
+	}
+	view := s.dashboardView(d)
+	s.render(w, r, http.StatusOK, "builds.html", pageData{
+		Title:     "Build status",
 		NewCount:  d.NewTotal,
 		Dashboard: &view,
 	})
@@ -178,6 +202,9 @@ func (s *Server) dashboard(ctx context.Context) (domain.Dashboard, error) {
 		Metrics:           metrics,
 		States:            states,
 		Disabled:          s.disabledSources(),
+		// Configuration order, so the details page can report a repository that has never
+		// produced a workflow run — the store holds only repositories that have.
+		Repos: s.cfg.GitHub.Repos,
 	}), nil
 }
 
@@ -301,6 +328,8 @@ type dashboardView struct {
 	ProblemCount int
 	// Alert is the warning box the dashboard draws, empty when nothing is wrong.
 	Alert alertView
+	// Builds is the front page's build indicator and, on the details page, its rows.
+	Builds buildStatusView
 }
 
 // alertView is the warning box (FR-1.4). Like summaryView it carries an OOB flag, because the
@@ -397,9 +426,8 @@ type tileData struct {
 	Items    []itemView
 	// More is how many items the source holds beyond the ones listed. The tile says the number
 	// rather than trailing off, so a list of five out of forty cannot be read as all there is.
-	More   int
-	Builds []buildView
-	Sites  []siteView
+	More  int
+	Sites []siteView
 	// HasContent says whether this tile has anything stored to show, whatever its health. A
 	// disabled source holding items is the case that needs it: the tile must say that what is
 	// below is the last stored data rather than pretend nothing was ever fetched.
@@ -455,17 +483,20 @@ type itemView struct {
 	Priority string
 }
 
-// buildView is one repository's build state.
+// buildView is one row of the build details page.
 type buildView struct {
 	Repo     string
 	Workflow string
 	RunURL   string
+	// Health is the machine word the stylesheet keys off — "broken", "warning" or "ok" — and
+	// Label the same state in words, so colour is never the only carrier of the meaning
+	// (FR-1.5 AC2).
+	Health string
 	// Running is a run in progress; Conclusion then holds the previous run's outcome, which is
 	// shown next to it (FR-2.3 AC2).
 	Running    bool
 	Conclusion string
 	Label      string
-	Class      string
 	Finished   timeView
 }
 
@@ -515,6 +546,7 @@ func (s *Server) dashboardView(d domain.Dashboard) dashboardView {
 		ProblemCount:  d.ProblemCount,
 		Problems:      make([]problemView, 0, len(d.Problems)),
 		Alert:         newAlertView(d, false),
+		Builds:        s.buildStatusView(d, false),
 	}
 	for _, tile := range d.Tiles {
 		v.Tiles = append(v.Tiles, s.tileData(tile, d.GeneratedAt, d.LastVisitAt))
@@ -586,13 +618,10 @@ func (s *Server) tileData(t domain.Tile, now, lastVisit time.Time) tileData {
 	if t.Total > len(t.Items) {
 		td.More = t.Total - len(t.Items)
 	}
-	for _, b := range t.Builds {
-		td.Builds = append(td.Builds, newBuildView(b, now))
-	}
 	if t.Name == "sites" {
 		td.Sites = s.orderedSites(t.Sites)
 	}
-	td.HasContent = len(td.Items) > 0 || len(td.Builds) > 0 || len(td.Sites) > 0
+	td.HasContent = len(td.Items) > 0 || len(td.Sites) > 0
 	return td
 }
 
@@ -684,24 +713,124 @@ func newBuildView(b domain.Build, now time.Time) buildView {
 		Repo:       b.Repo,
 		Workflow:   b.Workflow,
 		RunURL:     b.RunURL,
+		Health:     string(b.Health()),
 		Conclusion: spaced(b.Conclusion),
 		Finished:   newTimeView(b.FinishedAt, now),
+		// Status is the newest run's; Conclusion is the newest *completed* run's. A newest run
+		// that has not completed is a run in progress sitting on top of an older outcome, which
+		// is exactly what FR-2.3 AC2 asks to be shown side by side.
+		Running: b.Running(),
 	}
-	// Status is the newest run's; Conclusion is the newest *completed* run's. A newest run that
-	// has not completed is therefore a run in progress sitting on top of an older outcome, which
-	// is exactly what FR-2.3 AC2 asks to be shown side by side.
-	if b.Status != "" && b.Status != "completed" {
-		v.Running = true
+
+	switch {
+	case b.Silent():
+		// A configured repository whose workflow has never fired. "No completed run" would
+		// suggest there were runs; there were none, and that is the thing worth reading.
+		v.Label = "no build information"
+	case v.Conclusion != "":
+		v.Label = v.Conclusion
+	case v.Running:
+		// A first run, still going: there is no earlier outcome to name beside it.
 		v.Label = "running"
-		v.Class = "running"
-		return v
-	}
-	v.Label = v.Conclusion
-	v.Class = conclusionClass(b.Conclusion)
-	if v.Label == "" {
+	default:
 		v.Label = "no completed run"
 	}
 	return v
+}
+
+// buildStatusView is the front page's indicator and, on the details page, the rows behind it.
+// Like the other blocks that live outside a tile it carries an OOB flag, because a poll sends the
+// same block back — a build that breaks while the tab sits open has to turn the indicator red
+// then, not at whatever hour the page is next loaded.
+type buildStatusView struct {
+	OOB    bool
+	Health string
+	Label  string
+	// Summary states the counts in a sentence, so the indicator is readable without its colour
+	// (FR-1.5 AC2).
+	Summary                             string
+	Broken, Warning, OK, Running, Total int
+	Rows                                []buildView
+	Stale                               bool
+	Disabled                            bool
+	DisabledReason                      string
+	// Error is the source's own failure, already scrubbed of every configured secret (QS-4.3).
+	Error  string
+	LastOK timeView
+}
+
+// Wrong reports whether the indicator is showing something that needs handling.
+func (v buildStatusView) Wrong() bool {
+	return v.Health == string(domain.BuildBroken) || v.Health == string(domain.BuildWarning)
+}
+
+func (s *Server) buildStatusView(d domain.Dashboard, oob bool) buildStatusView {
+	b := d.Builds
+	v := buildStatusView{
+		OOB:      oob,
+		Health:   string(b.Health),
+		Label:    buildHealthLabel(b.Health),
+		Broken:   b.Broken,
+		Warning:  b.Warning,
+		OK:       b.OK,
+		Running:  b.Running,
+		Total:    b.Total(),
+		Stale:    b.Stale,
+		Disabled: b.Disabled,
+		Error:    Redact(s.cfg.Secrets, b.Error),
+		LastOK:   newTimeView(b.LastOKAt, d.GeneratedAt),
+		Rows:     make([]buildView, 0, len(b.Rows)),
+	}
+	if b.Disabled {
+		v.DisabledReason = s.disabledReason("builds")
+	}
+	for _, row := range b.Rows {
+		v.Rows = append(v.Rows, newBuildView(row, d.GeneratedAt))
+	}
+	v.Summary = buildSummary(b)
+	return v
+}
+
+// buildHealthLabel is the state in a word, beside its colour.
+func buildHealthLabel(h domain.BuildHealth) string {
+	switch h {
+	case domain.BuildBroken:
+		return "Broken"
+	case domain.BuildWarning:
+		return "Warnings"
+	case domain.BuildOK:
+		return "Green"
+	default:
+		return "Unknown"
+	}
+}
+
+// buildSummary is the indicator's sentence. It always names the total, because "2 broken" and
+// "2 broken of 3" are different news.
+func buildSummary(b domain.BuildStatus) string {
+	if b.Disabled {
+		return "builds are not being fetched"
+	}
+	if b.Total() == 0 {
+		return "no repositories are being watched"
+	}
+	switch b.Health {
+	case domain.BuildBroken:
+		return countOf(b.Broken, b.Total()) + " broken"
+	case domain.BuildWarning:
+		return countOf(b.Warning, b.Total()) + " need a look"
+	default:
+		return "all " + strconv.Itoa(b.Total()) + " repositories are green"
+	}
+}
+
+// countOf renders "1 repository of 8" or "3 repositories of 8".
+func countOf(n, total int) string {
+	unit := " repositories of "
+	if n == 1 {
+		unit = " repository of "
+	}
+	return strconv.Itoa(n) + unit + strconv.Itoa(total)
 }
 
 // newWindowView renders one Plausible window. A window that never arrived is the zero Metric,
@@ -823,22 +952,6 @@ func priorityLabel(p int) string {
 		return ""
 	}
 	return "P" + strconv.Itoa(5-p)
-}
-
-// conclusionClass groups a GitHub Actions conclusion into the four states the stylesheet knows
-// about. The text is always shown as well, so the class only ever adds colour to a meaning that
-// is already in words (FR-1.5 AC2).
-func conclusionClass(conclusion string) string {
-	switch conclusion {
-	case "success":
-		return "ok"
-	case "failure", "timed_out", "startup_failure":
-		return "fail"
-	case "":
-		return "unknown"
-	default:
-		return "other"
-	}
 }
 
 // spaced turns GitHub's snake_case enumerations into readable words.

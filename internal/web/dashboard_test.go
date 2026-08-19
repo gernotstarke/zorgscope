@@ -39,10 +39,15 @@ func TestDashboardRendersTilesAndNewBadges(t *testing.T) {
 	}
 	body := getAuthed(t, dashHandler(t, store), "/").Body.String()
 
-	for _, want := range []string{"GitHub", "Builds", "Sites", "Tasks"} {
+	// Builds is not among them: it is one indicator on this page and a page of its own
+	// (FR-2.3), so that the front page stays about what needs handling.
+	for _, want := range []string{"GitHub", "Sites", "Tasks"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("no %q tile on the dashboard (FR-1.1 AC1)", want)
 		}
+	}
+	if strings.Contains(body, `id="tile-builds"`) {
+		t.Error("builds are still a tile on the front page (FR-2.3)")
 	}
 	if !strings.Contains(body, "NEW") {
 		t.Error("the new item has no NEW badge (FR-1.2 AC1)")
@@ -263,8 +268,8 @@ func TestTilesPollAtTheConfiguredInterval(t *testing.T) {
 	if !strings.Contains(body, `hx-get="/tile/github" hx-trigger="every 900s" hx-swap="outerHTML"`) {
 		t.Error("the GitHub tile does not replace itself on a poll (FR-1.6 AC1)")
 	}
-	if n := strings.Count(body, `hx-swap="outerHTML"`); n != 4 {
-		t.Errorf("%d of 4 tiles replace themselves on a poll (FR-1.6 AC1)", n)
+	if n := strings.Count(body, `hx-swap="outerHTML"`); n != 3 {
+		t.Errorf("%d of 3 tiles replace themselves on a poll (FR-1.6 AC1)", n)
 	}
 	// And the fragment carries it too, or polling stops after the first swap.
 	fragment := getAuthed(t, dashHandler(t, store), "/tile/github").Body.String()
@@ -330,8 +335,8 @@ func TestEveryTileStatesTheAgeOfItsData(t *testing.T) {
 	}}
 	body := getAuthed(t, dashHandler(t, store), "/").Body.String()
 
-	if n := strings.Count(body, "5 minutes ago"); n != 4 {
-		t.Errorf("%d of 4 tiles state the age of their data (FR-1.4 AC1)", n)
+	if n := strings.Count(body, "5 minutes ago"); n != 3 {
+		t.Errorf("%d of 3 tiles state the age of their data (FR-1.4 AC1)", n)
 	}
 }
 
@@ -354,8 +359,8 @@ func TestSourceWithoutACredentialSaysSoOnItsTile(t *testing.T) {
 		o.Store = &dashStore{}
 	}).Handler(), "/").Body.String()
 
-	if n := strings.Count(body, "no credential is configured"); n != 4 {
-		t.Errorf("%d of 4 tiles say their source is disabled for lack of a credential (FR-8.2 AC2)", n)
+	if n := strings.Count(body, "no credential is configured"); n != 3 {
+		t.Errorf("%d of 3 tiles say their source is disabled for lack of a credential (FR-8.2 AC2)", n)
 	}
 }
 
@@ -497,36 +502,57 @@ func TestSiteWithOnlyOneWindowRendersTheOtherAsMissing(t *testing.T) {
 	}
 }
 
-// FR-2.3 AC2.
-func TestBuildsTileShowsARunInProgressNextToThePreviousConclusion(t *testing.T) {
+// FR-2.3 AC1/AC2, on the page that now shows them. A completed run states its conclusion, and a
+// run in progress is shown as running with the previous outcome still deciding the row's state:
+// a repository whose last completed run failed is broken whether or not a new attempt is under
+// way.
+func TestBuildDetailsShowARunInProgressNextToThePreviousConclusion(t *testing.T) {
 	store := &dashStore{
 		builds: []domain.Build{
 			{Repo: "org/green", Workflow: "CI", Status: "completed", Conclusion: "success",
-				RunURL: "https://github.com/org/green/actions/runs/1", FinishedAt: testNow.Add(-time.Hour)},
+				RunURL: "https://github.com/org/green/actions/runs/1", FinishedAt: testNow.Add(-time.Hour),
+				FetchedAt: testNow},
 			{Repo: "org/busy", Workflow: "CI", Status: "in_progress", Conclusion: "failure",
-				RunURL: "https://github.com/org/busy/actions/runs/2", FinishedAt: testNow.Add(-3 * time.Hour)},
+				RunURL: "https://github.com/org/busy/actions/runs/2", FinishedAt: testNow.Add(-3 * time.Hour),
+				FetchedAt: testNow},
 		},
 		states: healthyStates(testNow),
 	}
-	body := getAuthed(t, dashHandler(t, store), "/tile/builds").Body.String()
+	body := getAuthed(t, dashHandler(t, store), "/builds").Body.String()
 
 	if !strings.Contains(body, "success") {
 		t.Error("a completed run does not show its conclusion (FR-2.3 AC1)")
 	}
-	if !strings.Contains(body, "running") {
+	if !strings.Contains(body, "running now") {
 		t.Error("a run in progress is not shown as such (FR-2.3 AC2)")
 	}
-	if !strings.Contains(body, "previously failure") {
-		t.Error("a run in progress does not show the previous conclusion next to it (FR-2.3 AC2)")
+	// The row's state is the last completed run's, which for org/busy is a failure.
+	if !strings.Contains(body, `class="build-row build-row-broken"`) {
+		t.Error("a repository whose last completed run failed is not reported as broken")
+	}
+	if !strings.Contains(body, "failure") {
+		t.Error("the previous conclusion is not shown beside the run in progress (FR-2.3 AC2)")
 	}
 }
 
-// FR-2.3 AC3: no builds at all is an empty tile, not an error.
-func TestBuildsTileWithNoBuildsIsEmptyNotFailing(t *testing.T) {
-	store := &dashStore{states: healthyStates(testNow)}
-	body := getAuthed(t, dashHandler(t, store), "/tile/builds").Body.String()
+// FR-2.3 AC3: a repository with no workflow runs is not an error. It is also not nothing — it is
+// a repository whose CI has never reported, which the page says in those words.
+func TestARepositoryWithNoBuildsIsNamedRatherThanHidden(t *testing.T) {
+	s := newTestServerWith(t, func(o *Options) {
+		credentialAllSources(o)
+		o.Config.GitHub.Repos = []string{"org/silent"}
+		o.Store = &dashStore{states: healthyStates(testNow)}
+	})
+	body := getAuthed(t, s.Handler(), "/builds").Body.String()
+
 	if strings.Contains(body, "Failing") {
-		t.Error("a repository without workflows must show no build state rather than an error (FR-2.3 AC3)")
+		t.Error("a repository without workflows shows an error rather than no build state (FR-2.3 AC3)")
+	}
+	if !strings.Contains(body, "org/silent") {
+		t.Error("a configured repository with no run at all is missing from the page entirely")
+	}
+	if !strings.Contains(body, "no build information") {
+		t.Error("a repository that has never produced a run is not named as such")
 	}
 }
 
@@ -610,7 +636,7 @@ func TestNoRenderedHTMLNeedsUnsafeInline(t *testing.T) {
 		"GET /login":       get(h, "/login").Body.String(),
 		"GET /docs":        get(h, "/docs").Body.String(),
 		"GET /tile/github": getAs(h, "/tile/github", c).Body.String(),
-		"GET /tile/builds": getAs(h, "/tile/builds", c).Body.String(),
+		"GET /builds":      getAs(h, "/builds", c).Body.String(),
 		"GET /tile/sites":  getAs(h, "/tile/sites", c).Body.String(),
 		"GET /tile/tasks":  getAs(h, "/tile/tasks", c).Body.String(),
 		"POST /seen (401)": post(h, "/seen", nil).Body.String(),
@@ -1376,7 +1402,13 @@ func TestAConfiguredSourceWithNothingToWatchDoesNotBlameTheCredential(t *testing
 	if strings.Contains(body, "no credential is configured") {
 		t.Error("an empty repos list is reported as a missing credential (FR-8.2 AC2)")
 	}
-	if n := strings.Count(body, "no repositories are configured to watch"); n != 2 {
-		t.Errorf("%d of the 2 GitHub tiles name the empty watch list, want 2", n)
+	if n := strings.Count(body, "no repositories are configured to watch"); n != 1 {
+		t.Errorf("the GitHub tile names the empty watch list %d times, want 1", n)
+	}
+	// And the build indicator, which is the other half of what a missing repos list turns off,
+	// says the same thing on its own page rather than blaming the credential either.
+	builds := getAuthed(t, s.Handler(), "/builds").Body.String()
+	if !strings.Contains(builds, "no repositories are configured to watch") {
+		t.Error("the build details page blames something other than the empty watch list")
 	}
 }

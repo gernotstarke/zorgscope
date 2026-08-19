@@ -558,3 +558,170 @@ func wantEqual(t *testing.T, got, want string) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// FR-2.3 on the front page: one indicator, in a colour and in words, with a link to the rest.
+func TestTheFrontPageShowsBuildStatusAsOneIndicator(t *testing.T) {
+	tests := []struct {
+		name        string
+		builds      []domain.Build
+		wantHealth  string
+		wantSummary string
+	}{
+		{
+			name: "all green",
+			builds: []domain.Build{
+				{Repo: "org/a", Conclusion: "success", FetchedAt: testNow},
+				{Repo: "org/b", Conclusion: "success", FetchedAt: testNow},
+			},
+			wantHealth:  "ok",
+			wantSummary: "all 2 repositories are green",
+		},
+		{
+			name: "one cancelled",
+			builds: []domain.Build{
+				{Repo: "org/a", Conclusion: "success", FetchedAt: testNow},
+				{Repo: "org/b", Conclusion: "cancelled", FetchedAt: testNow},
+			},
+			wantHealth:  "warning",
+			wantSummary: "1 repository of 2 need a look",
+		},
+		{
+			name: "two broken",
+			builds: []domain.Build{
+				{Repo: "org/a", Conclusion: "failure", FetchedAt: testNow},
+				{Repo: "org/b", Conclusion: "timed_out", FetchedAt: testNow},
+			},
+			wantHealth:  "broken",
+			wantSummary: "2 repositories of 2 broken",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			repos := make([]string, 0, len(tc.builds))
+			for _, b := range tc.builds {
+				repos = append(repos, b.Repo)
+			}
+			h := newTestServerWith(t, func(o *Options) {
+				credentialAllSources(o)
+				o.Config.GitHub.Repos = repos
+				o.Store = &dashStore{builds: tc.builds, states: healthyStates(testNow)}
+			}).Handler()
+
+			body := getAuthed(t, h, "/").Body.String()
+			bar := firstLineContaining(body, "buildbar")
+			if bar == "" {
+				t.Fatal("no build indicator on the front page")
+			}
+			if !strings.Contains(bar, "buildbar-"+tc.wantHealth) {
+				t.Errorf("indicator = %s, want state %q", bar, tc.wantHealth)
+			}
+			if !strings.Contains(bar, tc.wantSummary) {
+				t.Errorf("indicator does not say %q: %s", tc.wantSummary, bar)
+			}
+			// FR-1.5 AC2: the state is in words as well as in colour.
+			if !strings.Contains(bar, "Build status:") {
+				t.Error("the indicator names the state only by colour")
+			}
+			if !strings.Contains(bar, `href="/builds"`) {
+				t.Error("the indicator offers no way to reach the details")
+			}
+			// The front page is for issues and pull requests; the repository list belongs on the
+			// details page.
+			if strings.Contains(body, `class="builds-table"`) {
+				t.Error("the repository table is on the front page")
+			}
+		})
+	}
+}
+
+// The details page is the list the front page no longer carries.
+func TestTheBuildDetailsPageListsEveryWatchedRepository(t *testing.T) {
+	h := newTestServerWith(t, func(o *Options) {
+		credentialAllSources(o)
+		o.Config.GitHub.Repos = []string{"org/broken", "org/green", "org/silent"}
+		o.Store = &dashStore{
+			builds: []domain.Build{
+				{Repo: "org/broken", Workflow: "CI", Conclusion: "failure", Status: "completed",
+					RunURL: "https://github.com/org/broken/actions/runs/9",
+					FinishedAt: testNow.Add(-time.Hour), FetchedAt: testNow},
+				{Repo: "org/green", Workflow: "CI", Conclusion: "success", Status: "completed",
+					FinishedAt: testNow.Add(-2 * time.Hour), FetchedAt: testNow},
+			},
+			states: healthyStates(testNow),
+		}
+	}).Handler()
+
+	rec := getAuthed(t, h, "/builds")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /builds = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+
+	for _, repo := range []string{"org/broken", "org/green", "org/silent"} {
+		if !strings.Contains(body, repo) {
+			t.Errorf("the details page does not list %q", repo)
+		}
+	}
+	if !strings.Contains(body, "https://github.com/org/broken/actions/runs/9") {
+		t.Error("a broken build does not link to its run, which is where it is diagnosed")
+	}
+	// Worst first: the broken repository is above the green one.
+	if strings.Index(body, "org/broken") > strings.Index(body, "org/green") {
+		t.Error("the broken repository is not listed first")
+	}
+}
+
+// QS-4.3 at the two places build state is rendered.
+func TestTheBuildPagesNeverShowASecret(t *testing.T) {
+	const canary = "ghp-canary-build-7c2a91"
+
+	h := newTestServerWith(t, func(o *Options) {
+		credentialAllSources(o)
+		o.Config.Secrets.GitHubToken = canary
+		o.Config.GitHub.Repos = []string{"org/a"}
+		o.Store = &dashStore{states: map[string]domain.SourceState{
+			"github-builds": {
+				Source:      "github-builds",
+				LastError:   "GET /actions/runs failed with Authorization: Bearer " + canary,
+				LastErrorAt: testNow,
+			},
+		}}
+	}).Handler()
+
+	for _, page := range []string{"/", "/builds"} {
+		if strings.Contains(getAuthed(t, h, page).Body.String(), canary) {
+			t.Errorf("the credential reached %s", page)
+		}
+	}
+}
+
+// FR-2.3 under polling. A build that breaks while the tab sits open has to turn the indicator red
+// then — on a dashboard meant to be left open, the next page load may be tomorrow.
+func TestAPolledTileBringsTheBuildIndicatorBackWithIt(t *testing.T) {
+	h := newTestServerWith(t, func(o *Options) {
+		credentialAllSources(o)
+		o.Config.GitHub.Repos = []string{"org/a"}
+		o.Store = &dashStore{
+			builds: []domain.Build{{Repo: "org/a", Conclusion: "failure", FetchedAt: testNow}},
+			states: healthyStates(testNow),
+		}
+	}).Handler()
+
+	fragment := getAuthed(t, h, "/tile/github").Body.String()
+	if !strings.Contains(fragment, `id="build-status" hx-swap-oob="true"`) {
+		t.Fatalf("the polled fragment does not carry the build indicator:\n%s", fragment)
+	}
+	if !strings.Contains(fragment, "buildbar-broken") {
+		t.Error("the swapped indicator does not carry the current state")
+	}
+
+	page := getAuthed(t, h, "/").Body.String()
+	if strings.Contains(firstLineContaining(page, `id="build-status"`), "hx-swap-oob") {
+		t.Error("the page marks its own indicator as an out-of-band swap")
+	}
+	// GET /tile/builds is gone with the tile; the page took its place.
+	if got := getAuthed(t, h, "/tile/builds").Code; got != http.StatusNotFound {
+		t.Errorf("GET /tile/builds = %d, want 404 — builds are no longer a tile", got)
+	}
+}

@@ -45,7 +45,9 @@ var embedded embed.FS
 // pageFiles are the page templates, each of which supplies the "content" block that layout.html
 // wraps. They are parsed one page at a time — layout plus that page — because every page defines a
 // block of the same name, so a single template set would have them overwrite each other.
-var pageFiles = []string{"login.html", "dashboard.html", "problems.html", "docs.html", "docs_index.html"}
+var pageFiles = []string{
+	"login.html", "dashboard.html", "problems.html", "builds.html", "docs.html", "docs_index.html",
+}
 
 // tileGlob matches the per-tile fragment templates. They are parsed twice on purpose: into every
 // page set, so that dashboard.html can compose the page out of them, and into a set of their own,
@@ -279,6 +281,7 @@ func (s *Server) routes() []route {
 		// tests that drive every route request, since the pattern is not itself a path.
 		{http.MethodGet, "/{$}", authSessionPage, s.handleDashboard, "/"},
 		{http.MethodGet, "/problems", authSessionPage, s.handleProblems, ""},
+		{http.MethodGet, "/builds", authSessionPage, s.handleBuilds, ""},
 		{http.MethodGet, "/tile/{source}", authSessionFragment, s.handleTile, "/tile/github"},
 		{http.MethodPost, "/seen", authSessionFragment, s.handleSeen, ""},
 		{http.MethodPost, "/refresh", authSessionFragment, s.handleRefresh, ""},

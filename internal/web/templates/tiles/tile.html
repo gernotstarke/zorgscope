@@ -1,7 +1,8 @@
 {{/* The frame every tile shares: its title, its new count, the age of its data and its health.
      The same template serves the page and the /tile/{source} fragment, so a poll can never drift
-     from what the page drew (FR-1.6 AC1). Dispatch to the body is an explicit chain over the four
-     names the domain assembles rather than a computed template name. */}}
+     from what the page drew (FR-1.6 AC1). Dispatch to the body is an explicit chain over the
+     names the domain assembles rather than a computed template name. Builds are not among them:
+     they are one indicator on the front page and a page of their own (see build-status.html). */}}
 {{define "tile"}}
 <section class="tile tile-{{.Name}}" id="tile-{{.Name}}"
          hx-get="/tile/{{.Name}}" hx-trigger="every {{.PollSecs}}s" hx-swap="outerHTML">
@@ -24,7 +25,6 @@
   <p class="notice notice-stale" role="status">Stale — nothing has been fetched for this source recently.</p>
   {{end}}
   {{if eq .Name "github"}}{{template "tile-github" .}}
-  {{else if eq .Name "builds"}}{{template "tile-builds" .}}
   {{else if eq .Name "sites"}}{{template "tile-sites" .}}
   {{else if eq .Name "tasks"}}{{template "tile-tasks" .}}
   {{end}}

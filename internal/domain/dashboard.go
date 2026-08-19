@@ -25,8 +25,18 @@ var tileTitle = map[string]string{
 	"tasks":  "Tasks",
 }
 
-// tileOrder fixes the tiles' assembly and rendering order (FR-1.1 AC1).
-var tileOrder = []string{"github", "builds", "sites", "tasks"}
+// tileOrder fixes the dashboard tiles' assembly and rendering order (FR-1.1 AC1).
+//
+// Builds is deliberately not among them. The front page is for what needs handling — new and
+// unhandled issues and pull requests — and a list of one row per repository is a report, not a
+// prompt. Builds are one indicator on the front page and a page of their own behind it; see
+// BuildStatus.
+var tileOrder = []string{"github", "sites", "tasks"}
+
+// sourceOrder is every source the dashboard depends on, builds included, in the order they are
+// reported in. It is what the problems page walks: an interface that stopped having a tile did
+// not stop being an interface that can fail.
+var sourceOrder = []string{"github", "builds", "sites", "tasks"}
 
 // githubTileLimit is how many issues and pull requests the GitHub tile shows.
 //
@@ -68,6 +78,11 @@ type DashboardInput struct {
 	Metrics           []Metric
 	States            map[string]SourceState
 	Disabled          []string // sources without a credential (FR-8.2 AC2)
+	// Repos is the configured repository list, in configuration order. It is what makes the
+	// build status able to report a repository that has never produced a run: only repositories
+	// with a run are stored, so without this a silent workflow is indistinguishable from a
+	// repository nobody is watching.
+	Repos []string
 }
 
 // RunOutcome is what may honestly be said about the last refresh run (FR-1.1 AC3). It exists
@@ -118,6 +133,8 @@ type Dashboard struct {
 	// Problems is the health of every external interface, worst first (FR-1.4). Every configured
 	// interface is listed, healthy ones included, so that the details page can answer "is
 	// anything wrong?" positively rather than with an empty list.
+	// Builds is the front page's build indicator and the rows behind it (FR-2.3).
+	Builds   BuildStatus
 	Problems []Problem
 	// ProblemCount is how many of them are actually wrong — errors and warnings, never an
 	// interface that is merely switched off. It is what decides whether the dashboard shows its
@@ -186,6 +203,7 @@ func BuildDashboard(in DashboardInput) Dashboard {
 		d.Tiles = append(d.Tiles, tile)
 	}
 
+	d.Builds = buildStatus(in, disabled)
 	d.Problems = buildProblems(in, disabled)
 	for _, p := range d.Problems {
 		if p.Wrong() {
@@ -256,8 +274,6 @@ func buildTile(name string, in DashboardInput, disabled map[string]bool) Tile {
 		tile.Items = items
 		tile.Total = len(items)
 		tile.NewCount = CountNew(items, in.LastVisitAt)
-	case "builds":
-		tile.Builds = in.Builds
 	case "sites":
 		tile.Sites = siteMetrics(in.Metrics)
 	}

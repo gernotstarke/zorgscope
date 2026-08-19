@@ -35,8 +35,11 @@ func TestBuildDashboardCountsNewPerTileAndOverall(t *testing.T) {
 	if got["tasks"] != 1 {
 		t.Errorf("tasks tile NewCount = %d, want 1", got["tasks"])
 	}
-	if got["builds"] != 0 || got["sites"] != 0 {
-		t.Errorf("builds/sites NewCount = %d/%d, want 0/0 (they carry no Items)", got["builds"], got["sites"])
+	if got["sites"] != 0 {
+		t.Errorf("sites NewCount = %d, want 0 (it carries no Items)", got["sites"])
+	}
+	if _, ok := got["builds"]; ok {
+		t.Error("builds are still a tile; they are one indicator and a page of their own (FR-2.3)")
 	}
 	if d.NewTotal != 2 {
 		t.Errorf("NewTotal = %d, want 2", d.NewTotal)
@@ -264,8 +267,13 @@ func TestTilesAppearEvenWhenEmpty(t *testing.T) {
 	now := at("2026-08-17T12:00:00Z")
 	in := domain.DashboardInput{Now: now}
 	d := domain.BuildDashboard(in)
-	if len(d.Tiles) != 4 {
-		t.Fatalf("len(tiles) = %d, want 4 — an empty tile still has an empty state (FR-1.4)", len(d.Tiles))
+	if len(d.Tiles) != 3 {
+		t.Fatalf("len(tiles) = %d, want 3 — an empty tile still has an empty state (FR-1.4)", len(d.Tiles))
+	}
+	// Builds are not a tile, but they are still reported: an empty deployment has an indicator
+	// saying so rather than no indicator at all.
+	if d.Builds.Health != domain.BuildUnknown {
+		t.Errorf("build health = %q, want %q with nothing configured", d.Builds.Health, domain.BuildUnknown)
 	}
 }
 

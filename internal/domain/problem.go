@@ -116,8 +116,8 @@ const notifySource = "slack"
 // is also what a dashboard with nothing configured, or one whose health records were never
 // written, would show. Listing all of them makes the healthy answer positive rather than absent.
 func buildProblems(in DashboardInput, disabled map[string]bool) []Problem {
-	out := make([]Problem, 0, len(tileOrder)+1)
-	for _, name := range tileOrder {
+	out := make([]Problem, 0, len(sourceOrder)+1)
+	for _, name := range sourceOrder {
 		out = append(out, sourceProblem(name, in, disabled))
 	}
 	out = append(out, notifyProblem(in, disabled))
@@ -126,8 +126,8 @@ func buildProblems(in DashboardInput, disabled map[string]bool) []Problem {
 }
 
 // sortProblems orders entries worst first. The sort is stable, so within one severity the
-// interfaces keep the order they were assembled in — tileOrder, which is the order they appear in
-// on the dashboard — and the two pages read the same way round.
+// interfaces keep the order they were assembled in — sourceOrder, which is the order they appear
+// in on the dashboard — and the two pages read the same way round.
 func sortProblems(ps []Problem) {
 	sort.SliceStable(ps, func(i, j int) bool {
 		return rankOf(ps[i].Severity) < rankOf(ps[j].Severity)

@@ -237,14 +237,14 @@ button:hover { filter: brightness(1.08); }
 .notice-stale { border-color: var(--warn); color: var(--warn); }
 .notice-disabled { color: var(--muted); }
 
-.items, .builds, .sites { list-style: none; margin: 0; padding: 0; }
+.items, .sites { list-style: none; margin: 0; padding: 0; }
 
-.item, .build, .site {
+.item, .site {
   padding: 0.5rem 0;
   border-bottom: 1px solid var(--border);
 }
 
-.item:last-child, .build:last-child, .site:last-child { border-bottom: 0; }
+.item:last-child, .site:last-child { border-bottom: 0; }
 
 .item-line {
   display: flex;
@@ -272,10 +272,12 @@ button:hover { filter: brightness(1.08); }
 
 .badge-new { border-color: var(--accent); color: var(--accent); }
 .badge-priority { border-color: var(--muted); color: var(--muted); }
+/* The three build states, and the one the problems page adds. They share a vocabulary on purpose:
+   "broken", "warning" and "ok" mean the same thing wherever they appear. */
 .badge-ok { border-color: var(--ok); color: var(--ok); }
-.badge-fail { border-color: var(--danger); color: var(--danger); }
-.badge-running { border-color: var(--warn); color: var(--warn); }
-.badge-other, .badge-unknown { border-color: var(--muted); color: var(--muted); }
+.badge-broken { border-color: var(--danger); color: var(--danger); }
+.badge-warning { border-color: var(--warn); color: var(--warn); }
+.badge-unknown { border-color: var(--muted); color: var(--muted); }
 
 .is-overdue .item-meta { color: var(--danger); }
 
@@ -546,3 +548,78 @@ button:hover { filter: brightness(1.08); }
   color: var(--muted);
   font-size: 0.8rem;
 }
+
+/* ---------------------------------------------------------------- the build indicator */
+
+/* Builds are one line on the front page (FR-2.3). The dot is the fast read; the label and the
+   sentence beside it are what makes the line readable without it, which is the whole of
+   FR-1.5 AC2 — a red dot alone is invisible to a reader who cannot see red. */
+.buildbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0 0 1rem;
+  padding: 0.55rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: 0.9rem;
+}
+
+.dot {
+  flex: none;
+  align-self: center;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.buildbar-label { font-weight: 600; }
+.buildbar-summary { color: var(--muted); }
+.buildbar-link { margin-left: auto; color: var(--accent); }
+
+.buildbar-broken { color: var(--danger); border-color: var(--danger); }
+.buildbar-warning { color: var(--warn); border-color: var(--warn); }
+.buildbar-ok { color: var(--ok); }
+.buildbar-unknown { color: var(--muted); }
+
+/* ---------------------------------------------------------------- the build details table */
+
+/* A table is wider than a phone. It scrolls inside its own box rather than making the page
+   scroll sideways. */
+.table-scroll { overflow-x: auto; margin: 0 0 1.5rem; }
+
+.builds-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.builds-table th,
+.builds-table td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  vertical-align: baseline;
+}
+
+.builds-table thead th {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.build-repo { font-weight: 600; white-space: nowrap; }
+.build-workflow,
+.build-finished { color: var(--muted); white-space: nowrap; }
+.build-running { margin-left: 0.4rem; color: var(--muted); font-size: 0.8rem; }
+
+/* The state colours the row's left edge as well as its badge, so a broken repository is findable
+   by scanning down the table rather than reading every badge. */
+.build-row-broken { box-shadow: inset 3px 0 0 var(--danger); }
+.build-row-warning { box-shadow: inset 3px 0 0 var(--warn); }
+.build-row-ok { box-shadow: inset 3px 0 0 var(--ok); }

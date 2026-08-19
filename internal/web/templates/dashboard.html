@@ -13,6 +13,10 @@
      trouble appearing between page loads is not silent until the next one — see
      templates/tiles/alert.html. */}}
 {{template "dash-alert" .Alert}}
+{{/* Builds are one line here and a page behind it (FR-2.3). The front page is for what needs
+     handling — new and unhandled issues and pull requests — and a row per repository is a report,
+     which would push the things that do need handling below the fold. */}}
+{{template "build-status" .Builds}}
 <div class="dash-actions">
   {{/* The summary states the total, which no single tile knows, so a polled tile sends this very
        block back as an out-of-band swap; see templates/tiles/counts.html. */}}
