@@ -344,7 +344,17 @@ button:hover { filter: brightness(1.08); }
   overflow-wrap: anywhere;
 }
 
+/* One line: made-in on the left, the version in the middle, the documentation on the right.
+
+   The middle column is centred on the *page*, not between its neighbours, which is what a grid of
+   1fr auto 1fr gives and what flexbox with space-between does not — with space-between the version
+   drifts left or right as the two texts around it change length, and the one thing in this footer
+   that should sit still is the one that identifies the build. */
 .footer {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: baseline;
+  gap: 0.75rem;
   max-width: 72rem;
   margin: 0 auto;
   padding: 1rem 1.25rem 2rem;
@@ -546,6 +556,12 @@ button:hover { filter: brightness(1.08); }
 
 .topbar-nav { display: inline-flex; align-items: center; gap: 0.6rem; }
 
+/* The stop control turns red on approach. It is the one control in this header that ends
+   something, and it sits next to two that do not, so it says which it is before it is pressed
+   rather than after (FR-1.7). */
+.stop-button:hover,
+.stop-button:focus-visible { color: var(--danger); }
+
 /* The switch is a form, which is a block by default and would break the nav's row. */
 .theme-form { display: inline-flex; margin: 0; }
 
@@ -690,11 +706,24 @@ button:hover { filter: brightness(1.08); }
 
 /* ---------------------------------------------------------------- the footer */
 
-.footer-made { margin: 0 0 0.25rem; color: var(--muted); }
+.footer-made { color: var(--muted); justify-self: start; }
 .heart { color: var(--danger); }
-.footer-meta { margin: 0; color: var(--muted); }
-.footer-sep { margin: 0 0.35rem; }
-.version { font-variant-numeric: tabular-nums; }
+.version { color: var(--muted); font-variant-numeric: tabular-nums; }
+.footer-docs { justify-self: end; text-align: right; }
+
+/* Three columns need more width than a phone has. Below that the three stack and centre, which
+   keeps the same reading order rather than dropping anything. */
+@media (max-width: 34rem) {
+  .footer {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    gap: 0.35rem;
+    text-align: center;
+  }
+
+  .footer-made { justify-self: center; }
+  .footer-docs { justify-self: center; text-align: center; }
+}
 
 /* ---------------------------------------------------------------- item rows */
 

@@ -46,7 +46,8 @@ var embedded embed.FS
 // wraps. They are parsed one page at a time — layout plus that page — because every page defines a
 // block of the same name, so a single template set would have them overwrite each other.
 var pageFiles = []string{
-	"login.html", "dashboard.html", "problems.html", "builds.html", "docs.html", "docs_index.html",
+	"login.html", "dashboard.html", "problems.html", "builds.html", "stopping.html",
+	"docs.html", "docs_index.html",
 }
 
 // tileGlob matches the per-tile fragment templates. They are parsed twice on purpose: into every
@@ -93,6 +94,12 @@ type Options struct {
 	// whether the Fly-Client-IP header may be believed (see clientIP). nil means "work it out
 	// from the runtime environment"; the tests set it either way to exercise both paths.
 	BehindFlyProxy *bool
+	// Stop asks the process to shut down gracefully, and is what the header's stop control is
+	// wired to (FR-1.7). It is optional: nil means this process cannot stop itself, and then the
+	// control is not drawn and POST /stop says so rather than pretending. Nothing in the web
+	// layer knows how a process ends — main owns that, and hands in the one function that does
+	// it.
+	Stop func()
 }
 
 // Server holds the HTTP layer's state: the parsed templates, the session codec, the sign-in and
@@ -121,6 +128,12 @@ type Server struct {
 	// trustFlyClientIP is the decision behind clientIP: only a process actually running behind
 	// Fly's proxy may believe the Fly-Client-IP header.
 	trustFlyClientIP bool
+	// stop shuts this process down; nil when the deployment cannot. See Options.Stop.
+	stop func()
+	// stopGrace is how long the process keeps serving after answering a stop request; New sets it
+	// to defaultStopGrace. It is a field for the same reason ceiling is: a test has to be able to
+	// watch the shutdown actually happen without waiting a second for every case.
+	stopGrace time.Duration
 }
 
 // New builds a Server. It fails when a required dependency or credential is missing: a process
@@ -197,6 +210,8 @@ func New(o Options) (*Server, error) {
 		bearer:           newRateLimiter(signInAttempts, signInWindow),
 		trustFlyClientIP: trustFly,
 		ceiling:          refreshCeiling,
+		stop:             o.Stop,
+		stopGrace:        defaultStopGrace,
 	}
 	s.handler = securityHeaders(s.recoverPanics(canonicalPath(s.mux())))
 	return s, nil
@@ -294,6 +309,13 @@ func (s *Server) routes() []route {
 		{http.MethodGet, "/tile/{source}", authSessionFragment, s.handleTile, "/tile/github"},
 		{http.MethodPost, "/seen", authSessionFragment, s.handleSeen, ""},
 		{http.MethodPost, "/refresh", authSessionFragment, s.handleRefresh, ""},
+		// Stopping the process is session-authed and POST-only, like the two controls above it.
+		// It must never be public and must never be reachable with REFRESH_SECRET: that
+		// credential exists so an external scheduler can trigger a refresh, and a scheduler that
+		// could also shut the Machine down would be one leaked cron URL away from being a
+		// denial-of-service switch. The two credentials are independent and neither authorises
+		// the other's action.
+		{http.MethodPost, "/stop", authSessionFragment, s.handleStop, ""},
 
 		{http.MethodPost, "/api/refresh", authBearer, s.handleAPIRefresh, ""},
 	}
@@ -720,7 +742,15 @@ type pageData struct {
 	// the Asset method, so a template cannot accidentally link an unversioned path by indexing
 	// the map with a name that is not in it.
 	assets map[string]string
+	// canStop is whether this process can shut itself down; render fills it in. Reached through
+	// the CanStop method for the same reason assets is.
+	canStop bool
 }
+
+// CanStop says whether this process can shut itself down, and therefore whether the header draws
+// the stop control. render fills it in for every page from the server, so a deployment that cannot
+// stop does not show a control that would answer 501.
+func (d pageData) CanStop() bool { return d.canStop }
 
 // Asset is the versioned URL of a static file, for the templates: {{.Asset "app.css"}}.
 func (d pageData) Asset(name string) string { return d.assets[name] }
@@ -776,6 +806,11 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, page
 	data.Theme = themeOf(r)
 	data.Path = r.URL.Path
 	data.assets = s.assetURLs()
+	// The stop control is drawn only where it would work: this process must be able to stop, and
+	// the visitor must be signed in. The appearance switch beside it is deliberately public — it
+	// decides a colour — but stopping is not, and an anonymous visitor offered a control that
+	// answers 401 has been told something untrue about the page.
+	data.canStop = s.stop != nil && s.signedIn(r)
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, "layout", data); err != nil {
 		s.fail(w, r, "rendering", err)

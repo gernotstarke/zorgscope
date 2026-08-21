@@ -640,6 +640,9 @@ func TestNoRenderedHTMLNeedsUnsafeInline(t *testing.T) {
 		"GET /tile/sites":  getAs(h, "/tile/sites", c).Body.String(),
 		"GET /tile/tasks":  getAs(h, "/tile/tasks", c).Body.String(),
 		"POST /seen (401)": post(h, "/seen", nil).Body.String(),
+		// The stop page in the state this handler can produce: it was built with no way to stop,
+		// so the route renders its refusal. It is visitor-facing HTML and is swept like the rest.
+		"POST /stop (501)": postAs(h, "/stop", nil, c).Body.String(),
 	}
 	// The sign-in form's error state renders visitor-facing text, so it is swept too.
 	pages["POST /login (rejected)"] = post(h, "/login", url.Values{"token": {"wrong"}}).Body.String()

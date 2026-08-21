@@ -296,7 +296,34 @@ func TestEveryPageFooterNamesCologneAndTheVersion(t *testing.T) {
 			if !strings.Contains(body, version.String()) {
 				t.Errorf("the footer does not carry the version %q", version.String())
 			}
+			if !strings.Contains(body, `class="footer-docs"`) {
+				t.Error("the footer does not link the documentation")
+			}
 		})
+	}
+}
+
+// The footer is one line: where this was made, which build it is, where the writing is. The order
+// in the markup is the order it is read aloud and the order the keyboard reaches it, so the
+// version has to be written between the other two rather than positioned there by the stylesheet
+// — a footer that reads correctly only for people who can see it is not one line, it is two
+// layouts.
+func TestTheFooterReadsInTheOrderItIsDrawn(t *testing.T) {
+	body := getAuthed(t, dashHandler(t, representativeStore()), "/").Body.String()
+
+	footer := body[strings.Index(body, "<footer"):]
+	made := strings.Index(footer, "footer-made")
+	ver := strings.Index(footer, `class="version"`)
+	docs := strings.Index(footer, "footer-docs")
+	if made < 0 || ver < 0 || docs < 0 {
+		t.Fatalf("the footer is missing one of its three parts: made=%d version=%d docs=%d", made, ver, docs)
+	}
+	if made > ver || ver > docs {
+		t.Errorf("the footer reads made=%d, version=%d, docs=%d; want that order", made, ver, docs)
+	}
+	// One line means one row of content, not two paragraphs stacked by the browser's defaults.
+	if strings.Contains(footer[:docs], "<p ") {
+		t.Error("the footer still uses block paragraphs, which cannot sit on one line")
 	}
 }
 

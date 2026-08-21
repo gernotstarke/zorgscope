@@ -17,7 +17,7 @@ import (
 // deploy/Dockerfile from a source copy with no .git directory, so a version stamped at link time
 // would be empty in exactly the build that matters most. The commit below is the part that can
 // only come from the toolchain, and it is allowed to be absent.
-const Version = "0.1.0"
+const Version = "0.2.0"
 
 // shortRevisionLen is how much of the commit hash is shown. Seven characters is what git itself
 // abbreviates to and what a person can read back to `git show`.
@@ -36,7 +36,7 @@ func Revision() string {
 	return revision
 }
 
-// String is the version as it is displayed: "v0.1.0", with the commit appended as build metadata
+// String is the version as it is displayed: "v0.2.0", with the commit appended as build metadata
 // when one is known. The '+' form is semver's own build-metadata syntax, so the string stays a
 // valid semantic version either way.
 func String() string {

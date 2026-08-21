@@ -40,7 +40,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if err := run(ctx, log); err != nil {
+	// stop is handed to run so the dashboard's own stop control can end this process the same way
+	// a SIGTERM does: signal.NotifyContext cancels ctx when stop is called, and serve shuts the
+	// listener down on that cancellation. One shutdown path, whoever asks for it.
+	if err := run(ctx, stop, log); err != nil {
 		// Every error reaching here has already been scrubbed of secrets where it could carry
 		// one; see openStore (QS-4.3).
 		log.Error("zorgscope stopped", "err", err.Error())
@@ -48,7 +51,7 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, log *slog.Logger) error {
+func run(ctx context.Context, stop func(), log *slog.Logger) error {
 	cfg, err := config.Load(envOr("CONFIG_PATH", "config/zorgscope.yaml"), os.Getenv)
 	if err != nil {
 		// config.Load names the offending field and never quotes a secret's value.
@@ -84,6 +87,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		Runner: runner,
 		Clock:  clock,
 		Log:    log,
+		Stop:   stop,
 	})
 	if err != nil {
 		return fmt.Errorf("web server: %w", err)
