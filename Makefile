@@ -14,11 +14,12 @@ COMPOSE        := docker compose -f deploy/compose.yml
 COMPOSE_E2E    := docker compose -f deploy/compose.e2e.yml
 GOCACHE_VOL    := $(APP)-gocache
 GOMOD_VOL      := $(APP)-gomod
+CGO_ENABLED    ?= 0
 # Run a command inside the Go image with module & build caches persisted in named volumes.
 GO_RUN          = docker run --rm -t \
                     -v "$(CURDIR)":/src -w /src \
                     -v $(GOMOD_VOL):/go/pkg/mod -v $(GOCACHE_VOL):/root/.cache/go-build \
-                    -e CGO_ENABLED=0 $(GO_IMAGE)
+                    -e CGO_ENABLED=$(CGO_ENABLED) $(GO_IMAGE)
 
 .DEFAULT_GOAL := help
 
@@ -54,9 +55,21 @@ fmt: ## gofmt all Go files
 tidy: ## go mod tidy
 	$(GO_RUN) go mod tidy
 
+.PHONY: go
+go: ## Run any go command in the Go container: make go ARGS="test ./... -run TestX -v"
+	$(GO_RUN) go $(ARGS)
+
 .PHONY: e2e
 e2e: ## End-to-end tests: app + fake sources + Playwright (Docker Compose)
 	$(COMPOSE_E2E) up --build --abort-on-container-exit --exit-code-from playwright
+	$(COMPOSE_E2E) down -v
+
+.PHONY: demo
+demo: ## Run the dashboard against fake sources on http://localhost:$(PORT) (no tokens needed)
+	$(COMPOSE_E2E) up --build -d fakesources zorgscope
+	@echo ">> demo running at http://localhost:$(PORT) (stop with: make demo-stop)"
+.PHONY: demo-stop
+demo-stop: ## Stop the demo
 	$(COMPOSE_E2E) down -v
 
 .PHONY: docs-check

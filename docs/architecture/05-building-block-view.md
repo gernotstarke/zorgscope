@@ -8,7 +8,7 @@ flowchart TB
         HTTP[internal/server<br/>router, handlers, auth, middleware, view models]
         APP[internal/app<br/>scheduler, refresh, snapshotter, dismiss, dashboard query]
         DOM[internal/domain<br/>Item, Snapshot, Attention, Dismissal — pure]
-        PORTS[internal/ports<br/>SourceFetcher, ItemStore, SnapshotStore, DismissalStore,<br/>StatusStore, AuthStore, Clock, Notifier]
+        PORTS[internal/ports<br/>SourceFetcher, ItemStore, SnapshotStore, DismissalStore,<br/>StatusStore, CredentialSink, Clock, Notifier<br/>AuthStore: M3, planned]
         CFG[internal/config<br/>YAML schema, validation, env secrets]
         subgraph adapters["internal/adapters"]
             GH[github]
@@ -46,8 +46,8 @@ Import rules (enforced by `depguard`):
 
 | Block | Responsibility | Key types / functions |
 |-------|----------------|-----------------------|
-| `internal/domain` | Data model and rules: age buckets, `IsNew(item, prevSnapshot)`, `IsUnanswered(item, grace, me, collaborators)`, `Attention(item, ctx) Level`, dismissal expiry, snapshot diff, item identity (`SourceID` + `ExternalID`), sorting/capping. | `Item`, `Kind`, `Snapshot`, `Dismissal`, `AttentionLevel`, `Bucket`, `Rules` |
-| `internal/ports` | Interfaces the app depends on; in‑memory fakes for tests live in `ports/fake`. | `SourceFetcher{ID() string; Kind() string /*source kind*/; Fetch(ctx) ([]Item, error)}`, `ItemStore`, `SnapshotStore`, `DismissalStore`, `StatusStore`, `AuthStore`, `CredentialSink` (adapters report auto‑detected expiries), `Clock`, `Notifier` |
+| `internal/domain` | Data model and rules: age buckets, `IsNew(item, prevSnapshot)`, `IsUnanswered(item, grace, me, collaborators)`, `Attention(item, ctx) Level`, dismissal expiry, snapshot diff, item identity (`ItemID{SourceID, ExternalID}`), sorting/capping. | `Item`, `Kind`, `ItemID`, `Snapshot`, `Dismissal`, `Bucket`, `AttentionLevel`, `Rules` |
+| `internal/ports` | Interfaces the app depends on; in‑memory fakes for tests live in `ports/memstore`. | `SourceFetcher{ID() string; Kind() string /*source kind*/; Fetch(ctx) ([]Item, error)}`, `ItemStore`, `SnapshotStore`, `DismissalStore`, `StatusStore`, `Store` (bundles the four store ports), `CredentialSink` (adapters report auto‑detected expiries), `Clock`, `Notifier` (reserved for later push channels, unused in v1). `AuthStore` is M3 scope (passkeys, sessions) — not yet defined. |
 | `internal/config` | Parse `zorgscope.yaml`, merge env secrets, validate, expose typed config; hot reload (SIGHUP/fsnotify, local). | `Load(path, env) (Config, error)`, `Validate` |
 | `internal/app` | Use cases: `Scheduler` (ticker per source, jitter, backoff, single‑flight), `RefreshAll`, `Snapshotter` (daily + catch‑up + prune), `Dismiss`, `DashboardQuery` (assemble tile view models from stores + rules), `SourceRegistry` (kind → adapter constructor). | `Scheduler`, `Snapshotter`, `Dashboard`, `Registry` |
 | `internal/adapters/github` | GraphQL client, pagination, mapping to `Item` (issue/pr/workflow‑run), notifications REST for mentions, rate‑limit awareness, ETag. | `RepoFetcher`, `MentionsFetcher` |
@@ -61,21 +61,24 @@ Import rules (enforced by `depguard`):
 | `web/` | `templates/` (layout, page, one partial per tile and per state), `static/` (`tokens.css`, `app.css`, `htmx.min.js`, icons). Embedded via `embed.FS`. | — |
 | `internal/logging` | JSON `slog` logger with secret redaction (QS‑3.3). | `New(w, level, secrets)` |
 | `cmd/zorgscope` | Wiring, flags, graceful shutdown; `sources.go` registers all source kinds. | `main` |
-| `cmd/fakesources` | Deterministic HTTP fakes of all upstreams with a small control API (`POST /__control/github/issues` to inject events) for e2e. | `main` |
+| `cmd/fakesources` | Deterministic HTTP fakes of all upstreams with a small control API (`POST /__control/issues` to inject events) for e2e. | `main` |
 
 ## 5.2 Level 2 – `internal/domain`
 
 ```text
 domain/
-  item.go          Item, Kind, ItemID, Author, Labels; ItemID = SourceID + "/" + ExternalID
-  snapshot.go      Snapshot{SourceID, TakenAt, IDs}; Diff(prev, cur) (added, removed)
-  attention.go     Level (None, Stale, Aged, Unanswered, New, BuildFailed, Expiring, Expired, AuthFailed, Down), Rules struct (Grace, StaleAfter, Me, Bots), Evaluate(item, prevSnapshot, dismissal, now)
+  item.go          Item, Kind, ItemID, and every *Payload struct (Issue, PR, WorkflowRun, Mention, Task,
+                    Article, MetricSeries, Credential, HealthCheck); ItemID = SourceID | ExternalID
+                    ("/" cannot be the separator: source ids such as "github:owner/repo" already contain one)
   buckets.go       Bucket(age) → LT24h | LT7d | LT30d | GE30d
+  snapshot.go      Snapshot{SourceID, Date, TakenAt, IDs}; Diff(prev, cur) (added, removed)
   dismissal.go     Dismissal{ItemID, UpdatedAt, DismissedAt}; Covers(item) bool
-  metrics.go       MetricSeries payload for Plausible items (typed, not raw JSON)
-  task.go          Task payload (project, priority, due, recurring)
-  watch.go         Credential payload (expires, warnDays, usedBy, autoDetected) and HealthCheck payload (status, latency, certExpires, consecutiveFailures)
+  attention.go     Level (None, Aged, Stale, Expiring, Unanswered, New, BuildFailed, Expired, Down, AuthFailed), Rules struct (Grace, StaleAfter, Me, Bots), Evaluate(item, prevSnapshot, dismissal, now)
   sort.go          attention ordering: level desc, created desc; cap with overflow count
+  fetchstatus.go   FetchStatus{SourceID, Kind, LastSuccess, LastError, ErrorMsg, NextRun, ItemCount, Duration, InFlight, AuthFailed}
 ```
+
+All payload structs currently live together in `item.go`; splitting them into per-kind files (e.g. `metrics.go`,
+`task.go`, `watch.go`) is an option worth revisiting for M2 once the payloads grow, but is not planned for M1.
 
 No I/O, no time.Now(), no logging in this package.
