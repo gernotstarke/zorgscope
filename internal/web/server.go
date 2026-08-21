@@ -69,8 +69,17 @@ const strictTransportSecurity = "max-age=31536000; includeSubDomains"
 // form-action an injected <form action="https://elsewhere"> would be a working exfiltration route
 // for the credential, and without base-uri an injected <base> would re-point every relative URL on
 // the page, including that form's action.
-const contentSecurityPolicy = "default-src 'self'; img-src 'self' data:; style-src 'self'; " +
-	"script-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'"
+//
+// img-src names one external host, img.shields.io, and nothing else does: the build badges on
+// /builds are images served by shields.io (FR-2.3 AC5). It is a widening of the policy and worth
+// being explicit about what it does and does not cost. What it costs: a visitor loading /builds
+// makes a request to a third party, which learns their IP address and — but for the
+// referrerpolicy on each badge — would learn this dashboard's URL. What it does not cost: shields
+// serves SVG, which img-src loads as an image and never as a document, so nothing it returns can
+// run script here; and this is one host on one directive, not a wildcard.
+const contentSecurityPolicy = "default-src 'self'; img-src 'self' data: https://img.shields.io; " +
+	"style-src 'self'; script-src 'self'; frame-ancestors 'none'; form-action 'self'; " +
+	"base-uri 'self'"
 
 // Options are the dependencies of a Server. Clock, Log and BehindFlyProxy are optional; the rest
 // are required.
@@ -729,6 +738,27 @@ func (d pageData) ThemeAttr() string {
 // ThemeName, NextTheme and NextThemeLabel are what the control shows and submits. They are
 // methods rather than fields because they are all derived from Theme, and a field that has to be
 // kept in step with another field is a field that eventually is not.
+// OrbitState is what the header's mark is doing: "refreshing" while a run is in flight, "stale"
+// after one has failed, "idle" otherwise. See app.css and docs/logo/scanning-orbit-animation.md.
+//
+// It is derived from the dashboard rather than stored beside it, because a field that has to be
+// kept in step with LastRunState is a field that eventually is not. Pages with no dashboard — the
+// sign-in page, the documentation — are idle: they know nothing about refresh runs, and a mark
+// that guessed would be saying something it had not been told.
+func (d pageData) OrbitState() string {
+	if d.Dashboard == nil {
+		return "idle"
+	}
+	switch d.Dashboard.LastRunState {
+	case "running":
+		return "refreshing"
+	case "failed":
+		return "stale"
+	default:
+		return "idle"
+	}
+}
+
 func (d pageData) ThemeName() string      { return string(d.Theme) }
 func (d pageData) ThemeLabel() string     { return d.Theme.label() }
 func (d pageData) NextTheme() string      { return string(d.Theme.next()) }

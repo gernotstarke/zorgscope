@@ -1,0 +1,13 @@
+-- 0003_build_workflow_path: the workflow file a build ran, beside the display name it already has.
+--
+-- The builds table stores the run's display name ("pages build and deployment"), which is what a
+-- person reads and the only thing the dashboard needed while builds were shown here and nowhere
+-- else. A badge from an outside service addresses a workflow by its *file* — ".github/workflows/
+-- ci.yml" — and a display name cannot be turned into one, so the path is stored as well
+-- (FR-2.3 AC5).
+--
+-- NULL is a normal value: a row written before this migration, and a run with no file behind it —
+-- GitHub's built-in Pages deployment reports "dynamic/pages/pages-build-deployment", which is not
+-- a path in the repository at all. Every read COALESCEs it and domain.Build.BadgeWorkflow refuses
+-- anything that is not a workflow file.
+ALTER TABLE builds ADD COLUMN workflow_path TEXT;

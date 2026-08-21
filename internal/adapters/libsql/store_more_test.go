@@ -155,7 +155,8 @@ func TestUpsertBuildsRoundTripsAndUpdates(t *testing.T) {
 	t1, t2 := at("2026-08-17T10:00:00Z"), at("2026-08-17T11:00:00Z")
 
 	b := domain.Build{
-		Repo: "org/repo", Workflow: "ci", Conclusion: "success", Status: "completed",
+		Repo: "org/repo", Workflow: "ci", WorkflowPath: ".github/workflows/ci.yml",
+		Conclusion: "success", Status: "completed",
 		RunURL: "https://example/run/1", FinishedAt: at("2026-08-17T09:55:00Z"),
 	}
 	if err := s.UpsertBuilds(ctx, []domain.Build{b}, t1); err != nil {
@@ -178,6 +179,12 @@ func TestUpsertBuildsRoundTripsAndUpdates(t *testing.T) {
 	}
 	if !got[0].FetchedAt.Equal(t2) {
 		t.Errorf("FetchedAt = %v, want %v", got[0].FetchedAt, t2)
+	}
+	// The workflow file survives the round trip: without it the details page cannot build a
+	// badge for the repository (FR-2.3 AC5), and a column that is written but never read back is
+	// the kind of omission a schema change makes silently.
+	if got[0].WorkflowPath != b.WorkflowPath {
+		t.Errorf("WorkflowPath = %q, want %q", got[0].WorkflowPath, b.WorkflowPath)
 	}
 }
 

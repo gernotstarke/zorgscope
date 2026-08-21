@@ -725,3 +725,136 @@ func TestAPolledTileBringsTheBuildIndicatorBackWithIt(t *testing.T) {
 		t.Errorf("GET /tile/builds = %d, want 404 — builds are no longer a tile", got)
 	}
 }
+
+// FR-2.3 AC5: the details page carries a shields.io badge per repository — a second, independent
+// reading of the same workflow, fetched by the browser at the moment the page is read.
+func TestTheBuildsPageCarriesAShieldsBadgePerRepository(t *testing.T) {
+	store := representativeStore()
+	store.builds = []domain.Build{{
+		Repo: "arc42/faq.arc42.org-site", Workflow: "Refresh training dates",
+		WorkflowPath: ".github/workflows/refresh-trainings.yml",
+		Status:       "completed", Conclusion: "success",
+	}}
+	body := getAuthed(t, dashHandler(t, store), "/builds").Body.String()
+
+	const want = "https://img.shields.io/github/actions/workflow/status/" +
+		"arc42/faq.arc42.org-site/refresh-trainings.yml"
+	if !strings.Contains(body, `src="`+want+`"`) {
+		t.Errorf("the badge URL is not on the page; wanted %s", want)
+	}
+
+	badge := firstLineContaining(body, "img.shields.io")
+	if badge == "" {
+		t.Fatal("no badge image")
+	}
+	// The badge is somebody else's request, made from the visitor's browser. Without this it
+	// would carry this dashboard's URL to a third party in the Referer header.
+	if !strings.Contains(body, `referrerpolicy="no-referrer"`) {
+		t.Error("the badge sends this dashboard's URL to shields.io as a referrer")
+	}
+	// A badge is an image, and an image whose meaning is a build state needs a text alternative
+	// naming the repository it belongs to (FR-1.5 AC2).
+	if !strings.Contains(badge, `alt="Build badge for arc42/faq.arc42.org-site`) {
+		t.Errorf("the badge has no alt text naming its repository: %s", badge)
+	}
+}
+
+// The badge is only offered where there is something to address. GitHub's built-in Pages
+// deployment reports a path that is not a file in the repository, and every badge service answers
+// such a request with "repo or workflow not found" — which on this page reads as a broken build.
+func TestABuildWithNoWorkflowFileOffersNoBadge(t *testing.T) {
+	store := representativeStore()
+	store.builds = []domain.Build{{
+		Repo: "arc42/arc42.org-site", Workflow: "pages build and deployment",
+		WorkflowPath: "dynamic/pages/pages-build-deployment",
+		Status:       "completed", Conclusion: "success",
+	}}
+	body := getAuthed(t, dashHandler(t, store), "/builds").Body.String()
+
+	if strings.Contains(body, "img.shields.io") {
+		t.Error("a badge was built for a run with no workflow file behind it")
+	}
+	if !strings.Contains(body, "no badge") {
+		t.Error("the page does not say why the badge is missing")
+	}
+}
+
+// The one external host this site loads anything from has to be named in the policy, or every
+// badge is blocked and the column is a row of broken images (QS-4.4).
+func TestTheContentSecurityPolicyAllowsTheBadgeHost(t *testing.T) {
+	rec := getAuthed(t, dashHandler(t, representativeStore()), "/builds")
+
+	csp := rec.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "img-src 'self' data: https://img.shields.io") {
+		t.Errorf("img-src does not allow the badge host: %s", csp)
+	}
+	// It is one host on one directive. A wildcard would let anything injected into any page load
+	// an image from anywhere, which is a working exfiltration channel for whatever the URL says.
+	if strings.Contains(csp, "img-src") && strings.Contains(csp, "*") {
+		t.Errorf("the policy has a wildcard in it: %s", csp)
+	}
+}
+
+// The header's mark carries the state of the last refresh run, rendered by the server, so a page
+// opened while a run is in flight shows the run with no script involved (FR-1.3 AC3).
+func TestTheHeaderMarkShowsWhatTheLastRefreshRunDid(t *testing.T) {
+	cases := []struct {
+		name string
+		run  domain.RefreshRun
+		want string
+	}{
+		{"a run in flight", domain.RefreshRun{ID: 1, StartedAt: testNow.Add(-time.Minute)}, "refreshing"},
+		{"a run that failed", domain.RefreshRun{ID: 1, StartedAt: testNow.Add(-time.Hour),
+			FinishedAt: testNow.Add(-time.Hour), OK: false}, "stale"},
+		{"a run that worked", domain.RefreshRun{ID: 1, StartedAt: testNow.Add(-time.Hour),
+			FinishedAt: testNow.Add(-time.Hour), OK: true}, "idle"},
+		{"no run at all", domain.RefreshRun{}, "idle"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			store := representativeStore()
+			store.lastRun = c.run
+			body := getAuthed(t, dashHandler(t, store), "/").Body.String()
+
+			mark := firstLineContaining(body, `class="orbit"`)
+			if mark == "" {
+				t.Fatal("the header has no mark")
+			}
+			if !strings.Contains(mark, `data-state="`+c.want+`"`) {
+				t.Errorf("the mark is not %q: %s", c.want, mark)
+			}
+		})
+	}
+}
+
+// A page that knows nothing about refresh runs must not have its mark claim anything. The sign-in
+// page is reached without a session and carries no dashboard at all.
+func TestThePageWithoutADashboardHasAnIdleMark(t *testing.T) {
+	body := get(dashHandler(t, representativeStore()), "/login").Body.String()
+
+	if mark := firstLineContaining(body, `class="orbit"`); !strings.Contains(mark, `data-state="idle"`) {
+		t.Errorf("the sign-in page's mark is not idle: %s", mark)
+	}
+}
+
+// The enhancement that drives the mark while "Refresh now" is running is a file, wired by a data
+// attribute rather than an inline handler the CSP would forbid (QS-4.4) — and the form beneath it
+// is still the plain form post it was, so the control works with script switched off
+// (FR-1.3 AC3).
+func TestTheRefreshControlIsAPlainFormWithAnOrbitHook(t *testing.T) {
+	body := getAuthed(t, dashHandler(t, representativeStore()), "/").Body.String()
+
+	if !strings.Contains(body, `<script src="/static/orbit.js?`) {
+		t.Error("the orbit enhancement is not linked")
+	}
+	form := firstLineContaining(body, `action="/refresh"`)
+	if form == "" {
+		t.Fatal("there is no refresh control")
+	}
+	if !strings.Contains(form, "data-orbit-trigger") {
+		t.Errorf("the refresh control carries no hook for the mark: %s", form)
+	}
+	if !strings.Contains(form, `method="post"`) {
+		t.Errorf("the refresh control is not a form post, so it needs script to work: %s", form)
+	}
+}

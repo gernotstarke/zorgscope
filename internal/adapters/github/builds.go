@@ -88,6 +88,7 @@ func (f *BuildFetcher) Fetch(ctx context.Context) (ports.FetchResult, error) {
 // fields this fetcher needs are declared; the real response has many more.
 type workflowRun struct {
 	Name         string  `json:"name"`
+	Path         string  `json:"path"`
 	Status       string  `json:"status"`
 	Conclusion   *string `json:"conclusion"`
 	HTMLURL      string  `json:"html_url"`
@@ -164,10 +165,16 @@ func (f *BuildFetcher) fetchLatestBuild(ctx context.Context, owner, name string)
 	// place in this system allowed to read the wall clock — to produce a value nothing uses. Same
 	// convention as Item.FirstSeenAt: the store owns the timestamps it writes.
 	b := &domain.Build{
-		Repo:     owner + "/" + name,
-		Workflow: newest.Name,
-		Status:   newest.Status,
-		RunURL:   newest.HTMLURL,
+		Repo: owner + "/" + name,
+		// The display name and the file are both kept: the name is what the details page shows,
+		// and the path is the only one of the two that can address the workflow from outside —
+		// a badge takes the file name (FR-2.3 AC5). Both come from the newest run rather than the
+		// newest completed one, for the same reason Status does: they describe the run GitHub is
+		// reporting on now.
+		Workflow:     newest.Name,
+		WorkflowPath: newest.Path,
+		Status:       newest.Status,
+		RunURL:       newest.HTMLURL,
 	}
 	if newestCompleted != nil {
 		if newestCompleted.Conclusion != nil {

@@ -4,6 +4,7 @@
     {
       "id": 1001,
       "name": "CI",
+      "path": ".github/workflows/ci.yml",
       "status": "completed",
       "conclusion": "success",
       "html_url": "https://github.com/org/repo/actions/runs/1001",

@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Zorgscope — scanning orbit motion study</title>
+  <link rel="stylesheet" href="./scanning-orbit-demo.css">
+  <script src="./scanning-orbit-demo.js" defer></script>
+</head>
+<body>
+  <main class="study">
+    <header class="study-header">
+      <p class="eyebrow">Zorgscope motion study <span>01</span></p>
+      <h1>The signal is moving.</h1>
+      <p class="lede">
+        A quiet orbit says “monitoring.” During polling, the scan accelerates and the center emits a
+        restrained red heartbeat. The mark itself stays steady and readable.
+      </p>
+    </header>
+
+    <section class="demonstrator" aria-labelledby="demo-heading">
+      <h2 id="demo-heading" class="visually-hidden">Interactive scanning-orbit logo demonstration</h2>
+
+      <div class="instrument-field">
+        <div class="orbit-stage" data-state="idle" id="orbit-stage">
+          <img src="./zorgscope-logo.jpeg" alt="" class="brand-mark">
+
+          <svg class="orbit-ring" viewBox="0 0 100 100" aria-hidden="true">
+            <circle class="orbit-track" cx="50" cy="50" r="46.5" pathLength="100"></circle>
+            <circle class="orbit-beam" id="orbit-beam" cx="50" cy="50" r="46.5"
+                    pathLength="100"></circle>
+          </svg>
+
+          <span class="polling-pulse" aria-hidden="true"></span>
+          <span class="focus-pulse" aria-hidden="true"></span>
+        </div>
+
+        <p class="live-status" role="status" aria-live="polite">
+          <span class="status-symbol" aria-hidden="true"></span>
+          <span id="status-copy">Monitoring · last refresh 2 min ago</span>
+        </p>
+      </div>
+
+      <div class="control-panel">
+        <div>
+          <p class="control-label">Preview state</p>
+          <div class="state-controls" role="group" aria-label="Logo state">
+            <button type="button" data-preview-state="idle" aria-pressed="true">Idle</button>
+            <button type="button" data-preview-state="refreshing" aria-pressed="false">Polling</button>
+            <button type="button" data-preview-state="success" aria-pressed="false">Complete</button>
+            <button type="button" data-preview-state="stale" aria-pressed="false">Stale</button>
+          </div>
+          <button type="button" class="play-sequence" id="play-sequence">
+            <span aria-hidden="true">▶</span> Play refresh sequence
+          </button>
+        </div>
+
+        <dl class="motion-notes">
+          <div>
+            <dt>8 seconds</dt>
+            <dd>Quiet ambient orbit</dd>
+          </div>
+          <div>
+            <dt>1.05 seconds</dt>
+            <dd>Active poll + red heartbeat</dd>
+          </div>
+          <div>
+            <dt>650 milliseconds</dt>
+            <dd>Decelerating finish</dd>
+          </div>
+        </dl>
+
+        <p class="implementation-note">
+          The outer SVG ring is independent of the raster mark. Production can therefore reuse the
+          current logo unchanged. Reduced-motion mode preserves every state without rotation.
+        </p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

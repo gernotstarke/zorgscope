@@ -4,6 +4,7 @@
     {
       "id": 2002,
       "name": "CI",
+      "path": ".github/workflows/ci.yml",
       "status": "in_progress",
       "conclusion": null,
       "html_url": "https://github.com/org/build-running/actions/runs/2002",
@@ -13,6 +14,7 @@
     {
       "id": 2001,
       "name": "CI",
+      "path": ".github/workflows/ci.yml",
       "status": "completed",
       "conclusion": "failure",
       "html_url": "https://github.com/org/build-running/actions/runs/2001",

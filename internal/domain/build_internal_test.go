@@ -266,3 +266,39 @@ func TestAnUnrankedBuildHealthDoesNotClaimTheTop(t *testing.T) {
 		t.Error("an unranked build health outranks a broken one")
 	}
 }
+
+// BadgeWorkflow decides whether a build can be addressed from outside — by a badge service, which
+// takes the workflow's file name and nothing else. Not every run has a file: GitHub's built-in
+// Pages deployment reports a path that is not in the repository at all, and a badge built from it
+// comes back reading "repo or workflow not found", which on a build page looks like a failure.
+func TestBadgeWorkflowOnlyNamesRealWorkflowFiles(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+		want string
+	}{
+		{"a workflow file", ".github/workflows/ci.yml", "ci.yml"},
+		{"the other YAML extension", ".github/workflows/build.yaml", "build.yaml"},
+		{"upper case is still YAML", ".github/workflows/CI.YML", "CI.YML"},
+		{"a dotted file name", ".github/workflows/deploy.prod.yml", "deploy.prod.yml"},
+		// The one that matters: every arc42 site repository has runs of this shape, and a badge
+		// built from it is a badge that reports a failure that has not happened.
+		{"the built-in Pages deployment", "dynamic/pages/pages-build-deployment", ""},
+		{"nothing was stored", "", ""},
+		{"somewhere else in the repository", "scripts/ci.yml", ""},
+		{"a nested path below the directory", ".github/workflows/nested/ci.yml", ""},
+		{"not YAML", ".github/workflows/ci.json", ""},
+		{"the directory itself", ".github/workflows/", ""},
+		// The value comes from an upstream API and ends up in a URL path, so its shape is
+		// checked rather than trusted.
+		{"a traversal attempt", `.github/workflows/..\..\etc\passwd.yml`, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			b := Build{Repo: "org/repo", WorkflowPath: c.path}
+			if got := b.BadgeWorkflow(); got != c.want {
+				t.Errorf("BadgeWorkflow() = %q, want %q", got, c.want)
+			}
+		})
+	}
+}

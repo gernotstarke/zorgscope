@@ -657,18 +657,25 @@ func TestNoRenderedHTMLNeedsUnsafeInline(t *testing.T) {
 			if m := inlineEventHandler.FindString(body); m != "" {
 				t.Errorf("contains the inline event handler %q, which the CSP forbids (QS-4.4)", strings.TrimSpace(m))
 			}
-			// Any script at all has to be the vendored htmx file: a full page carries exactly
-			// that one, and a fragment carries none.
-			// The URL carries a content hash, so the prefix is what is stable about it.
-			vendored := strings.Count(body, `<script src="/static/htmx.min.js?`)
-			if n := strings.Count(body, "<script"); n != vendored {
-				t.Errorf("has %d script tags of which %d are the vendored htmx file; the rest "+
-					"would need 'unsafe-inline' (QS-4.4)", n, vendored)
+			// Any script at all has to be a file this application serves from /static — never
+			// an inline one, which is what 'unsafe-inline' would be needed for. The URL carries
+			// a content hash, so the prefix is what is stable about it.
+			external := strings.Count(body, `<script src="/static/`)
+			if n := strings.Count(body, "<script"); n != external {
+				t.Errorf("has %d script tags of which %d are files under /static; the rest "+
+					"would need 'unsafe-inline' (QS-4.4)", n, external)
 			}
-			if name == "GET /" && vendored != 1 {
-				t.Errorf("the dashboard links the vendored htmx file %d times, want 1 (QS-4.4)", vendored)
+			// A full page links the vendored htmx and the orbit enhancement, both by file; a
+			// fragment carries no script at all, because it is markup applied to a document that
+			// already has them.
+			if name == "GET /" {
+				for _, want := range []string{`<script src="/static/htmx.min.js?`, `<script src="/static/orbit.js?`} {
+					if !strings.Contains(body, want) {
+						t.Errorf("the dashboard does not link %s (QS-4.4)", want)
+					}
+				}
 			}
-			if strings.HasPrefix(name, "GET /tile/") && vendored != 0 {
+			if strings.HasPrefix(name, "GET /tile/") && external != 0 {
 				t.Error("a tile fragment carries a script tag (QS-4.4)")
 			}
 		})

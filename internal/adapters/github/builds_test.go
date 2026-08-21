@@ -41,6 +41,11 @@ func TestFetchLatestCompletedRunPerRepo(t *testing.T) {
 	if b.Workflow != "CI" {
 		t.Errorf("Workflow = %q, want CI", b.Workflow)
 	}
+	// The display name and the file are both carried, because only the file can address the
+	// workflow from outside — a badge takes the file name (FR-2.3 AC5).
+	if b.WorkflowPath != ".github/workflows/ci.yml" {
+		t.Errorf("WorkflowPath = %q, want .github/workflows/ci.yml", b.WorkflowPath)
+	}
 	if b.Conclusion != "success" {
 		t.Errorf("Conclusion = %q, want success", b.Conclusion)
 	}

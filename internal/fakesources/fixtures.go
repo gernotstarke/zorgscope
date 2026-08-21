@@ -55,8 +55,13 @@ type ghRepoFixture struct {
 
 // workflowRun is one entry of the GitHub Actions "list workflow runs" REST response.
 type workflowRun struct {
-	ID           int64   `json:"id"`
-	Name         string  `json:"name"`
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	// Path is the workflow file GitHub ran. It is the only field that can address the workflow
+	// from outside — a badge takes the file name, never the display name above it — and not every
+	// run has one: GitHub's built-in Pages deployment reports "dynamic/pages/…", which is no file
+	// in the repository at all.
+	Path         string  `json:"path"`
 	Status       string  `json:"status"`
 	Conclusion   *string `json:"conclusion"`
 	HTMLURL      string  `json:"html_url"`

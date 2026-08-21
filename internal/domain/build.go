@@ -1,14 +1,51 @@
 package domain
 
 import (
+	"path"
 	"sort"
+	"strings"
 	"time"
 )
 
 // Build is the most recent CI run for a repository's workflow.
+//
+// Workflow is the run's display name — "pages build and deployment" — and WorkflowPath is the file
+// GitHub ran, ".github/workflows/ci.yml". They are both kept because they answer different
+// questions: the name is what a person reads, and the path is the only one of the two that can
+// address the workflow anywhere else. See BadgeWorkflow.
 type Build struct {
-	Repo, Workflow, Conclusion, Status, RunURL string
-	FinishedAt, FetchedAt                      time.Time
+	Repo, Workflow, WorkflowPath, Conclusion, Status, RunURL string
+	FinishedAt, FetchedAt                                    time.Time
+}
+
+// workflowDir is where GitHub keeps the files a workflow can be addressed by.
+const workflowDir = ".github/workflows/"
+
+// BadgeWorkflow is the workflow file this build can be addressed by from outside — the name a
+// shields.io badge URL takes as its last segment — or "" when there is none.
+//
+// Not every run has a file behind it. GitHub's built-in Pages deployment reports its path as
+// "dynamic/pages/pages-build-deployment", which is not a file in the repository and which no
+// external service can look up; shields answers such a request with a "repo or workflow not found"
+// badge, which on a status page reads as a broken build rather than as an unaddressable one. So a
+// badge is offered only for a real workflow file, and the rest say so in words instead.
+//
+// The shape is checked rather than trusted: the value comes from an upstream API and ends up in a
+// URL path. Anything with a separator left in it after the directory prefix, or without a YAML
+// extension, is refused.
+func (b Build) BadgeWorkflow() string {
+	if !strings.HasPrefix(b.WorkflowPath, workflowDir) {
+		return ""
+	}
+	file := strings.TrimPrefix(b.WorkflowPath, workflowDir)
+	if file == "" || strings.ContainsAny(file, `/\`) {
+		return ""
+	}
+	switch strings.ToLower(path.Ext(file)) {
+	case ".yml", ".yaml":
+		return file
+	}
+	return ""
 }
 
 // Running reports whether a run is in progress right now. GitHub reports the newest run's status

@@ -21,6 +21,17 @@
   --warn: light-dark(#8a5300, #e0a03c);
   --ok: light-dark(#1f7a3d, #6bc98a);
 
+  /* The header mark's scanning orbit (docs/logo/scanning-orbit-animation.md). Three colours,
+     because the ring says three different things: --scan is the quiet ambient sweep, --scan-hot
+     is the same sweep while a refresh is actually running, and --pulse is the ring that beats out
+     of the mark's centre underneath it. They are their own tokens rather than reuses of --accent
+     and --danger because they are read against the mark rather than against the page, and a
+     brand colour that works for a link at 16 px is not automatically the right one for a 2 px arc
+     in motion. */
+  --scan: light-dark(#98a0ac, #4c545f);
+  --scan-hot: light-dark(#3f8f16, #9fe04a);
+  --pulse: light-dark(#c0392b, #f2836f);
+
   --radius: 10px;
   --gap: 1rem;
 }
@@ -45,6 +56,9 @@
     --danger: #b3261e;
     --warn: #8a5300;
     --ok: #1f7a3d;
+    --scan: #98a0ac;
+    --scan-hot: #3f8f16;
+    --pulse: #c0392b;
   }
 }
 
@@ -144,7 +158,166 @@ button:hover { filter: brightness(1.08); }
 .brand { display: inline-flex; align-items: center; gap: 0.5rem; }
 /* The mark is a raster file with its intrinsic size declared in the markup, so the box is
    reserved before it loads and the header does not jump. */
-.logo { flex: none; display: block; }
+/* ---------------------------------------------------------------- the scanning orbit
+
+   The header mark, and the only moving thing on this site. The concept is in
+   docs/logo/scanning-orbit-animation.md: a quiet ring circling the logo says "this is being
+   watched", and the same ring at speed, in another colour, with the mark's centre beating, says
+   "it is being fetched right now".
+
+   The whole thing is CSS driven by one attribute, data-state, and the attribute is written by the
+   server from the state of the last refresh run — so a page loaded while cron is mid-run shows the
+   run, with no script involved at all (FR-1.3 AC3). static/orbit.js only brings the same state
+   forward to the moment the button is pressed, which the server cannot see until its request
+   arrives.
+
+   Only transform and opacity are animated, so the sweep stays off the layout and paint path. */
+
+.orbit {
+  position: relative;
+  flex: none;
+  display: block;
+  width: 48px;
+  height: 48px;
+}
+
+/* The mark sits inside the ring rather than beside it, so the orbit reads as belonging to the
+   logo and the header grows by the ring's width rather than by a whole second element. */
+.logo {
+  position: absolute;
+  inset: 13%;
+  width: 74%;
+  height: 74%;
+  display: block;
+  border-radius: 50%;
+}
+
+.orbit-ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* The beam's drop-shadow while refreshing reaches past the viewBox; without this it is clipped
+     into a visible square. */
+  overflow: visible;
+}
+
+.orbit-track,
+.orbit-beam {
+  fill: none;
+  /* The stroke widths below are in viewBox units on a 48 px box, which would render at about half
+     their nominal thickness. non-scaling-stroke makes them the pixel values they read as. */
+  vector-effect: non-scaling-stroke;
+}
+
+.orbit-track {
+  stroke: var(--scan);
+  stroke-width: 1;
+  opacity: 0.35;
+}
+
+/* pathLength="100" in the markup makes the dash array a percentage of the circumference, so the
+   arc is the same fraction of the ring whatever radius it is given. */
+.orbit-beam {
+  stroke: var(--scan);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-dasharray: 14 86;
+  transform-box: view-box;
+  transform-origin: 50px 50px;
+  opacity: 0.75;
+  animation: orbit-scan 8s linear infinite;
+  transition:
+    stroke 220ms ease-out,
+    stroke-width 220ms ease-out,
+    opacity 180ms ease-out;
+}
+
+@keyframes orbit-scan {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Refreshing: eight seconds becomes one, grey becomes lime, and the mark's centre beats. This is
+   the state the concept calls for while the application is genuinely fetching — never on a
+   decorative timer, because a dashboard that always looks busy has stopped saying anything. */
+.orbit[data-state="refreshing"] .orbit-beam {
+  stroke: var(--scan-hot);
+  stroke-width: 2.6;
+  stroke-dasharray: 30 70;
+  opacity: 1;
+  animation-duration: 1.05s;
+  filter: drop-shadow(0 0 3px var(--scan-hot));
+}
+
+.orbit[data-state="refreshing"] .orbit-track {
+  stroke: var(--scan-hot);
+  opacity: 0.28;
+}
+
+/* A refresh that failed (FR-1.4): the sweep stops and turns amber, so the mark holds the last
+   thing that happened instead of pretending to watch. The header says so in words beside it —
+   colour is never the only carrier of the meaning (FR-1.5 AC2). */
+.orbit[data-state="stale"] .orbit-beam {
+  stroke: var(--warn);
+  stroke-dasharray: 8 92;
+  opacity: 0.95;
+  animation: none;
+  transform: rotate(-90deg);
+}
+
+.orbit-pulse {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 30%;
+  aspect-ratio: 1;
+  border: 1.5px solid var(--pulse);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--pulse) 22%, transparent);
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.86);
+  pointer-events: none;
+}
+
+.orbit[data-state="refreshing"] .orbit-pulse {
+  animation: orbit-heartbeat 1.05s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
+@keyframes orbit-heartbeat {
+  0% {
+    opacity: 0.2;
+    transform: translate(-50%, -50%) scale(0.86);
+  }
+  36% {
+    opacity: 0.8;
+    transform: translate(-50%, -50%) scale(1.35);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.86);
+  }
+}
+
+/* Someone who has asked their system for less motion gets none of it. Every state stays legible:
+   refreshing is a thicker lime arc held still with the centre ring steady rather than beating,
+   which is the same information without anything moving. */
+@media (prefers-reduced-motion: reduce) {
+  .orbit-beam {
+    animation: none;
+    transform: rotate(-90deg);
+  }
+
+  .orbit[data-state="refreshing"] .orbit-beam {
+    stroke-dasharray: 45 55;
+  }
+
+  .orbit[data-state="refreshing"] .orbit-pulse {
+    animation: none;
+    opacity: 0.75;
+    transform: translate(-50%, -50%) scale(1.2);
+  }
+}
 .brand-name { font-weight: 600; }
 
 /* The two header dates stack, so the header stays one line tall on a wide screen and folds
@@ -623,3 +796,32 @@ button:hover { filter: brightness(1.08); }
 .build-row-broken { box-shadow: inset 3px 0 0 var(--danger); }
 .build-row-warning { box-shadow: inset 3px 0 0 var(--warn); }
 .build-row-ok { box-shadow: inset 3px 0 0 var(--ok); }
+
+/* The badge column. The image is somebody else's, arriving over the network after the table has
+   been drawn, so the cell is given the badge's height up front — otherwise every row below it
+   jumps as the badges land. vertical-align is set against the cell's baseline rule above, which
+   would otherwise hang a 20 px image off the text baseline of its neighbours. */
+.build-badge {
+  width: 1%;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.build-badge img {
+  display: block;
+  height: 20px;
+  /* A badge that has not arrived, or that a blocker has stopped, leaves an empty box rather than
+     the browser's broken-image glyph and its alt text sprawling across the column. */
+  min-width: 5rem;
+}
+
+.build-nobadge { color: var(--muted); font-size: 0.8rem; }
+
+/* The note under the table: what on this page came from this dashboard and what came from
+   somewhere else. */
+.page-note {
+  margin: 0 0 1.5rem;
+  max-width: 46rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}

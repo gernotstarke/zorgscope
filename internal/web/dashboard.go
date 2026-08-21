@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -498,6 +499,11 @@ type buildView struct {
 	Conclusion string
 	Label      string
 	Finished   timeView
+	// Badge is the shields.io URL for this repository's workflow, empty when the run has no file
+	// behind it (FR-2.3 AC5). It is built in Go rather than assembled in the template so that
+	// every segment is escaped once, in one place, by the code that knows which parts came from
+	// an upstream API.
+	Badge string
 }
 
 // siteView is one site's pair of Plausible windows.
@@ -720,6 +726,7 @@ func newBuildView(b domain.Build, now time.Time) buildView {
 		// that has not completed is a run in progress sitting on top of an older outcome, which
 		// is exactly what FR-2.3 AC2 asks to be shown side by side.
 		Running: b.Running(),
+		Badge:   buildBadgeURL(b),
 	}
 
 	switch {
@@ -736,6 +743,30 @@ func newBuildView(b domain.Build, now time.Time) buildView {
 		v.Label = "no completed run"
 	}
 	return v
+}
+
+// shieldsWorkflowBadge is where the details page's build badges come from (FR-2.3 AC5).
+//
+// It is the one external host this site links, and the Content-Security-Policy names it for that
+// reason alone. Two things follow from a badge being someone else's image, and both are handled
+// where the markup is written rather than here: the request happens in the visitor's browser, so
+// it is sent with no referrer, and it is loaded lazily, so a page nobody scrolls costs nothing.
+const shieldsWorkflowBadge = "https://img.shields.io/github/actions/workflow/status/"
+
+// buildBadgeURL is the badge for one repository's workflow, or "" when there is none to address.
+//
+// The branch is deliberately left out of the query. Without it shields reports the most recent run
+// of that workflow on any branch, which is the same rule BuildFetcher uses to pick the run in the
+// row beside it — pinning the badge to a branch would produce a badge that contradicts its own
+// row, which is worse than a badge that occasionally reflects a feature branch.
+func buildBadgeURL(b domain.Build) string {
+	file := b.BadgeWorkflow()
+	owner, name, ok := strings.Cut(b.Repo, "/")
+	if file == "" || !ok || owner == "" || name == "" || strings.Contains(name, "/") {
+		return ""
+	}
+	return shieldsWorkflowBadge + url.PathEscape(owner) + "/" + url.PathEscape(name) + "/" +
+		url.PathEscape(file)
 }
 
 // buildStatusView is the front page's indicator and, on the details page, the rows behind it.

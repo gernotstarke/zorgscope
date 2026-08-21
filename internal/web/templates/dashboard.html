@@ -23,7 +23,12 @@
   {{template "dash-summary" .Summary}}
   {{/* Both controls are plain form posts, so the page is fully usable with JavaScript disabled
        (FR-1.3 AC3). htmx only adds the tiles' polling on top. */}}
-  <form class="action" method="post" action="/refresh"><button type="submit">Refresh now</button></form>
+  {{/* data-orbit-trigger is what static/orbit.js watches: pressing this runs the whole refresh
+       inside the request, so the browser waits — sometimes for a minute — with nothing on the page
+       having changed. The script drives the header's mark into its refreshing state at the moment
+       of the press, which is the one state the server cannot render, because its request has not
+       arrived yet. Without script the form is exactly what it was. */}}
+  <form class="action" method="post" action="/refresh" data-orbit-trigger><button type="submit">Refresh now</button></form>
   <form class="action" method="post" action="/seen"><button type="submit">Mark all seen</button></form>
 </div>
 {{/* The refresh run's own record of what it did, per source, plus the reason the announcement
