@@ -44,6 +44,12 @@ type Config struct {
 	BaseURL     string   // "" -> https://api.github.com/graphql (GraphQL endpoint, IssueFetcher)
 	RESTBaseURL string   // "" -> https://api.github.com (REST API root, BuildFetcher)
 	Repos       []string // "owner/name"
+	// BadgeBaseURL is the root a workflow's badge image is appended to, "" for shields.io's
+	// (FR-2.3 AC5). It is separate from the two above because it is a different service
+	// altogether: no credential is sent to it, and a deployment pointed at a fake GitHub must be
+	// able to point this somewhere fake too, or its refreshes would still reach out to the real
+	// internet for pictures.
+	BadgeBaseURL string
 }
 
 // IssueFetcher fetches open issues and open pull requests for the repositories in Config, over

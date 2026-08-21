@@ -45,24 +45,18 @@
         {{if .Running}}<span class="build-running">running now</span>{{end}}
       </td>
       <td class="build-workflow">{{if .Workflow}}{{.Workflow}}{{else}}—{{end}}</td>
-      {{/* The same workflow as shields.io reports it (FR-2.3 AC5) — a second, independent opinion
-           fetched by the browser at the moment the page is read, beside the state this dashboard
-           stored at its last refresh. The two disagreeing is information, not a bug: it means
-           something has happened since.
-
-           referrerpolicy is not decoration. Without it every badge would tell shields.io which
-           page asked for it, and this dashboard's URL is not something a third party needs. The
-           image is loaded lazily and carries a height, so a table nobody scrolls costs nothing
-           and one that is scrolled does not jump as the badges arrive.
+      {{/* The badge for this workflow, drawn from bytes this dashboard already holds (FR-2.3 AC5).
+           It is carried in the page rather than linked, so opening this page fetches nothing from
+           anywhere: the refresh run that read the state in the row beside it fetched the picture
+           of that state at the same time.
 
            A run with no workflow file behind it — GitHub's built-in Pages deployment — cannot be
-           addressed by any badge service, so it says so rather than showing shields' own "repo or
-           workflow not found", which on this page would read as a broken build. */}}
+           addressed by any badge service, and neither can one whose badge did not arrive. Both say
+           so in words, rather than leaving a broken image whose alt text sprawls across the
+           column. */}}
       <td class="build-badge">
-        {{if .Badge}}<img src="{{.Badge}}" alt="Build badge for {{.Repo}} from shields.io"
-                          height="20" loading="lazy" decoding="async"
-                          referrerpolicy="no-referrer">
-        {{else}}<span class="build-nobadge" title="This run has no workflow file to address — GitHub&#39;s built-in Pages deployment reports no path in the repository.">no badge</span>{{end}}
+        {{if .Badge}}<img src="{{.Badge}}" alt="Build badge for {{.Repo}}" height="20" decoding="async">
+        {{else}}<span class="build-nobadge" title="There is no badge for this run: either it has no workflow file to address, or the badge could not be fetched at the last refresh.">no badge</span>{{end}}
       </td>
       <td class="build-finished">{{if .Finished.Known}}<time datetime="{{.Finished.Absolute}}">{{.Finished.Relative}}</time>{{else}}never{{end}}</td>
     </tr>
@@ -71,9 +65,9 @@
 </table>
 </div>
 <p class="page-note">
-  The Badge column is fetched from shields.io by your browser when this page is read; everything
-  else on it is what GitHub told this dashboard at the last refresh. A badge that disagrees with
-  the state beside it means the workflow has run since.
+  Everything here is what GitHub told this dashboard at the last refresh, badges included: they
+  are fetched from shields.io by the refresh run and stored, so this page draws them from its own
+  bytes and contacts nobody while you are reading it.
 </p>
 {{else}}
 <p class="empty">No repositories are configured, so there is nothing to build.</p>

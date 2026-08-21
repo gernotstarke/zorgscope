@@ -85,6 +85,16 @@ the wrong step — see C‑2 in [the constraints](../../requirements/03-constrai
   Write the tests as given, then make them pass; do not paste an implementation sketch verbatim
   without reading what it needs to do.
 
+## Plans written but not implemented
+
+Two features have a plan and no code. Each is self-contained and can be picked up on its own; read
+the plan before the code, because both make decisions that the code cannot show.
+
+| Plan | What it adds | Written |
+|------|--------------|---------|
+| [Configuration UI](2026-08-18-config-ui.md) | Editing the watched repository list in the browser, verified against GitHub on save, with the configuration moving into the database | 2026‑08‑18 |
+| [GitHub details page](2026-08-21-github-details-page.md) | `/github`: every open issue and pull request grouped by repository, behind a strip of small per-repository counters | 2026‑08‑21 |
+
 ## Deliberately deferred
 
 FR‑2.4 (GitHub mentions and review requests), FR‑6.2 (email notifier), FR‑8.4 (configuration editing

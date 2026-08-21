@@ -16,6 +16,14 @@ import (
 type Build struct {
 	Repo, Workflow, WorkflowPath, Conclusion, Status, RunURL string
 	FinishedAt, FetchedAt                                    time.Time
+	// Badge is the badge image for this workflow, as the SVG bytes a badge service returned, or
+	// empty when there is none. It is fetched with the build and stored with it so that the page
+	// showing it makes no request of its own — see BadgeWorkflow for which builds can have one,
+	// and FR-2.3 AC5 for why it is stored rather than linked.
+	//
+	// It is borrowed markup and is never inlined into a page: it is rendered as an image, which a
+	// browser draws in a sandbox with no script and no network of its own.
+	Badge []byte
 }
 
 // workflowDir is where GitHub keeps the files a workflow can be addressed by.

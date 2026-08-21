@@ -343,12 +343,13 @@ func (s *Store) Items(ctx context.Context) (_ []domain.Item, err error) {
 func (s *Store) UpsertBuilds(ctx context.Context, builds []domain.Build, now time.Time) (err error) {
 	defer func() { err = s.scrub.clean(err) }()
 	const q = `
-INSERT INTO builds (repo, workflow, workflow_path, conclusion, status, run_url, finished_at, fetched_at)
-VALUES (?,?,?,?,?,?,?,?)
+INSERT INTO builds (repo, workflow, workflow_path, conclusion, status, run_url, badge, finished_at, fetched_at)
+VALUES (?,?,?,?,?,?,?,?,?)
 ON CONFLICT(repo) DO UPDATE SET
   workflow = excluded.workflow, workflow_path = excluded.workflow_path,
   conclusion = excluded.conclusion, status = excluded.status,
-  run_url = excluded.run_url, finished_at = excluded.finished_at, fetched_at = excluded.fetched_at`
+  run_url = excluded.run_url, badge = excluded.badge,
+  finished_at = excluded.finished_at, fetched_at = excluded.fetched_at`
 
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		known, err := storedBuildRepos(ctx, tx)
@@ -359,7 +360,7 @@ ON CONFLICT(repo) DO UPDATE SET
 		for _, b := range builds {
 			present[b.Repo] = true
 			_, err := tx.ExecContext(ctx, q, b.Repo, b.Workflow, b.WorkflowPath, b.Conclusion,
-				b.Status, b.RunURL, sqlTime(b.FinishedAt), sqlTime(now))
+				b.Status, b.RunURL, b.Badge, sqlTime(b.FinishedAt), sqlTime(now))
 			if err != nil {
 				return fmt.Errorf("upsert build %s: %w", b.Repo, err)
 			}
@@ -427,8 +428,8 @@ func (s *Store) Builds(ctx context.Context) (_ []domain.Build, err error) {
 	defer func() { err = s.scrub.clean(err) }()
 	const q = `
 SELECT repo, COALESCE(workflow,''), COALESCE(workflow_path,''), COALESCE(conclusion,''),
-       COALESCE(status,''), COALESCE(run_url,''), COALESCE(finished_at,''),
-       COALESCE(fetched_at,'')
+       COALESCE(status,''), COALESCE(run_url,''), COALESCE(badge,x''),
+       COALESCE(finished_at,''), COALESCE(fetched_at,'')
 FROM builds ORDER BY repo`
 
 	rows, err := s.db.QueryContext(ctx, q)
@@ -444,7 +445,7 @@ FROM builds ORDER BY repo`
 			finished, fetched string
 		)
 		if err := rows.Scan(&b.Repo, &b.Workflow, &b.WorkflowPath, &b.Conclusion, &b.Status,
-			&b.RunURL, &finished, &fetched); err != nil {
+			&b.RunURL, &b.Badge, &finished, &fetched); err != nil {
 			return nil, fmt.Errorf("scan build: %w", err)
 		}
 		if err := parseInto(map[*time.Time]string{

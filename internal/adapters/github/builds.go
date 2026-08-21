@@ -5,7 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/gernotstarke/zorgscope/internal/domain"
@@ -22,10 +26,11 @@ const githubAPIVersion = "2022-11-28"
 // BuildFetcher fetches GitHub Actions build/workflow status for the repositories in Config, over
 // the GitHub REST API (FR-2.3).
 type BuildFetcher struct {
-	hc          *http.Client
-	token       string
-	restBaseURL string
-	repos       []string
+	hc           *http.Client
+	token        string
+	restBaseURL  string
+	badgeBaseURL string
+	repos        []string
 }
 
 // NewBuildFetcher builds a BuildFetcher from cfg. hc supplies the transport and any test-only
@@ -39,11 +44,16 @@ func NewBuildFetcher(cfg Config, hc *http.Client) *BuildFetcher {
 	if base == "" {
 		base = defaultRESTBaseURL
 	}
+	badgeBase := cfg.BadgeBaseURL
+	if badgeBase == "" {
+		badgeBase = defaultBadgeBaseURL
+	}
 	return &BuildFetcher{
-		hc:          hc,
-		token:       cfg.Token,
-		restBaseURL: base,
-		repos:       cfg.Repos,
+		hc:           hc,
+		token:        cfg.Token,
+		restBaseURL:  base,
+		badgeBaseURL: strings.TrimSuffix(badgeBase, "/"),
+		repos:        cfg.Repos,
 	}
 }
 
@@ -74,6 +84,8 @@ func (f *BuildFetcher) Fetch(ctx context.Context) (ports.FetchResult, error) {
 			builds = append(builds, *b)
 		}
 	}
+
+	f.attachBadges(ctx, builds)
 
 	// OwnsBuilds: this fetcher is the one that fills the builds table, so what it returns is the
 	// whole truth about it and an empty result means every watched repository has lost its build
@@ -222,4 +234,104 @@ func reduceRuns(runs []workflowRun) (newest, newestCompleted *workflowRun) {
 	}
 
 	return newest, newestCompleted
+}
+
+// ---------------------------------------------------------------- badges
+
+// defaultBadgeBaseURL is where a workflow's badge image comes from when Config does not say
+// (FR-2.3 AC5): shields.io's GitHub Actions workflow-status endpoint, which takes owner, repository
+// and workflow *file* as its last three path segments.
+const defaultBadgeBaseURL = "https://img.shields.io/github/actions/workflow/status"
+
+// badgeTimeout bounds one badge request, and is deliberately far shorter than upstreamTimeout.
+//
+// A badge is a picture of something this run already knows. It is worth a moment and not a second
+// more: the run's own budget (QS-2.5) belongs to the data, and a badge service having a slow
+// afternoon must not be able to spend it. Everything below is built so that the worst a badge can
+// cost a refresh is this, once, in parallel.
+const badgeTimeout = 3 * time.Second
+
+// maxBadgeBytes caps what is read from a badge response. A badge is around 1.5 kB of SVG; this is
+// room for a much larger one and a hard stop well before anything that would be stored in a
+// database row and rendered into a page.
+const maxBadgeBytes = 64 << 10
+
+// attachBadges fills in each build's Badge, in place.
+//
+// Every badge is fetched at once rather than one after another, because they are independent and
+// eight of them in series would be eight timeouts in the worst case instead of one.
+//
+// Nothing here can fail the fetch it belongs to. A badge that does not arrive — the service is
+// slow, is rate limiting, has been blocked, has never heard of the workflow — leaves Badge empty,
+// and an empty badge is a row that says so. That is the same rule a failed announcement follows
+// (FR-6.1 AC3): a decorative step must never take the substantive one down with it, and this one
+// is not even reported, because there is nothing an operator would do about it.
+func (f *BuildFetcher) attachBadges(ctx context.Context, builds []domain.Build) {
+	var wg sync.WaitGroup
+	for i := range builds {
+		workflow := builds[i].BadgeWorkflow()
+		if workflow == "" {
+			continue
+		}
+		wg.Add(1)
+		go func(b *domain.Build, workflow string) {
+			defer wg.Done()
+			if svg, err := f.fetchBadge(ctx, b.Repo, workflow); err == nil {
+				b.Badge = svg
+			}
+		}(&builds[i], workflow)
+	}
+	wg.Wait()
+}
+
+// fetchBadge retrieves one workflow's badge image.
+//
+// The branch is deliberately absent from the query. Without it the badge reports the most recent
+// run of that workflow on any branch, which is the rule fetchLatestBuild uses to pick the run it
+// sits beside — pinning the badge to a branch would produce a badge that contradicts its own row.
+//
+// No credential is sent. The badge service is not GitHub and has no business holding this
+// installation's token, and every repository it can answer for is one it can already see
+// (QS-4.3).
+func (f *BuildFetcher) fetchBadge(ctx context.Context, repo, workflow string) ([]byte, error) {
+	owner, name, ok := splitRepo(repo)
+	if !ok {
+		return nil, fmt.Errorf("github: %q is not owner/name", repo)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, badgeTimeout)
+	defer cancel()
+
+	badgeURL := f.badgeBaseURL + "/" + url.PathEscape(owner) + "/" + url.PathEscape(name) + "/" +
+		url.PathEscape(workflow)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, badgeURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "image/svg+xml")
+
+	resp, err := f.hc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+	// The content type is checked rather than assumed: a rate-limit page or a captive portal
+	// answering 200 with HTML would otherwise be stored as this repository's badge and handed to
+	// a browser as an image.
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "image/svg+xml") {
+		return nil, fmt.Errorf("unexpected content type %q", ct)
+	}
+
+	svg, err := io.ReadAll(io.LimitReader(resp.Body, maxBadgeBytes))
+	if err != nil {
+		return nil, err
+	}
+	if len(svg) == 0 {
+		return nil, errors.New("empty badge")
+	}
+	return svg, nil
 }

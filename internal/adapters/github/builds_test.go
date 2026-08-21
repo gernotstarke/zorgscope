@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/gernotstarke/zorgscope/internal/adapters/github"
 	"github.com/gernotstarke/zorgscope/internal/fakesources"
@@ -179,5 +181,176 @@ func TestUnparseableRunTimestampsIsAnErrorNotAnEmptyTile(t *testing.T) {
 	}
 	if len(res.Builds) != 0 {
 		t.Errorf("len(builds) = %d, want 0 — an unreadable response must not silently yield a build", len(res.Builds))
+	}
+}
+
+// badgeServer serves a badge for every request and counts what it was asked for.
+type badgeServer struct {
+	mu       sync.Mutex
+	paths    []string
+	status   int
+	ctype    string
+	body     []byte
+	delay    time.Duration
+	authSeen bool
+}
+
+func (b *badgeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	b.mu.Lock()
+	b.paths = append(b.paths, r.URL.Path)
+	if r.Header.Get("Authorization") != "" {
+		b.authSeen = true
+	}
+	delay, status, ctype, body := b.delay, b.status, b.ctype, b.body
+	b.mu.Unlock()
+
+	if delay > 0 {
+		select {
+		case <-time.After(delay):
+		case <-r.Context().Done():
+			return
+		}
+	}
+	w.Header().Set("Content-Type", ctype)
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
+}
+
+func (b *badgeServer) asked() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]string(nil), b.paths...)
+}
+
+func newBadgeServer() *badgeServer {
+	return &badgeServer{
+		status: http.StatusOK,
+		ctype:  "image/svg+xml; charset=utf-8",
+		body:   []byte(`<svg xmlns="http://www.w3.org/2000/svg" width="88" height="20"></svg>`),
+	}
+}
+
+// FR-2.3 AC5: the badge is fetched with the build state it illustrates and travels with it, so
+// that the page showing it makes no request of its own.
+func TestBuildsCarryTheirBadge(t *testing.T) {
+	fake := httptest.NewServer(fakesources.NewServer())
+	defer fake.Close()
+	badges := newBadgeServer()
+	bs := httptest.NewServer(badges)
+	defer bs.Close()
+
+	f := github.NewBuildFetcher(github.Config{
+		Token: "x", RESTBaseURL: fake.URL, BadgeBaseURL: bs.URL, Repos: []string{"org/repo"},
+	}, fake.Client())
+
+	res, err := f.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if len(res.Builds) != 1 {
+		t.Fatalf("len(builds) = %d, want 1", len(res.Builds))
+	}
+	if len(res.Builds[0].Badge) == 0 {
+		t.Fatal("the build carries no badge")
+	}
+	// Addressed by the workflow *file*, which is the only thing a badge service understands.
+	if got := badges.asked(); len(got) != 1 || got[0] != "/org/repo/ci.yml" {
+		t.Errorf("the badge was asked for at %v, want [/org/repo/ci.yml]", got)
+	}
+	// The badge service is not GitHub and has no business holding this installation's token
+	// (QS-4.3).
+	if badges.authSeen {
+		t.Error("the badge request carried a credential")
+	}
+}
+
+// A badge is decoration. Nothing about it may fail the fetch it belongs to, or take the build
+// state down with it — the same rule a failed announcement follows (FR-6.1 AC3).
+func TestABadgeThatDoesNotArriveNeverFailsTheFetch(t *testing.T) {
+	cases := []struct {
+		name    string
+		prepare func(*badgeServer)
+	}{
+		{"the service is rate limiting", func(b *badgeServer) { b.status = http.StatusTooManyRequests }},
+		{"the service is broken", func(b *badgeServer) { b.status = http.StatusInternalServerError }},
+		{"something answered with a web page", func(b *badgeServer) { b.ctype = "text/html"; b.body = []byte("<html>nope") }},
+		{"the answer is empty", func(b *badgeServer) { b.body = nil }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fake := httptest.NewServer(fakesources.NewServer())
+			defer fake.Close()
+			badges := newBadgeServer()
+			c.prepare(badges)
+			bs := httptest.NewServer(badges)
+			defer bs.Close()
+
+			f := github.NewBuildFetcher(github.Config{
+				Token: "x", RESTBaseURL: fake.URL, BadgeBaseURL: bs.URL,
+				Repos: []string{"org/repo"},
+			}, fake.Client())
+
+			res, err := f.Fetch(context.Background())
+			if err != nil {
+				t.Fatalf("Fetch: %v — a badge must never fail the fetch", err)
+			}
+			if len(res.Builds) != 1 {
+				t.Fatalf("len(builds) = %d, want 1 — the build state was lost with the badge", len(res.Builds))
+			}
+			if res.Builds[0].Conclusion != "success" {
+				t.Errorf("Conclusion = %q, want success", res.Builds[0].Conclusion)
+			}
+			if len(res.Builds[0].Badge) != 0 {
+				t.Error("a badge was stored from a response that should not have produced one")
+			}
+		})
+	}
+}
+
+// The same, for a badge service that cannot be reached at all — a timeout takes this code path
+// too, and this one costs the test suite nothing to exercise.
+func TestABadgeServiceThatCannotBeReachedNeverFailsTheFetch(t *testing.T) {
+	fake := httptest.NewServer(fakesources.NewServer())
+	defer fake.Close()
+	bs := httptest.NewServer(newBadgeServer())
+	closed := bs.URL
+	bs.Close() // nothing is listening there now
+
+	f := github.NewBuildFetcher(github.Config{
+		Token: "x", RESTBaseURL: fake.URL, BadgeBaseURL: closed, Repos: []string{"org/repo"},
+	}, fake.Client())
+
+	res, err := f.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch: %v — an unreachable badge service must never fail the fetch", err)
+	}
+	if len(res.Builds) != 1 || res.Builds[0].Conclusion != "success" {
+		t.Fatalf("builds = %+v, want the build state intact", res.Builds)
+	}
+	if len(res.Builds[0].Badge) != 0 {
+		t.Error("a badge appeared from a service that is not running")
+	}
+}
+
+// A run with no workflow file behind it — GitHub's built-in Pages deployment — is not asked about
+// at all. There is nothing to address, and asking would spend a request to be told so.
+func TestNoBadgeIsRequestedForARunWithNoWorkflowFile(t *testing.T) {
+	fake := httptest.NewServer(fakesources.NewServer())
+	defer fake.Close()
+	badges := newBadgeServer()
+	bs := httptest.NewServer(badges)
+	defer bs.Close()
+
+	// org/build-none has no runs at all, so there is no build and therefore nothing to illustrate.
+	f := github.NewBuildFetcher(github.Config{
+		Token: "x", RESTBaseURL: fake.URL, BadgeBaseURL: bs.URL,
+		Repos: []string{"org/build-none"},
+	}, fake.Client())
+
+	if _, err := f.Fetch(context.Background()); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if got := badges.asked(); len(got) != 0 {
+		t.Errorf("badges were requested for a repository with no runs: %v", got)
 	}
 }

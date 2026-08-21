@@ -37,6 +37,11 @@ type GitHub struct {
 	Login   string
 	Repos   []string
 	BaseURL string // "" means api.github.com; make fakes sets this via GITHUB_BASE_URL.
+	// BadgeBaseURL is where a workflow's badge image comes from; "" means shields.io. It is its
+	// own setting rather than derived from BaseURL because badges are a different service
+	// entirely — a deployment against real GitHub still wants real badges, and one against the
+	// fixture server wants neither.
+	BadgeBaseURL string // "" means img.shields.io; set via GITHUB_BADGE_BASE_URL.
 }
 
 // Plausible is the non-secret Plausible configuration.
@@ -138,9 +143,10 @@ func Load(path string, env func(string) string) (Config, error) {
 			StaleAfter: staleAfter,
 		},
 		GitHub: GitHub{
-			Login:   fc.GitHub.Login,
-			Repos:   fc.GitHub.Repos,
-			BaseURL: env("GITHUB_BASE_URL"),
+			Login:        fc.GitHub.Login,
+			Repos:        fc.GitHub.Repos,
+			BaseURL:      env("GITHUB_BASE_URL"),
+			BadgeBaseURL: env("GITHUB_BADGE_BASE_URL"),
 		},
 		Plausible: Plausible{
 			Sites:   fc.Plausible.Sites,

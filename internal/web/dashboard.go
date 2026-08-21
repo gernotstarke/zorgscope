@@ -3,9 +3,10 @@ package web
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
+	"html/template"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -499,11 +500,9 @@ type buildView struct {
 	Conclusion string
 	Label      string
 	Finished   timeView
-	// Badge is the shields.io URL for this repository's workflow, empty when the run has no file
-	// behind it (FR-2.3 AC5). It is built in Go rather than assembled in the template so that
-	// every segment is escaped once, in one place, by the code that knows which parts came from
-	// an upstream API.
-	Badge string
+	// Badge is the badge image this page draws for the repository: a data URI over the bytes the
+	// refresh run stored, empty when there is no badge. See badgeDataURI.
+	Badge template.URL
 }
 
 // siteView is one site's pair of Plausible windows.
@@ -726,7 +725,7 @@ func newBuildView(b domain.Build, now time.Time) buildView {
 		// that has not completed is a run in progress sitting on top of an older outcome, which
 		// is exactly what FR-2.3 AC2 asks to be shown side by side.
 		Running: b.Running(),
-		Badge:   buildBadgeURL(b),
+		Badge:   badgeDataURI(b),
 	}
 
 	switch {
@@ -745,28 +744,33 @@ func newBuildView(b domain.Build, now time.Time) buildView {
 	return v
 }
 
-// shieldsWorkflowBadge is where the details page's build badges come from (FR-2.3 AC5).
+// badgeDataURI renders a stored badge as an image the page carries itself, or "" when the build
+// has no badge.
 //
-// It is the one external host this site links, and the Content-Security-Policy names it for that
-// reason alone. Two things follow from a badge being someone else's image, and both are handled
-// where the markup is written rather than here: the request happens in the visitor's browser, so
-// it is sent with no referrer, and it is loaded lazily, so a page nobody scrolls costs nothing.
-const shieldsWorkflowBadge = "https://img.shields.io/github/actions/workflow/status/"
-
-// buildBadgeURL is the badge for one repository's workflow, or "" when there is none to address.
+// The badge travels in the page rather than being linked, which is the whole point of storing it
+// (FR-2.3 AC5): a linked badge is a third-party request made while the page is being read, and on
+// this page there were eight of them — arriving late, rate limited, or blocked outright by
+// anything in the browser that filters other people's images, all of which look identical to the
+// reader. Carried in the page there is no request at all and nothing to wait for.
 //
-// The branch is deliberately left out of the query. Without it shields reports the most recent run
-// of that workflow on any branch, which is the same rule BuildFetcher uses to pick the run in the
-// row beside it — pinning the badge to a branch would produce a badge that contradicts its own
-// row, which is worse than a badge that occasionally reflects a feature branch.
-func buildBadgeURL(b domain.Build) string {
-	file := b.BadgeWorkflow()
-	owner, name, ok := strings.Cut(b.Repo, "/")
-	if file == "" || !ok || owner == "" || name == "" || strings.Contains(name, "/") {
+// It is an <img> and never inline markup. The bytes come from outside and are only ever handed to
+// the browser as an image, which draws SVG in a sandbox: no script, no network, nothing that
+// reaches the document around it. Inlining the same bytes into the DOM would put someone else's
+// markup inside this page, which the Content-Security-Policy would mostly contain and which there
+// is no reason to lean on it for.
+//
+// The result is template.URL because html/template refuses a data: URI otherwise, replacing it
+// with #ZgotmplZ. That is a sanitiser being bypassed, so what replaces it has to be safe by
+// construction: the scheme and the media type are literals here, and everything after them is
+// base64, whose alphabet cannot close the attribute or leave the URL.
+func badgeDataURI(b domain.Build) template.URL {
+	if len(b.Badge) == 0 {
 		return ""
 	}
-	return shieldsWorkflowBadge + url.PathEscape(owner) + "/" + url.PathEscape(name) + "/" +
-		url.PathEscape(file)
+	// #nosec G203 -- the scheme and media type are literals and the rest is base64, whose
+	// alphabet cannot close the attribute or introduce another scheme; attribute escaping still
+	// applies on top, since template.URL suppresses URL sanitising and nothing else.
+	return template.URL("data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString(b.Badge))
 }
 
 // buildStatusView is the front page's indicator and, on the details page, the rows behind it.

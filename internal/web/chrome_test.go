@@ -4,6 +4,8 @@
 package web
 
 import (
+	"encoding/base64"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -670,7 +672,7 @@ func TestTheBuildDetailsPageListsEveryWatchedRepository(t *testing.T) {
 		o.Store = &dashStore{
 			builds: []domain.Build{
 				{Repo: "org/broken", Workflow: "CI", Conclusion: "failure", Status: "completed",
-					RunURL: "https://github.com/org/broken/actions/runs/9",
+					RunURL:     "https://github.com/org/broken/actions/runs/9",
 					FinishedAt: testNow.Add(-time.Hour), FetchedAt: testNow},
 				{Repo: "org/green", Workflow: "CI", Conclusion: "success", Status: "completed",
 					FinishedAt: testNow.Add(-2 * time.Hour), FetchedAt: testNow},
@@ -753,43 +755,43 @@ func TestAPolledTileBringsTheBuildIndicatorBackWithIt(t *testing.T) {
 	}
 }
 
-// FR-2.3 AC5: the details page carries a shields.io badge per repository — a second, independent
-// reading of the same workflow, fetched by the browser at the moment the page is read.
-func TestTheBuildsPageCarriesAShieldsBadgePerRepository(t *testing.T) {
+// FR-2.3 AC5: the details page draws a badge per repository from bytes it already holds, so that
+// opening it fetches nothing from anywhere.
+func TestTheBuildsPageDrawsStoredBadges(t *testing.T) {
 	store := representativeStore()
 	store.builds = []domain.Build{{
 		Repo: "arc42/faq.arc42.org-site", Workflow: "Refresh training dates",
 		WorkflowPath: ".github/workflows/refresh-trainings.yml",
 		Status:       "completed", Conclusion: "success",
+		Badge: []byte(`<svg xmlns="http://www.w3.org/2000/svg" width="88" height="20"></svg>`),
 	}}
 	body := getAuthed(t, dashHandler(t, store), "/builds").Body.String()
 
-	const want = "https://img.shields.io/github/actions/workflow/status/" +
-		"arc42/faq.arc42.org-site/refresh-trainings.yml"
-	if !strings.Contains(body, `src="`+want+`"`) {
-		t.Errorf("the badge URL is not on the page; wanted %s", want)
+	// The attribute is read as a browser reads it: html/template escapes the "+" of the base64
+	// alphabet as &#43;, which the parser turns back into "+" before the URL is used. Asserting
+	// against the raw bytes would be asserting against the escaping rather than against the badge.
+	decoded := html.UnescapeString(body)
+	if !strings.Contains(decoded, `src="data:image/svg+xml;base64,`) {
+		t.Fatalf("the badge is not carried in the page: %s", firstLineContaining(body, "build-badge"))
 	}
-
-	badge := firstLineContaining(body, "img.shields.io")
-	if badge == "" {
-		t.Fatal("no badge image")
+	// The bytes have to be the stored ones, not merely something base64-shaped.
+	want := base64.StdEncoding.EncodeToString(store.builds[0].Badge)
+	if !strings.Contains(decoded, want) {
+		t.Error("the badge on the page is not the stored badge")
 	}
-	// The badge is somebody else's request, made from the visitor's browser. Without this it
-	// would carry this dashboard's URL to a third party in the Referer header.
-	if !strings.Contains(body, `referrerpolicy="no-referrer"`) {
-		t.Error("the badge sends this dashboard's URL to shields.io as a referrer")
+	// The page must not reach for the badge's origin at all any more: that request is what made
+	// this page slow, and it is what the stored bytes replace.
+	if strings.Contains(body, "img.shields.io") {
+		t.Error("the page still links the badge at its source, so reading it waits on a third party")
 	}
-	// A badge is an image, and an image whose meaning is a build state needs a text alternative
-	// naming the repository it belongs to (FR-1.5 AC2).
-	if !strings.Contains(badge, `alt="Build badge for arc42/faq.arc42.org-site`) {
-		t.Errorf("the badge has no alt text naming its repository: %s", badge)
+	if !strings.Contains(body, `alt="Build badge for arc42/faq.arc42.org-site`) {
+		t.Errorf("the badge has no alt text naming its repository: %s", firstLineContaining(body, "data:image"))
 	}
 }
 
-// The badge is only offered where there is something to address. GitHub's built-in Pages
-// deployment reports a path that is not a file in the repository, and every badge service answers
-// such a request with "repo or workflow not found" — which on this page reads as a broken build.
-func TestABuildWithNoWorkflowFileOffersNoBadge(t *testing.T) {
+// A build with no stored badge — no workflow file to address, or a fetch that did not arrive —
+// says so in words. A broken image would read as a broken build.
+func TestABuildWithNoStoredBadgeSaysSo(t *testing.T) {
 	store := representativeStore()
 	store.builds = []domain.Build{{
 		Repo: "arc42/arc42.org-site", Workflow: "pages build and deployment",
@@ -798,27 +800,44 @@ func TestABuildWithNoWorkflowFileOffersNoBadge(t *testing.T) {
 	}}
 	body := getAuthed(t, dashHandler(t, store), "/builds").Body.String()
 
-	if strings.Contains(body, "img.shields.io") {
-		t.Error("a badge was built for a run with no workflow file behind it")
+	if strings.Contains(html.UnescapeString(body), "data:image/svg+xml") {
+		t.Error("a badge was drawn for a build that has none")
 	}
 	if !strings.Contains(body, "no badge") {
 		t.Error("the page does not say why the badge is missing")
 	}
 }
 
-// The one external host this site loads anything from has to be named in the policy, or every
-// badge is blocked and the column is a row of broken images (QS-4.4).
-func TestTheContentSecurityPolicyAllowsTheBadgeHost(t *testing.T) {
+// The badge is someone else's SVG. It is handed to the browser as an image, which draws it in a
+// sandbox — never inlined into the document, where it would be markup inside this page.
+func TestAStoredBadgeIsNeverInlinedIntoThePage(t *testing.T) {
+	store := representativeStore()
+	store.builds = []domain.Build{{
+		Repo: "org/repo", Workflow: "CI", WorkflowPath: ".github/workflows/ci.yml",
+		Status: "completed", Conclusion: "success",
+		Badge: []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`),
+	}}
+	body := getAuthed(t, dashHandler(t, store), "/builds").Body.String()
+
+	if strings.Contains(body, "alert(1)") {
+		t.Error("the badge's own markup reached the document")
+	}
+	if strings.Contains(html.UnescapeString(body), `<svg xmlns="http://www.w3.org/2000/svg"><script`) {
+		t.Error("the badge was inlined rather than drawn as an image")
+	}
+}
+
+// QS-4.4: with the badges carried in the page, the policy names no external host at all. A page
+// that waits on no third party should not be able to talk to one either.
+func TestTheContentSecurityPolicyNamesNoExternalHost(t *testing.T) {
 	rec := getAuthed(t, dashHandler(t, representativeStore()), "/builds")
 
 	csp := rec.Header().Get("Content-Security-Policy")
-	if !strings.Contains(csp, "img-src 'self' data: https://img.shields.io") {
-		t.Errorf("img-src does not allow the badge host: %s", csp)
+	if !strings.Contains(csp, "img-src 'self' data:;") {
+		t.Errorf("img-src is not self and data: alone: %s", csp)
 	}
-	// It is one host on one directive. A wildcard would let anything injected into any page load
-	// an image from anywhere, which is a working exfiltration channel for whatever the URL says.
-	if strings.Contains(csp, "img-src") && strings.Contains(csp, "*") {
-		t.Errorf("the policy has a wildcard in it: %s", csp)
+	if strings.Contains(csp, "shields.io") || strings.Contains(csp, "https://") {
+		t.Errorf("the policy still names an external host: %s", csp)
 	}
 }
 

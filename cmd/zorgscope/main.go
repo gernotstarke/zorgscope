@@ -185,6 +185,10 @@ func githubConfig(cfg config.Config) github.Config {
 		Token:       cfg.Secrets.GitHubToken,
 		RESTBaseURL: cfg.GitHub.BaseURL,
 		Repos:       cfg.GitHub.Repos,
+		// A deployment pointed at a fake GitHub gets its badges from the same place, so that
+		// running against fixtures reaches nothing on the real internet. Left empty it is
+		// shields.io, which is where badges actually come from.
+		BadgeBaseURL: cfg.GitHub.BadgeBaseURL,
 	}
 	if cfg.GitHub.BaseURL != "" {
 		gh.BaseURL = cfg.GitHub.BaseURL + "/graphql"

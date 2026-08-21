@@ -1,6 +1,7 @@
 package libsql_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"testing"
@@ -158,6 +159,7 @@ func TestUpsertBuildsRoundTripsAndUpdates(t *testing.T) {
 		Repo: "org/repo", Workflow: "ci", WorkflowPath: ".github/workflows/ci.yml",
 		Conclusion: "success", Status: "completed",
 		RunURL: "https://example/run/1", FinishedAt: at("2026-08-17T09:55:00Z"),
+		Badge: []byte(`<svg xmlns="http://www.w3.org/2000/svg" width="88" height="20"/>`),
 	}
 	if err := s.UpsertBuilds(ctx, []domain.Build{b}, t1); err != nil {
 		t.Fatalf("UpsertBuilds: %v", err)
@@ -185,6 +187,34 @@ func TestUpsertBuildsRoundTripsAndUpdates(t *testing.T) {
 	// the kind of omission a schema change makes silently.
 	if got[0].WorkflowPath != b.WorkflowPath {
 		t.Errorf("WorkflowPath = %q, want %q", got[0].WorkflowPath, b.WorkflowPath)
+	}
+	// The badge is bytes, not text, and survives the round trip unchanged: the details page draws
+	// it from these bytes and makes no request of its own (FR-2.3 AC5).
+	if !bytes.Equal(got[0].Badge, b.Badge) {
+		t.Errorf("Badge = %q, want %q", got[0].Badge, b.Badge)
+	}
+}
+
+// A build stored without a badge — no workflow file to address, or a fetch that did not arrive —
+// reads back as no badge rather than as a scan failure. The column is NULL for every row written
+// before it existed, which is the shape every stored build is in immediately after the migration.
+func TestABuildWithoutABadgeRoundTrips(t *testing.T) {
+	s, ctx := newStore(t), context.Background()
+	now := at("2026-08-17T10:00:00Z")
+
+	b := domain.Build{Repo: "org/plain", Workflow: "ci", Status: "completed", Conclusion: "success"}
+	if err := s.UpsertBuilds(ctx, []domain.Build{b}, now); err != nil {
+		t.Fatalf("UpsertBuilds: %v", err)
+	}
+	got, err := s.Builds(ctx)
+	if err != nil {
+		t.Fatalf("Builds: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len(builds) = %d, want 1", len(got))
+	}
+	if len(got[0].Badge) != 0 {
+		t.Errorf("Badge = %q, want none", got[0].Badge)
 	}
 }
 

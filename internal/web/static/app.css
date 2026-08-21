@@ -826,10 +826,9 @@ button:hover { filter: brightness(1.08); }
 .build-row-warning { box-shadow: inset 3px 0 0 var(--warn); }
 .build-row-ok { box-shadow: inset 3px 0 0 var(--ok); }
 
-/* The badge column. The image is somebody else's, arriving over the network after the table has
-   been drawn, so the cell is given the badge's height up front — otherwise every row below it
-   jumps as the badges land. vertical-align is set against the cell's baseline rule above, which
-   would otherwise hang a 20 px image off the text baseline of its neighbours. */
+/* The badge column. The image arrives with the page rather than over the network, so there is no
+   layout shift to guard against — only the height, and vertical-align against the cell's baseline
+   rule above, which would otherwise hang a 20 px image off the text baseline of its neighbours. */
 .build-badge {
   width: 1%;
   white-space: nowrap;
@@ -839,9 +838,6 @@ button:hover { filter: brightness(1.08); }
 .build-badge img {
   display: block;
   height: 20px;
-  /* A badge that has not arrived, or that a blocker has stopped, leaves an empty box rather than
-     the browser's broken-image glyph and its alt text sprawling across the column. */
-  min-width: 5rem;
 }
 
 .build-nobadge { color: var(--muted); font-size: 0.8rem; }

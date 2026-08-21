@@ -71,16 +71,13 @@ const strictTransportSecurity = "max-age=31536000; includeSubDomains"
 // for the credential, and without base-uri an injected <base> would re-point every relative URL on
 // the page, including that form's action.
 //
-// img-src names one external host, img.shields.io, and nothing else does: the build badges on
-// /builds are images served by shields.io (FR-2.3 AC5). It is a widening of the policy and worth
-// being explicit about what it does and does not cost. What it costs: a visitor loading /builds
-// makes a request to a third party, which learns their IP address and — but for the
-// referrerpolicy on each badge — would learn this dashboard's URL. What it does not cost: shields
-// serves SVG, which img-src loads as an image and never as a document, so nothing it returns can
-// run script here; and this is one host on one directive, not a wildcard.
-const contentSecurityPolicy = "default-src 'self'; img-src 'self' data: https://img.shields.io; " +
-	"style-src 'self'; script-src 'self'; frame-ancestors 'none'; form-action 'self'; " +
-	"base-uri 'self'"
+// img-src allows data: and nothing external. The build badges are someone else's artwork, and they
+// used to be someone else's *request*: the policy named img.shields.io so the browser could fetch
+// them while the page was being read. They are now fetched by the refresh run and carried in the
+// page as data URIs (FR-2.3 AC5), so the host came back out — a page that waits on no third party
+// should not be able to talk to one either.
+const contentSecurityPolicy = "default-src 'self'; img-src 'self' data:; style-src 'self'; " +
+	"script-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'"
 
 // Options are the dependencies of a Server. Clock, Log and BehindFlyProxy are optional; the rest
 // are required.
