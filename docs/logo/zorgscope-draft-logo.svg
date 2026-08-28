@@ -1,0 +1,136 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" width="100%" height="100%">
+  <defs>
+    <!-- Background Dark Palette -->
+    <style>
+      .bg-fill { fill: #1c1f22; }
+      .circle-bg { fill: #1a1e20; }
+      .shade-area { fill: #143528; }
+      
+      .brand-green { fill: #1f9a55; }
+      .stroke-green { stroke: #1f9a55; stroke-linecap: round; stroke-linejoin: round; }
+      .stroke-green-dark { stroke: #1a7a44; stroke-linecap: round; stroke-linejoin: round; }
+      
+      .dark-border { stroke: #1c1f22; stroke-linecap: round; stroke-linejoin: round; }
+      .dark-fill { fill: #1c1f22; }
+      
+      .focal-lime { fill: #8ee038; }
+      .text-42 { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-weight: 900; fill: #174e34; }
+    </style>
+    
+    <!-- Clip path for inside circle -->
+    <clipPath id="inner-scope-clip">
+      <circle cx="500" cy="500" r="375" />
+    </clipPath>
+  </defs>
+
+  <!-- Canvas Background -->
+  <rect width="1000" height="1000" class="bg-fill" />
+
+  <!-- Outer Scope Ring -->
+  <circle cx="500" cy="500" r="410" fill="none" stroke="#1f9a55" stroke-width="58" />
+
+  <!-- Inner Dark Background -->
+  <circle cx="500" cy="500" r="378" class="circle-bg" />
+
+  <!-- Elements Inside Scope (Clipped to preserve clean circular interior) -->
+  <g clip-path="url(#inner-scope-clip)">
+    
+    <!-- Shaded Right Background Area -->
+    <path d="M 640 480 L 785 330 L 880 430 L 880 750 L 640 750 Z" class="shade-area" />
+
+    <!-- Constellation / Network Data Points (Top Left) -->
+    <!-- Network Lines -->
+    <g class="stroke-green-dark" stroke-width="9" fill="none">
+      <line x1="190" y1="620" x2="330" y2="490" />
+      <line x1="190" y1="400" x2="255" y2="420" />
+      <line x1="255" y1="420" x2="355" y2="265" />
+      <line x1="355" y1="265" x2="615" y2="340" />
+      <line x1="355" y1="265" x2="415" y2="415" />
+      <line x1="255" y1="420" x2="330" y2="490" />
+      <line x1="615" y1="340" x2="665" y2="230" />
+      <line x1="615" y1="340" x2="570" y2="475" />
+    </g>
+
+    <!-- Network Nodes -->
+    <g class="brand-green">
+      <circle cx="255" cy="420" r="24" />
+      <circle cx="355" cy="265" r="28" />
+      <circle cx="615" cy="340" r="26" />
+    </g>
+
+    <!-- Subtle "42" Watermark/Easter Egg -->
+    <text x="680" y="555" class="text-42" font-size="78" letter-spacing="2">42</text>
+
+    <!-- Central Dashboard Histogram Bars with Dark Cutout Contours -->
+    <!-- Bar 1 (Shortest, Left) -->
+    <rect x="245" y="625" width="76" height="175" class="dark-fill" />
+    <rect x="248" y="625" width="70" height="175" class="brand-green" />
+    
+    <!-- Bar 2 (Mid-High, Center-Left) -->
+    <rect x="340" y="405" width="96" height="395" class="dark-fill" />
+    <rect x="352" y="410" width="72" height="390" class="brand-green" />
+
+    <!-- Bar 3 (Tallest, Center) -->
+    <rect x="447" y="345" width="98" height="455" class="dark-fill" />
+    <rect x="460" y="350" width="72" height="450" class="brand-green" />
+
+    <!-- Bar 4 (Medium, Center-Right) -->
+    <rect x="555" y="545" width="96" height="255" class="dark-fill" />
+    <rect x="568" y="550" width="70" height="250" class="brand-green" />
+
+    <!-- Dynamic Trend Line (Across Foreground) -->
+    <polyline points="188,622 340,490 495,575 615,480 782,332" 
+              fill="none" stroke="#1c1f22" stroke-width="40" stroke-linecap="round" stroke-linejoin="round" />
+    <polyline points="188,622 340,490 495,575 615,480 782,332" 
+              fill="none" stroke="#1f9a55" stroke-width="18" stroke-linecap="round" stroke-linejoin="round" />
+
+    <!-- The Focal Point: High-Contrast Lime Node with Dark Ring -->
+    <circle cx="496" cy="522" r="42" class="dark-fill" />
+    <circle cx="496" cy="522" r="35" class="focal-lime" />
+
+    <!-- Integrated Telescope Instrument (Bottom-Right, Rotated ~35deg) -->
+    <g transform="translate(560, 750) rotate(-33)">
+      <!-- Outer Outline / Mask Layer (Dark stroke to create seamless separation) -->
+      <g class="dark-border" stroke-width="26" fill="#1c1f22">
+        <!-- Stand Pivot & Mount -->
+        <circle cx="-50" cy="90" r="34" />
+        <polygon points="-50,90 -95,190 -5,190" />
+        
+        <!-- Eyepiece & Focus Drawtube -->
+        <rect x="-240" y="-23" width="70" height="46" rx="6" />
+        <rect x="-175" y="-18" width="55" height="36" />
+        <rect x="-125" y="-34" width="30" height="68" rx="5" />
+        
+        <!-- Main Telescope Barrel Body -->
+        <polygon points="-100,-42 120,-62 120,62 -100,42" />
+        
+        <!-- Objective Lens Collar -->
+        <rect x="110" y="-72" width="55" height="144" rx="10" />
+        <!-- Front Lens Aperture -->
+        <ellipse cx="165" cy="0" rx="14" ry="70" />
+      </g>
+
+      <!-- Vector Fill Layer in Brand Emerald Green -->
+      <g class="brand-green">
+        <!-- Tripod Base / Mount Pivot -->
+        <circle cx="-50" cy="90" r="25" />
+        <polygon points="-50,90 -85,185 -15,185" />
+        
+        <!-- Eyepiece / Taper -->
+        <rect x="-235" y="-18" width="60" height="36" rx="4" />
+        <rect x="-175" y="-13" width="55" height="26" />
+        <rect x="-120" y="-28" width="22" height="56" rx="3" />
+        
+        <!-- Main Optical Tube Assembly -->
+        <polygon points="-98,-36 115,-56 115,56 -98,36" />
+        
+        <!-- Objective Sunshade Collar -->
+        <rect x="115" y="-66" width="46" height="132" rx="6" />
+        
+        <!-- Inner Lens Aperture Cavity -->
+        <ellipse cx="155" cy="0" rx="15" ry="52" class="circle-bg" />
+      </g>
+    </g>
+
+  </g>
+</svg>
