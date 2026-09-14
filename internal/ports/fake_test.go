@@ -95,7 +95,7 @@ func TestFakeFetcherFetchRespectsContextCancellationWhileBlocked(t *testing.T) {
 		if !errors.Is(r.err, context.Canceled) {
 			t.Fatalf("Fetch() error = %v, want %v", r.err, context.Canceled)
 		}
-		if len(r.res.Items) != 0 || len(r.res.Builds) != 0 || len(r.res.Metrics) != 0 {
+		if len(r.res.Items) != 0 || len(r.res.Builds) != 0 {
 			t.Errorf("Fetch() result = %+v, want zero value", r.res)
 		}
 	case <-time.After(time.Second):
@@ -123,7 +123,7 @@ func TestFakeFetcherFetchRefusesAlreadyCancelledContextWithoutBlock(t *testing.T
 		if !errors.Is(r.err, context.Canceled) {
 			t.Fatalf("Fetch() error = %v, want %v", r.err, context.Canceled)
 		}
-		if len(r.res.Items) != 0 || len(r.res.Builds) != 0 || len(r.res.Metrics) != 0 {
+		if len(r.res.Items) != 0 || len(r.res.Builds) != 0 {
 			t.Errorf("Fetch() result = %+v, want zero value", r.res)
 		}
 	case <-time.After(time.Second):

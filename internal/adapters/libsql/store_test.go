@@ -105,7 +105,7 @@ func TestReplaceItemsIsScopedToItsSource(t *testing.T) {
 
 	gh := item("1", "gh")
 	td := item("t1", "task")
-	td.Source, td.Kind = "todoist", domain.KindTask
+	td.Source = "todoist"
 
 	mustReplace(t, s, ctx, []domain.Item{gh}, now)
 	if _, err := s.ReplaceItems(ctx, "todoist", []domain.Item{td}, now); err != nil {

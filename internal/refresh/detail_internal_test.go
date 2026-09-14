@@ -23,7 +23,7 @@ func TestTheRunDetailIsReadableByTheDashboard(t *testing.T) {
 	const message = "slack rejected the message: 404 no_service"
 
 	d := detail(Report{
-		Sources:   []SourceReport{{Source: "github", Stored: 12}, {Source: "todoist", Err: "401"}},
+		Sources:   []SourceReport{{Source: "github", Stored: 12}, {Source: "github-extra", Err: "401"}},
 		NotifyErr: message,
 	})
 

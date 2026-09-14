@@ -71,14 +71,6 @@ func issueOf(source, id string) domain.Item {
 	}
 }
 
-func task(id string) domain.Item {
-	return domain.Item{
-		Source: "todoist", ExternalID: id, Kind: domain.KindTask,
-		Title: "task " + id, URL: "https://todoist/" + id, State: "open",
-		CreatedAt: at("2026-08-01T00:00:00Z"), UpdatedAt: at("2026-08-11T00:00:00Z"),
-	}
-}
-
 func fetcher(name string, items ...domain.Item) *ports.FakeFetcher {
 	return &ports.FakeFetcher{SourceName: name, Result: ports.FetchResult{Items: items}}
 }
@@ -88,7 +80,7 @@ func TestRunStoresEverySourceAndRecordsTheRun(t *testing.T) {
 	store, ctx := newTestStore(t), context.Background()
 	fetchers := []ports.SourceFetcher{
 		fetcher("github", item("1")),
-		fetcher("todoist", task("t1")),
+		fetcher("todoist", issueOf("todoist", "t1")),
 	}
 	r := refresh.New(store, fetchers, &ports.FixedClock{T: now}, nil, discardLogger())
 
@@ -133,7 +125,7 @@ func TestOneFailingSourceDoesNotStopTheOthers(t *testing.T) {
 	store, ctx := newTestStore(t), context.Background()
 	fetchers := []ports.SourceFetcher{
 		&ports.FakeFetcher{SourceName: "github", Err: errors.New("boom")},
-		fetcher("todoist", task("t1")),
+		fetcher("todoist", issueOf("todoist", "t1")),
 	}
 	r := refresh.New(store, fetchers, &ports.FixedClock{T: now}, nil, discardLogger())
 
@@ -319,7 +311,7 @@ func TestCancelledRunLeavesEarlierSourcesStored(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	second := &cancelThenFetch{FakeFetcher: fetcher("todoist", task("t1")), cancel: cancel}
+	second := &cancelThenFetch{FakeFetcher: fetcher("todoist", issueOf("todoist", "t1")), cancel: cancel}
 	r := refresh.New(store, []ports.SourceFetcher{
 		fetcher("github", item("1")),
 		second,
@@ -393,7 +385,7 @@ func TestReportCarriesDuration(t *testing.T) {
 	clock := &ports.FixedClock{T: now}
 	fetchers := []ports.SourceFetcher{
 		&advancingFetcher{FakeFetcher: fetcher("github", item("1")), clock: clock, by: 3 * time.Second},
-		&advancingFetcher{FakeFetcher: fetcher("todoist", task("t1")), clock: clock, by: 4 * time.Second},
+		&advancingFetcher{FakeFetcher: fetcher("todoist", issueOf("todoist", "t1")), clock: clock, by: 4 * time.Second},
 	}
 	r := refresh.New(store, fetchers, clock, nil, discardLogger())
 
@@ -424,18 +416,15 @@ func TestReportCarriesDuration(t *testing.T) {
 	}
 }
 
-// FR-5.5 AC1: the run stores builds and metrics too, and only for the source that returned them.
-func TestRunStoresBuildsAndMetrics(t *testing.T) {
+// FR-5.5 AC1: the run stores builds too, from the fetcher that owns them.
+func TestRunStoresBuilds(t *testing.T) {
 	store, ctx := newTestStore(t), context.Background()
 	builds := &ports.FakeFetcher{SourceName: "github-builds", Result: ports.FetchResult{
 		OwnsBuilds: true,
 		Builds: []domain.Build{{Repo: "org/repo", Workflow: "ci", Conclusion: "success",
 			Status: "completed", RunURL: "https://example/run", FinishedAt: at("2026-08-17T09:00:00Z")}},
 	}}
-	metrics := &ports.FakeFetcher{SourceName: "plausible", Result: ports.FetchResult{
-		Metrics: []domain.Metric{{Site: "example.com", WindowDays: 7, Visitors: 10, Pageviews: 20}},
-	}}
-	r := refresh.New(store, []ports.SourceFetcher{builds, metrics}, &ports.FixedClock{T: now}, nil, discardLogger())
+	r := refresh.New(store, []ports.SourceFetcher{builds}, &ports.FixedClock{T: now}, nil, discardLogger())
 
 	if _, err := r.Run(ctx, "cron"); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -446,13 +435,6 @@ func TestRunStoresBuildsAndMetrics(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Repo != "org/repo" {
 		t.Errorf("builds = %+v, want the fetched build", got)
-	}
-	ms, err := store.Metrics(ctx)
-	if err != nil {
-		t.Fatalf("Metrics: %v", err)
-	}
-	if len(ms) != 1 || ms[0].Site != "example.com" {
-		t.Errorf("metrics = %+v, want the fetched metric", ms)
 	}
 }
 
@@ -508,7 +490,7 @@ func TestASourceThatDoesNotOwnBuildsLeavesThemAlone(t *testing.T) {
 		Builds:     []domain.Build{{Repo: "org/repo", Workflow: "ci", Conclusion: "success"}},
 	}}
 	// Todoist runs after it and returns items only: no builds, and no claim on them.
-	tasks := fetcher("todoist", task("t1"))
+	tasks := fetcher("todoist", issueOf("todoist", "t1"))
 	r := refresh.New(store, []ports.SourceFetcher{builds, tasks}, &ports.FixedClock{T: now}, nil, discardLogger())
 
 	if _, err := r.Run(ctx, "cron"); err != nil {
@@ -877,29 +859,6 @@ func TestAPermanentlyRejectedMessageDoesNotBlockTheOnesBehindIt(t *testing.T) {
 	if got := posts.sent("issue 2"); got != 1 {
 		t.Errorf("issue 2 was announced %d times, want 1 — a message Slack will never accept must "+
 			"not suppress the items behind it", got)
-	}
-}
-
-// FR-6.1 AC1 is about GitHub items: issues and pull requests. A Todoist task is something the user
-// entered themselves, so announcing it back to them is noise — and it multiplies the volume of
-// every first run.
-func TestOnlyGitHubItemsAreAnnounced(t *testing.T) {
-	store, ctx := newTestStore(t), context.Background()
-	posts := postRecorder(t, http.StatusOK)
-	n := slack.New(posts.srv.URL+"/services/T0/B0/secret", posts.srv.Client())
-	r := refresh.New(store, []ports.SourceFetcher{
-		fetcher("github", item("1")),
-		fetcher("todoist", task("t1")),
-	}, &ports.FixedClock{T: now}, n, discardLogger())
-
-	if _, err := r.Run(ctx, "cron"); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if got := posts.count(); got != 1 {
-		t.Fatalf("posted %d messages, want 1 — the issue, not the task: %q", got, posts.messages())
-	}
-	if got := posts.sent("issue 1"); got != 1 {
-		t.Errorf("the announced message was %q, want the GitHub issue", posts.messages())
 	}
 }
 

@@ -124,8 +124,7 @@ func (s *stubStore) ReplaceItems(_ context.Context, source string, items []domai
 	return len(items), nil
 }
 
-func (s *stubStore) UpsertBuilds(context.Context, []domain.Build, time.Time) error   { return nil }
-func (s *stubStore) UpsertMetrics(context.Context, []domain.Metric, time.Time) error { return nil }
+func (s *stubStore) UpsertBuilds(context.Context, []domain.Build, time.Time) error { return nil }
 
 func (s *stubStore) RecordSourceOK(_ context.Context, _ string, _ time.Time, _ int) error {
 	return s.recordOKErr
@@ -175,7 +174,7 @@ func TestStoreFailureFailsOnlyItsSourceAndIsReported(t *testing.T) {
 	store.replaceErr["github"] = errors.New("libsql: write failed")
 	r := refresh.New(store, []ports.SourceFetcher{
 		fetcher("github", item("1")),
-		fetcher("todoist", task("t1")),
+		fetcher("todoist", issueOf("todoist", "t1")),
 	}, &ports.FixedClock{T: now}, nil, discardLogger())
 
 	rep, err := r.Run(context.Background(), "cron")
@@ -239,7 +238,7 @@ func TestCleanupWritesOutliveCancellationButKeepADeadline(t *testing.T) {
 	// would lose the record and re-announce the whole batch on the next run.
 	r := refresh.New(store, []ports.SourceFetcher{
 		fetcher("github", item("1")),
-		&cancelThenFetch{FakeFetcher: fetcher("todoist", task("t1")), cancel: cancel},
+		&cancelThenFetch{FakeFetcher: fetcher("todoist", issueOf("todoist", "t1")), cancel: cancel},
 	}, &ports.FixedClock{T: now}, &recordingNotifier{}, discardLogger())
 
 	if _, err := r.Run(ctx, "cron"); err != nil {
@@ -298,7 +297,7 @@ func TestNoSecretShapedValueReachesTheLogOrTheReport(t *testing.T) {
 		AuthToken:   canarySecret,
 	}
 	storing := &tokenCarryingFetcher{
-		FakeFetcher: &ports.FakeFetcher{SourceName: "todoist", Result: ports.FetchResult{Items: []domain.Item{task("t1")}}},
+		FakeFetcher: &ports.FakeFetcher{SourceName: "todoist", Result: ports.FetchResult{Items: []domain.Item{issueOf("todoist", "t1")}}},
 		AuthToken:   canarySecret,
 	}
 	r := refresh.New(store, []ports.SourceFetcher{failing, storing}, &ports.FixedClock{T: now}, nil,
@@ -555,7 +554,7 @@ func TestTheAnnouncementRunsOnItsOwnBudget(t *testing.T) {
 	spy2 := &ctxSpyNotifier{}
 	r2 := refresh.New(newStubStore(), []ports.SourceFetcher{
 		fetcher("github", item("1")),
-		&cancelThenFetch{FakeFetcher: fetcher("todoist", task("t1")), cancel: cancel},
+		&cancelThenFetch{FakeFetcher: fetcher("todoist", issueOf("todoist", "t1")), cancel: cancel},
 	}, &ports.FixedClock{T: now}, spy2, discardLogger())
 	if _, err := r2.Run(ctx, "cron"); err != nil {
 		t.Fatalf("Run on a cancelled context: %v", err)

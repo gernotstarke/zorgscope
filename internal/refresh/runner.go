@@ -134,8 +134,8 @@ type Runner struct {
 //
 // No two fetchers may share a Name, and New panics if two do. This is a precondition, not a
 // preference, and it protects the first-seen invariant: a source owns its rows, and ReplaceItems
-// deletes the rows the incoming set omits. A fetcher that returns only builds or only metrics
-// therefore calls ReplaceItems with no items, which deletes every item of that source name. Give
+// deletes the rows the incoming set omits. A fetcher that returns only builds therefore calls
+// ReplaceItems with no items, which deletes every item of that source name. Give
 // GitHub's build fetcher the name "github" instead of "github-builds" and each refresh deletes
 // every GitHub issue and pull request; the issue fetcher re-inserts them on the next run with a
 // fresh FirstSeenAt, so the whole dashboard lights up NEW on every single refresh (QS-1.2).
@@ -234,7 +234,7 @@ func (r *Runner) Run(ctx context.Context, trigger string) (Report, error) {
 //
 // # Which writes an empty result still performs
 //
-// The three writes answer the question "does an empty slice mean anything?" differently, and the
+// The two writes answer the question "does an empty slice mean anything?" differently, and the
 // difference is not a style: it follows from whether the write deletes, and from what it is keyed
 // by.
 //
@@ -246,17 +246,8 @@ func (r *Runner) Run(ctx context.Context, trigger string) (Report, error) {
 //     source: the builds table is one flat set. Guarding it on len(res.Builds) > 0 skipped exactly
 //     the case its complement delete exists for — every watched repository losing CI at once, or
 //     the last one leaving the configuration — and left rows on the tile that nothing would ever
-//     refresh or remove. Guarding it on nothing at all would be worse: Todoist's empty slice would
-//     wipe GitHub's rows on every refresh.
-//   - UpsertMetrics keeps its emptiness guard, and it is the one place where the guard changes no
-//     outcome. It is a pure upsert keyed (site, window_days) with no complement delete, so calling
-//     it with an empty slice would delete nothing and write nothing; the guard only saves an empty
-//     transaction. The gap that mirrors the builds one — a site dropped from the configuration
-//     keeps its rows forever — is therefore not a guard the runner can change, but a delete the
-//     store does not have; and because the key is (site, window_days) rather than the site alone,
-//     any fix has to clear both windows of a site or leave it holding one. Nothing here can create
-//     that half-written state today: a partial Plausible fetch returns a non-nil error, and a
-//     result carrying an error is never stored at all.
+//     refresh or remove. Guarding it on nothing at all would be worse: a second source's empty
+//     slice would wipe GitHub's rows on every refresh.
 //
 // # Why the clock is read here and not at the start of the run
 //
@@ -302,19 +293,12 @@ func (r *Runner) runSource(ctx context.Context, f ports.SourceFetcher, fresh *[]
 			return r.sourceFailed(ctx, source, now, fmt.Errorf("store builds: %w", err))
 		}
 	}
-	// Metrics keep the emptiness guard, deliberately; see the comment above this function.
-	if len(res.Metrics) > 0 {
-		if err := r.store.UpsertMetrics(ctx, res.Metrics, now); err != nil {
-			return r.sourceFailed(ctx, source, now, fmt.Errorf("store metrics: %w", err))
-		}
-	}
 	if err := r.store.RecordSourceOK(ctx, source, now, stored); err != nil {
 		return r.sourceFailed(ctx, source, now, fmt.Errorf("record success: %w", err))
 	}
 
 	*fresh = append(*fresh, res.Items...)
-	r.log.Info("source refreshed", "source", source, "stored", stored,
-		"builds", len(res.Builds), "metrics", len(res.Metrics))
+	r.log.Info("source refreshed", "source", source, "stored", stored, "builds", len(res.Builds))
 	return SourceReport{Source: source, Stored: stored}
 }
 

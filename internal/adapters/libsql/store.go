@@ -164,15 +164,14 @@ func (s *Store) Close() (err error) {
 const upsertItemSQL = `
 INSERT INTO items (
   source, external_id, kind, repo, number, title, summary, url, author, state,
-  created_at, updated_at, due_at, priority, first_seen_at, last_fetched_at, payload)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)
+  created_at, updated_at, first_seen_at, last_fetched_at, payload)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)
 ON CONFLICT(source, external_id) DO UPDATE SET
   kind = excluded.kind, repo = excluded.repo, number = excluded.number,
   title = excluded.title, summary = excluded.summary, url = excluded.url,
   author = excluded.author,
   state = excluded.state, created_at = excluded.created_at,
-  updated_at = excluded.updated_at, due_at = excluded.due_at,
-  priority = excluded.priority, last_fetched_at = excluded.last_fetched_at`
+  updated_at = excluded.updated_at, last_fetched_at = excluded.last_fetched_at`
 
 // itemColumns is the read side of the same row. COALESCE keeps a NULL written by an older schema
 // or by hand from failing the scan.
@@ -180,8 +179,7 @@ const itemColumns = `
   source, external_id, COALESCE(kind,''), COALESCE(repo,''), COALESCE(number,0),
   COALESCE(title,''), COALESCE(summary,''), COALESCE(url,''), COALESCE(author,''),
   COALESCE(state,''),
-  COALESCE(created_at,''), COALESCE(updated_at,''), COALESCE(due_at,''),
-  COALESCE(priority,0), first_seen_at`
+  COALESCE(created_at,''), COALESCE(updated_at,''), first_seen_at`
 
 // ReplaceItems makes the stored items of one source exactly items: it upserts every item,
 // preserving the first_seen_at of rows that already existed, and deletes the rows of that source
@@ -229,8 +227,7 @@ func (s *Store) ReplaceItems(ctx context.Context, source string, items []domain.
 func upsertArgs(it domain.Item, source string, now time.Time) []any {
 	return []any{
 		source, it.ExternalID, string(it.Kind), it.Repo, it.Number, it.Title, it.Summary, it.URL,
-		it.Author, it.State, sqlTime(it.CreatedAt), sqlTime(it.UpdatedAt), sqlTime(it.DueAt),
-		it.Priority, sqlTime(now), sqlTime(now),
+		it.Author, it.State, sqlTime(it.CreatedAt), sqlTime(it.UpdatedAt), sqlTime(now), sqlTime(now),
 	}
 }
 
@@ -305,17 +302,16 @@ func (s *Store) Items(ctx context.Context) (_ []domain.Item, err error) {
 	var items []domain.Item
 	for rows.Next() {
 		var (
-			it                                   domain.Item
-			kind, created, updated, due, firstAt string
+			it                              domain.Item
+			kind, created, updated, firstAt string
 		)
 		if err := rows.Scan(&it.Source, &it.ExternalID, &kind, &it.Repo, &it.Number, &it.Title,
-			&it.Summary, &it.URL, &it.Author, &it.State, &created, &updated, &due,
-			&it.Priority, &firstAt); err != nil {
+			&it.Summary, &it.URL, &it.Author, &it.State, &created, &updated, &firstAt); err != nil {
 			return nil, fmt.Errorf("scan item: %w", err)
 		}
 		it.Kind = domain.Kind(kind)
 		if err := parseInto(map[*time.Time]string{
-			&it.CreatedAt: created, &it.UpdatedAt: updated, &it.DueAt: due, &it.FirstSeenAt: firstAt,
+			&it.CreatedAt: created, &it.UpdatedAt: updated, &it.FirstSeenAt: firstAt,
 		}); err != nil {
 			return nil, fmt.Errorf("item %s/%s: %w", it.Source, it.ExternalID, err)
 		}
@@ -327,7 +323,7 @@ func (s *Store) Items(ctx context.Context) (_ []domain.Item, err error) {
 	return items, nil
 }
 
-// ---------------------------------------------------------------- builds and metrics
+// ---------------------------------------------------------------- builds
 
 // UpsertBuilds makes the stored builds exactly builds: it upserts every one, keyed by repository,
 // and deletes the rows for repositories builds no longer contains — the same complement delete
@@ -459,65 +455,6 @@ FROM builds ORDER BY repo`
 		return nil, fmt.Errorf("read builds: %w", err)
 	}
 	return builds, nil
-}
-
-// UpsertMetrics records an analytics snapshot per site and window, stamping every row with now as
-// its fetch time.
-func (s *Store) UpsertMetrics(ctx context.Context, metrics []domain.Metric, now time.Time) (err error) {
-	defer func() { err = s.scrub.clean(err) }()
-	const q = `
-INSERT INTO metrics (site, window_days, visitors, pageviews, prev_visitors, prev_pageviews, fetched_at)
-VALUES (?,?,?,?,?,?,?)
-ON CONFLICT(site, window_days) DO UPDATE SET
-  visitors = excluded.visitors, pageviews = excluded.pageviews,
-  prev_visitors = excluded.prev_visitors, prev_pageviews = excluded.prev_pageviews,
-  fetched_at = excluded.fetched_at`
-
-	return s.inTx(ctx, func(tx *sql.Tx) error {
-		for _, m := range metrics {
-			_, err := tx.ExecContext(ctx, q, m.Site, m.WindowDays, m.Visitors, m.Pageviews,
-				m.PrevVisitors, m.PrevPageviews, sqlTime(now))
-			if err != nil {
-				return fmt.Errorf("upsert metric %s/%d: %w", m.Site, m.WindowDays, err)
-			}
-		}
-		return nil
-	})
-}
-
-// Metrics returns every stored metric.
-func (s *Store) Metrics(ctx context.Context) (_ []domain.Metric, err error) {
-	defer func() { err = s.scrub.clean(err) }()
-	const q = `
-SELECT site, COALESCE(window_days,0), COALESCE(visitors,0), COALESCE(pageviews,0),
-       COALESCE(prev_visitors,0), COALESCE(prev_pageviews,0), COALESCE(fetched_at,'')
-FROM metrics ORDER BY site, window_days`
-
-	rows, err := s.db.QueryContext(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("read metrics: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var metrics []domain.Metric
-	for rows.Next() {
-		var (
-			m       domain.Metric
-			fetched string
-		)
-		if err := rows.Scan(&m.Site, &m.WindowDays, &m.Visitors, &m.Pageviews,
-			&m.PrevVisitors, &m.PrevPageviews, &fetched); err != nil {
-			return nil, fmt.Errorf("scan metric: %w", err)
-		}
-		if err := parseInto(map[*time.Time]string{&m.FetchedAt: fetched}); err != nil {
-			return nil, fmt.Errorf("metric %s: %w", m.Site, err)
-		}
-		metrics = append(metrics, m)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read metrics: %w", err)
-	}
-	return metrics, nil
 }
 
 // ---------------------------------------------------------------- source health
@@ -831,7 +768,7 @@ func (s *Store) collectSent(ctx context.Context, q string, args []any, sent map[
 // it is a method on *Store and not part of ports.Store.
 func (s *Store) TruncateAll(ctx context.Context) (err error) {
 	defer func() { err = s.scrub.clean(err) }()
-	tables := []string{"items", "builds", "metrics", "refresh_run", "source_state", "app_state", "notified"}
+	tables := []string{"items", "builds", "refresh_run", "source_state", "app_state", "notified"}
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		for _, t := range tables {
 			if _, err := tx.ExecContext(ctx, `DELETE FROM `+t); err != nil { //nolint:gosec // t comes from the fixed list above

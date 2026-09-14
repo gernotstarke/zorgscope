@@ -11,13 +11,11 @@ import (
 	"github.com/gernotstarke/zorgscope/internal/domain"
 )
 
-// FetchResult is everything a single SourceFetcher.Fetch call can return: the items, builds and
-// metrics it found. A fetcher populates only the fields relevant to its source; the rest stay
-// nil.
+// FetchResult is everything a single SourceFetcher.Fetch call can return: the items and builds it
+// found. A fetcher populates only the fields relevant to its source; the rest stay nil.
 type FetchResult struct {
-	Items   []domain.Item
-	Builds  []domain.Build
-	Metrics []domain.Metric
+	Items  []domain.Item
+	Builds []domain.Build
 
 	// OwnsBuilds declares that this fetcher fills the builds table, so Builds is the whole truth
 	// about it — and an empty Builds means "no repository has a build right now", not "this
@@ -26,8 +24,8 @@ type FetchResult struct {
 	// The distinction cannot be read off Builds itself, and it decides whether rows are deleted.
 	// Store.UpsertBuilds deletes the repositories the incoming set omits, and unlike ReplaceItems
 	// it is not scoped by source: the builds table is one flat set. So a runner that stored every
-	// result's Builds unconditionally would have Todoist's empty slice wipe GitHub's rows on
-	// every refresh, while one that stored only non-empty slices could never clear the last row —
+	// result's Builds unconditionally would have a second source's empty slice wipe GitHub's rows
+	// on every refresh, while one that stored only non-empty slices could never clear the last row —
 	// which is precisely the case the complement delete exists for, a repository dropped from the
 	// configuration or a fleet that lost CI at once.
 	//
@@ -39,8 +37,7 @@ type FetchResult struct {
 	OwnsBuilds bool
 }
 
-// SourceFetcher retrieves the current state of one upstream source — GitHub, Plausible or
-// Todoist.
+// SourceFetcher retrieves the current state of one upstream source.
 type SourceFetcher interface {
 	// Name identifies the source, e.g. for logging and for recording source health.
 	Name() string
@@ -56,9 +53,9 @@ type SourceFetcher interface {
 	Fetch(ctx context.Context) (FetchResult, error)
 }
 
-// Store persists everything zorgscope tracks: items, builds, metrics, source health, the last
-// visit time, the refresh lease, refresh run history, and notification bookkeeping. It is
-// implemented once, by the libSQL adapter.
+// Store persists everything zorgscope tracks: items, builds, source health, the last visit time,
+// the refresh lease, refresh run history, and notification bookkeeping. It is implemented once,
+// by the libSQL adapter.
 type Store interface {
 	// Migrate brings the store's schema up to date. It must be safe to call on every startup.
 	Migrate(ctx context.Context) error
@@ -74,17 +71,11 @@ type Store interface {
 	// repository dropped from the configuration does not linger on the tile forever. Passing an
 	// empty slice therefore clears the table.
 	UpsertBuilds(ctx context.Context, builds []domain.Build, now time.Time) error
-	// UpsertMetrics inserts or updates metrics, keyed by (site, window_days) — one row per site
-	// and window, not one per site. A caller that treats the key as the site alone leaves one of
-	// the two windows blank on every write.
-	UpsertMetrics(ctx context.Context, metrics []domain.Metric, now time.Time) error
 
 	// Items returns every stored item.
 	Items(ctx context.Context) ([]domain.Item, error)
 	// Builds returns every stored build.
 	Builds(ctx context.Context) ([]domain.Build, error)
-	// Metrics returns every stored metric.
-	Metrics(ctx context.Context) ([]domain.Metric, error)
 	// SourceStates returns the last known health of every source, keyed by source name.
 	SourceStates(ctx context.Context) (map[string]domain.SourceState, error)
 
@@ -159,6 +150,14 @@ type Notifier interface {
 	// been delivered, which is why a caller that must not announce anything twice passes one item
 	// at a time and records each success as it happens.
 	Notify(ctx context.Context, items []domain.Item) error
+}
+
+// AccessChecker decides who may sign in (FR-8.3). token is the visitor's own OAuth access token;
+// it is used for one request and never stored.
+type AccessChecker interface {
+	// HasPushAccess reports whether the visitor identified by token has push access to the
+	// repository or organisation that gates sign-in.
+	HasPushAccess(ctx context.Context, token string) (bool, error)
 }
 
 // Clock reports the current time, so that callers needing time.Now can be tested with a fixed

@@ -51,7 +51,7 @@ func TestReplaceItemsWithNoItemsClearsTheSource(t *testing.T) {
 	now := at("2026-08-17T10:00:00Z")
 
 	td := item("t1", "task")
-	td.Source, td.Kind = "todoist", domain.KindTask
+	td.Source = "todoist"
 	mustReplace(t, s, ctx, []domain.Item{item("1", "a")}, now)
 	if _, err := s.ReplaceItems(ctx, "todoist", []domain.Item{td}, now); err != nil {
 		t.Fatalf("ReplaceItems(todoist): %v", err)
@@ -76,7 +76,7 @@ func TestReplaceItemsHandlesMoreItemsThanTheParameterLimit(t *testing.T) {
 	t1, t2 := at("2026-08-17T10:00:00Z"), at("2026-08-17T11:00:00Z")
 
 	td := item("t1", "task")
-	td.Source, td.Kind = "todoist", domain.KindTask
+	td.Source = "todoist"
 	if _, err := s.ReplaceItems(ctx, "todoist", []domain.Item{td}, t1); err != nil {
 		t.Fatalf("ReplaceItems(todoist): %v", err)
 	}
@@ -115,37 +115,27 @@ func TestReplaceItemsHandlesMoreItemsThanTheParameterLimit(t *testing.T) {
 	}
 }
 
-// Times are RFC 3339 UTC in SQL and time.Time in Go, and the zero time survives the trip: a
-// GitHub item has no due date, and domain.Item.DueAt must come back zero rather than year one.
+// Times are RFC 3339 UTC in SQL and time.Time in Go, and a local time is normalized to UTC on the
+// round trip.
 func TestItemTimesRoundTrip(t *testing.T) {
 	s, ctx := newStore(t), context.Background()
 	now := at("2026-08-17T10:00:00Z")
 
-	withDue := item("1", "issue")
+	it := item("1", "issue")
 	local := time.FixedZone("CEST", 2*60*60)
-	withDue.DueAt = time.Date(2026, 8, 20, 14, 30, 0, 0, local)
-	withoutDue := item("2", "issue")
+	it.CreatedAt = time.Date(2026, 8, 20, 14, 30, 0, 0, local)
 
-	mustReplace(t, s, ctx, []domain.Item{withDue, withoutDue}, now)
+	mustReplace(t, s, ctx, []domain.Item{it}, now)
 
-	byID := map[string]domain.Item{}
-	for _, it := range mustItems(t, s, ctx) {
-		byID[it.ExternalID] = it
-	}
-	if got := byID["2"].DueAt; !got.IsZero() {
-		t.Errorf("DueAt of an item without a due date = %v, want the zero time", got)
-	}
-	if got := byID["1"].DueAt; !got.Equal(withDue.DueAt) {
-		t.Errorf("DueAt = %v, want %v — a local time must be stored as UTC and come back equal", got, withDue.DueAt)
-	}
-	if got := byID["1"].DueAt.Location(); got != time.UTC {
-		t.Errorf("DueAt location = %v, want UTC — nothing may store local time", got)
-	}
-	if got := byID["1"]; !got.CreatedAt.Equal(withDue.CreatedAt) || !got.UpdatedAt.Equal(withDue.UpdatedAt) {
+	got := mustItems(t, s, ctx)[0]
+	if !got.CreatedAt.Equal(it.CreatedAt) || !got.UpdatedAt.Equal(it.UpdatedAt) {
 		t.Errorf("CreatedAt/UpdatedAt = %v/%v, want %v/%v",
-			got.CreatedAt, got.UpdatedAt, withDue.CreatedAt, withDue.UpdatedAt)
+			got.CreatedAt, got.UpdatedAt, it.CreatedAt, it.UpdatedAt)
 	}
-	if got := byID["1"]; got.Kind != domain.KindIssue || got.Repo != "org/repo" || got.Number != 1 ||
+	if got.CreatedAt.Location() != time.UTC {
+		t.Errorf("CreatedAt location = %v, want UTC — nothing may store local time", got.CreatedAt.Location())
+	}
+	if got.Kind != domain.KindIssue || got.Repo != "org/repo" || got.Number != 1 ||
 		got.URL != "https://example/1" || got.Author != "someone" || got.State != "open" {
 		t.Errorf("round-tripped item = %+v, does not match what was written", got)
 	}
@@ -292,36 +282,6 @@ func TestUpsertBuildsLeavesItemsAlone(t *testing.T) {
 	}
 	if len(items) != 1 {
 		t.Fatalf("len(items) = %d, want 1 — replacing builds must not touch items", len(items))
-	}
-}
-
-func TestUpsertMetricsRoundTripsAndUpdates(t *testing.T) {
-	s, ctx := newStore(t), context.Background()
-	t1, t2 := at("2026-08-17T10:00:00Z"), at("2026-08-17T11:00:00Z")
-
-	m := domain.Metric{Site: "example.org", WindowDays: 7, Visitors: 100, Pageviews: 250,
-		PrevVisitors: 80, PrevPageviews: 200}
-	other := domain.Metric{Site: "example.org", WindowDays: 30, Visitors: 400, Pageviews: 900}
-	if err := s.UpsertMetrics(ctx, []domain.Metric{m, other}, t1); err != nil {
-		t.Fatalf("UpsertMetrics: %v", err)
-	}
-	m.Visitors = 111
-	if err := s.UpsertMetrics(ctx, []domain.Metric{m}, t2); err != nil {
-		t.Fatalf("UpsertMetrics: %v", err)
-	}
-
-	got, err := s.Metrics(ctx)
-	if err != nil {
-		t.Fatalf("Metrics: %v", err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("len(metrics) = %d, want 2: metrics are keyed by site and window", len(got))
-	}
-	if got[0].WindowDays != 7 || got[0].Visitors != 111 || got[0].PrevVisitors != 80 {
-		t.Errorf("metric = %+v, want the 7-day window updated to 111 visitors", got[0])
-	}
-	if !got[0].FetchedAt.Equal(t2) {
-		t.Errorf("FetchedAt = %v, want %v", got[0].FetchedAt, t2)
 	}
 }
 

@@ -132,8 +132,6 @@ func TestNoExportedMethodLeaksTheAuthToken(t *testing.T) {
 		"Items":               func() error { _, err := s.Items(ctx); return err },
 		"UpsertBuilds":        func() error { return s.UpsertBuilds(ctx, nil, time.Now()) },
 		"Builds":              func() error { _, err := s.Builds(ctx); return err },
-		"UpsertMetrics":       func() error { return s.UpsertMetrics(ctx, nil, time.Now()) },
-		"Metrics":             func() error { _, err := s.Metrics(ctx); return err },
 		"RecordSourceOK":      func() error { return s.RecordSourceOK(ctx, "github", time.Now(), 1) },
 		"RecordSourceError":   func() error { return s.RecordSourceError(ctx, "github", time.Now(), "boom") },
 		"SourceStates":        func() error { _, err := s.SourceStates(ctx); return err },
