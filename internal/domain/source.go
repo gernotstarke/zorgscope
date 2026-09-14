@@ -2,7 +2,7 @@ package domain
 
 import "time"
 
-// SourceState is the last known health of one upstream source (GitHub, Plausible or Todoist).
+// SourceState is the last known health of one upstream fetcher — GitHub's issues or its builds.
 type SourceState struct {
 	Source        string
 	LastSuccessAt time.Time
