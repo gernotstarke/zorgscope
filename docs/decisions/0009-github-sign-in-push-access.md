@@ -74,9 +74,10 @@ One risk is worth naming, because it is the one thing here that rests on documen
 than on a property of the design: the `permissions` object on a repository response fetched with an
 unscoped token. GitHub documents it for the authenticated user, and the fake sources server
 reproduces it, but if a real sign-in ever came back without it the callback would refuse — it fails
-closed — and log that the object was missing. The fix in that case is to request the `read:org` or
+closed — and log it as `no permissions block`. The fix in that case is to request the `read:org` or
 `repo` scope, at the cost of asking the visitor for more than their identity. The flow is verified by
-hand against the real GitHub before this is merged; see
+hand against the real GitHub before the production OAuth App is put to use, following the steps in
+[the handover](../superpowers/plans/HANDOVER.md); see
 [the design](../superpowers/specs/2026-09-14-github-signin-and-focus-design.md) §8.
 
 ## Pros and cons of the options

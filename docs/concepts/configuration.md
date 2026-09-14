@@ -54,7 +54,32 @@ a YAML field that would tempt someone into committing a real one. There are thre
 what looks like one upstream is served from three hosts: the API at `api.github.com`
 (`GITHUB_BASE_URL`), the OAuth authorize and token endpoints at `github.com`
 (`GITHUB_OAUTH_BASE_URL`), and the build badges at `img.shields.io` (`GITHUB_BADGE_BASE_URL`, which
-this design left alone). Left unset, each means its real host.
+this design left alone). Left unset, each means its real host. `GITHUB_OAUTH_BASE_URL` is the one of
+the three that is validated: set to anything but `https`, or to a host that is not this machine
+(`localhost`, `127.0.0.1`, `::1`, `host.docker.internal`), `Load` refuses to start and names the
+variable. It decides where the visitor's browser is sent and where this process posts the client
+secret, so an unvalidated one would be a redirect to somebody else's host wearing a debugging
+switch's clothes.
+
+Signing in against the fake locally takes four `.env` values and one call the fake remembers:
+
+```env
+GITHUB_OAUTH_CLIENT_ID=local-fake
+GITHUB_OAUTH_CLIENT_SECRET=local-fake-secret
+GITHUB_OAUTH_BASE_URL=http://host.docker.internal:9090
+GITHUB_BASE_URL=http://host.docker.internal:9090
+```
+
+```sh
+curl -X POST 'http://localhost:9090/_control/oauth-callback?url=http://localhost:8080/auth/callback'
+```
+
+The `curl` is needed once per `make fakes`, and it is not optional: zorgscope never sends a
+`redirect_uri` of its own (see below), so the fake — like the real GitHub — has to be told the
+callback belonging to the App before it will send a browser back to one. Without it the sign-in
+stops at the fake with nowhere to go. `make fakes` runs on the host, and the backend reaches it from
+inside Compose as `host.docker.internal`, which is why the two base URLs above do not say
+`localhost` while the callback registered with the `curl` does: that one is the browser's view.
 
 `deploy/env.example` is the template for the local `.env` file (git-ignored), and the same names are
 set as Fly secrets in production:
@@ -72,6 +97,13 @@ TURSO_AUTH_TOKEN=
 No value is filled in above, and none belongs in this file or any other file in the repository
 (QS‑4.3, C‑9) — every example on this page and every other concept page uses an empty field or an
 obvious placeholder such as `<new-value>`, never a real secret.
+
+On Fly the same names are secrets, and `GITHUB_OAUTH_CLIENT_ID` and `GITHUB_OAUTH_CLIENT_SECRET`
+have to be set **before** the deploy that needs them lands. `Load` refuses to start without either
+(FR‑8.3), so an image deployed ahead of its secrets does not serve a dashboard with sign-in broken —
+it fails at start-up and the Machine restarts into the same failure until the values arrive. Setting
+a secret on a deployed app restarts the Machines by itself, so the order that works is
+`flyctl secrets set` first, deploy second.
 
 `make backend` refuses to start on an incomplete `.env` rather than letting the container start,
 fail and retry: it creates the file from the template when there is none, and otherwise checks that

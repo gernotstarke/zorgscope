@@ -118,11 +118,19 @@ comparison takes the same time regardless of how many leading bytes matched. An 
 secret bytes does not have that property, and is exactly the kind of timing side-channel `subtle`
 exists to close.
 
-Refused callbacks are rate-limited by an in-memory token bucket keyed by client IP: a mismatched or
-missing state, a failed code exchange, and a visitor without push access all count against the same
-bucket that failed token sign-ins counted against before. It is deliberately in-memory rather than a
-Turso-backed table: the machine stops when idle (ADR‑0003), so a persistent counter would add a
-database write to every refusal without meaningfully raising the cost of a patient attack.
+Callbacks are rate-limited by an in-memory token bucket keyed by client IP, and the token is spent
+at the top of the handler — before the state is compared, and before any request leaves this process.
+The ordering is the substance of the limit rather than a detail of it. Charged at the exit instead,
+it would decide only what the visitor is shown: an anonymous caller could loop `/auth/github` and
+`/auth/callback` for as long as it liked and still make zorgscope post to GitHub's token endpoint
+once per attempt, spending an upstream quota it does not own and holding a machine that scales to
+zero awake for the length of the loop. A mismatched or missing state, a cancelled authorisation, a
+failed code exchange, a visitor without push access and a sign-in that succeeds therefore all cost
+the same single token, from the same bucket that failed token sign-ins counted against before. One
+attempt costs one token on every path, so somebody who gets it right on their last try is still
+admitted. The bucket is deliberately in-memory rather than a Turso-backed table: the machine stops
+when idle (ADR‑0003), so a persistent counter would add a database write to every refusal without
+meaningfully raising the cost of a patient attack.
 
 That trade-off is comfortable here, because **the rate limiter is not what stands between a stranger
 and the dashboard — GitHub is.** There is no value to guess at the callback: a caller who holds no
@@ -135,11 +143,18 @@ because it is published unauthenticated at `/docs`.
 ## What the callback logs
 
 Every callback logs one line, admitted or refused, because "a collaborator signed in" is the whole of
-the audit need here and losing it silently would be worse than the line's cost. The line carries the
-client IP, the outcome, and — when the visitor was admitted — the permission level that admitted
-them. When they were refused it carries the reason in the system's own words: the state did not
-match, the exchange failed, the repository response was not 200, the `permissions` object was
-missing, or the permission was `pull` alone.
+the audit need here and losing it silently would be worse than the line's cost. An admitted visitor is
+`sign-in accepted` and the client IP, and nothing further — not the permission level that admitted
+them, and not the account that holds it.
+
+A refusal is `sign-in refused`, the client IP, and the reason in the system's own words: `state
+mismatch`, `no code` (the visitor cancelled on GitHub's authorisation page, which comes back as
+`error=access_denied` rather than as a code), `exchange failed`, `access check failed` (the
+repository response was not 200), `no permissions block` (GitHub answered without saying what the
+visitor may do), or `no push access` (the permission was `pull` alone). An attempt past the rate
+limit is `sign-in rate-limited` and the client IP alone: the budget is spent before the exchange, so
+at that point there is no reason yet to name — the refusals underneath a burst of 429s each logged
+their own while there was still budget for them.
 
 It never carries the authorization code, the state value, the visitor's access token, the client
 secret, or a login name the visitor did not choose to publish. The session cookie holds no identity
@@ -204,6 +219,17 @@ the new one is deployed, and replace the old value in any local `.env`.
 Taking somebody's access away is the other direction and needs no secret at all: remove their push
 access on GitHub, and the next sign-in refuses them. A session they already hold survives until it
 expires, because verifying it asks GitHub nothing — so for an urgent revocation, do both.
+
+**Removing `ZORGSCOPE_TOKEN`.** The shared token of ADR‑0007 is gone from the code, but a deployment
+that ever ran the old build still holds its value as a Fly secret — a live credential that nothing
+reads, which is the kind that is never rotated and never missed when it leaks. Once this change is
+deployed:
+
+```sh
+flyctl secrets unset ZORGSCOPE_TOKEN
+```
+
+The same line can be deleted from any local `.env`; `deploy/env.example` no longer carries it.
 
 **Rotating `REFRESH_SECRET`.** Generate a new value and set it the same way:
 
