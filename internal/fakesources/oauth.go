@@ -54,6 +54,8 @@ func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	v.Set("code", fakeCode)
 	v.Set("state", q.Get("state"))
 	u.RawQuery = v.Encode()
+	// #nosec G710 -- the destination is the callback a test registered or passed in; this server
+	// is a fixture that only ever listens on localhost, never on the internet.
 	http.Redirect(w, r, u.String(), http.StatusSeeOther)
 }
 

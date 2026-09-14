@@ -78,7 +78,7 @@ client: ## Open the browser at the local backend (terminal 2)
 	@printf '==> sign in with GitHub\n'
 	@open "http://localhost:$(PORT)" 2>/dev/null || printf '==> open http://localhost:%s in your browser\n' "$(PORT)"
 
-fakes: ## Serve fixture GitHub, Plausible and Todoist responses on http://localhost:9090 (terminal 3)
+fakes: ## Serve fixture GitHub responses, OAuth endpoints included, on http://localhost:9090 (terminal 3)
 	docker run --rm -t -p 9090:9090 \
 	  -v "$(CURDIR)":/src -w /src \
 	  -v $(GOMOD_VOL):/go/pkg/mod -v $(GOCACHE_VOL):/root/.cache/go-build \

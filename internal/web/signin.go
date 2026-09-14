@@ -5,9 +5,12 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
+	"errors"
 	"net/http"
 
 	"golang.org/x/oauth2"
+
+	"github.com/gernotstarke/zorgscope/internal/ports"
 )
 
 // oauthConfig is the client for the OAuth App this deployment was registered as. RedirectURL is
@@ -56,13 +59,26 @@ func (s *Server) handleAuthStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state := base64.RawURLEncoding.EncodeToString(raw[:])
-	// Path is the callback alone: the state proves one thing to one route, and a cookie sent with
-	// every request to this site would be one more secret in every log of every proxy in between.
-	http.SetCookie(w, &http.Cookie{
-		Name: stateCookieName, Value: state, Path: "/auth/callback",
-		MaxAge: int(stateTTL.Seconds()), HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
-	})
+	http.SetCookie(w, stateCookie(state, int(stateTTL.Seconds())))
 	http.Redirect(w, r, s.oauthConfig().AuthCodeURL(state), http.StatusSeeOther)
+}
+
+// stateCookie is the only place the state cookie's shape is written down, so that setting it and
+// clearing it cannot drift apart — a clear whose Path differed from the set's would leave the
+// cookie in the browser and silently make the next sign-in's state check meaningless.
+//
+// Path is the callback alone: the state proves one thing to one route, and a cookie sent with
+// every request to this site would be one more secret in every log of every proxy in between.
+func stateCookie(value string, maxAge int) *http.Cookie {
+	return &http.Cookie{
+		Name:     stateCookieName,
+		Value:    value,
+		Path:     "/auth/callback",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	}
 }
 
 // handleAuthCallback finishes the flow. Every refusal clears the state cookie, sets no session,
@@ -71,9 +87,7 @@ func (s *Server) handleAuthStart(w http.ResponseWriter, r *http.Request) {
 // The visitor's access token lives for exactly one question — may this person push to the
 // repository? — and is never stored, logged or rendered (design 2026-09-14 §2).
 func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
-	clearState := func() {
-		http.SetCookie(w, &http.Cookie{Name: stateCookieName, Path: "/auth/callback", MaxAge: -1, HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode})
-	}
+	clearState := func() { http.SetCookie(w, stateCookie("", -1)) }
 	// refuse is the single exit for everything that is not a signed-in collaborator. why goes to
 	// the log beside the client address and nothing else; msg is what the visitor is shown, and it
 	// is a fixed sentence rather than an upstream error's own words (QS-4.3).
@@ -81,7 +95,9 @@ func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 		clearState()
 		ip := s.clientIP(r)
 		if !s.signIn.allow(ip, s.clock.Now()) {
-			s.log.Warn("sign-in rate-limited", "ip", ip)
+			// why goes into this line too: an operator reading a burst of 429s still wants to
+			// know what the attempts underneath them were failing on.
+			s.log.Warn("sign-in rate-limited", "ip", ip, "why", why)
 			s.render(w, r, http.StatusTooManyRequests, "login.html", pageData{Title: "Sign in", Error: "Too many attempts. Try again later."})
 			return
 		}
@@ -111,13 +127,20 @@ func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 		refuse(http.StatusBadGateway, "exchange failed", "GitHub did not accept the sign-in. Try again.")
 		return
 	}
+	notACollaborator := "This dashboard is for collaborators of " + s.cfg.GitHub.AuthRepo + "."
 	ok, err := s.access.HasPushAccess(ctx, tok.AccessToken)
-	if err != nil {
+	switch {
+	// GitHub answered without saying what the visitor may do. The visitor is refused exactly as a
+	// stranger is — the check fails closed — but the log says which of the two happened, because
+	// only this one is fixed by asking the App for the read:org or repo scope (design §8).
+	case errors.Is(err, ports.ErrNoPermissionsBlock):
+		refuse(http.StatusForbidden, "no permissions block", notACollaborator)
+		return
+	case err != nil:
 		refuse(http.StatusBadGateway, "access check failed", "GitHub could not be asked who you are. Try again.")
 		return
-	}
-	if !ok {
-		refuse(http.StatusForbidden, "no push access", "This dashboard is for collaborators of "+s.cfg.GitHub.AuthRepo+".")
+	case !ok:
+		refuse(http.StatusForbidden, "no push access", notACollaborator)
 		return
 	}
 	clearState()

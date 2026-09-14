@@ -162,6 +162,36 @@ func TestAStrangerIsRefusedWithoutASession(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "collaborators of gernotstarke/zorgscope") {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
+	// A refusal must not leave the state behind: the next attempt has to start at /auth/github.
+	if c := cookieNamed(rec, stateCookieName); c == nil || c.MaxAge >= 0 {
+		t.Errorf("the refusal did not clear the state cookie: %+v", c)
+	}
+}
+
+// Design §8: an answer with no permissions block at all refuses like any stranger — the check
+// fails closed — but the log has to say which of the two it was, because only this one is fixed by
+// asking the OAuth App for a scope.
+func TestAMissingPermissionsBlockIsRefusedAndNamedInTheLog(t *testing.T) {
+	var logs bytes.Buffer
+	s := newTestServerWith(t, func(o *Options) {
+		startFakeGitHub(t, o)
+		o.Log = slog.New(slog.NewTextHandler(&logs, nil))
+		o.Access = &stubAccess{err: ports.ErrNoPermissionsBlock}
+	})
+	rec := signInThroughGitHub(t, s.Handler())
+
+	if rec.Code != http.StatusForbidden || cookieNamed(rec, sessionCookieName) != nil {
+		t.Fatalf("missing permissions block: %d, cookie %v", rec.Code, cookieNamed(rec, sessionCookieName))
+	}
+	if !strings.Contains(rec.Body.String(), "collaborators of gernotstarke/zorgscope") {
+		t.Errorf("body = %s", rec.Body.String())
+	}
+	if !strings.Contains(logs.String(), "no permissions block") {
+		t.Errorf("the log does not name the missing block, so nobody will know to add a scope:\n%s", logs.String())
+	}
+	if strings.Contains(logs.String(), "no push access") {
+		t.Errorf("the log calls a missing block a permissions problem:\n%s", logs.String())
+	}
 }
 
 func TestAMismatchedStateIsRefused(t *testing.T) {
@@ -303,6 +333,45 @@ func TestNoSignInResponseOrLogLineCarriesACodeStateTokenOrSecret(t *testing.T) {
 	}
 	if logs.Len() == 0 {
 		t.Error("a refused sign-in was not logged at all (FR-8.3 AC4)")
+	}
+}
+
+// The same sweep over the path that succeeds. It is the one that has a token in its hands and a
+// cookie to set, so it is the one with something to leak (QS-4.3).
+func TestNoAcceptedSignInResponseOrLogLineCarriesACodeStateTokenOrSecret(t *testing.T) {
+	var logs bytes.Buffer
+	s := newTestServerWith(t, func(o *Options) {
+		startFakeGitHub(t, o)
+		o.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	})
+	start := get(s.Handler(), "/auth/github")
+	state := cookieNamed(start, stateCookieName)
+	rec := signInThroughGitHub(t, s.Handler())
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("this test needs an accepted sign-in; got %d", rec.Code)
+	}
+	if !strings.Contains(logs.String(), "sign-in accepted") {
+		t.Errorf("an accepted sign-in was not logged at all:\n%s", logs.String())
+	}
+
+	// Headers as well as the body: the session cookie and the redirect both travel as headers, and
+	// the state cookie is cleared through one.
+	var headers strings.Builder
+	for name, values := range rec.Header() {
+		for _, v := range values {
+			headers.WriteString(name + ": " + v + "\n")
+		}
+	}
+	for _, secret := range []string{"fake-code", "fake-token", testClientSecret, state.Value} {
+		if strings.Contains(rec.Body.String(), secret) {
+			t.Errorf("response carries %q", secret)
+		}
+		if strings.Contains(headers.String(), secret) {
+			t.Errorf("a response header carries %q:\n%s", secret, headers.String())
+		}
+		if strings.Contains(logs.String(), secret) {
+			t.Errorf("log carries %q", secret)
+		}
 	}
 }
 

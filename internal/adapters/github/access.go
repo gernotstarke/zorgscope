@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/gernotstarke/zorgscope/internal/ports"
 )
 
 // AccessChecker answers FR-8.3's one question — may this visitor see the dashboard? — by asking
@@ -61,10 +63,11 @@ func (a *AccessChecker) HasPushAccess(ctx context.Context, token string) (bool, 
 	if err := json.NewDecoder(io.LimitReader(resp.Body, accessBodyLimit)).Decode(&body); err != nil {
 		return false, fmt.Errorf("access check: reading the answer: %w", err)
 	}
-	// A repository the visitor can see but has no permissions block for is not an error: GitHub
-	// simply did not say they may push, and "did not say" is refused rather than assumed.
+	// A repository the visitor can see but has no permissions block for is refused, and is said
+	// out loud: "GitHub did not tell us" is a different thing from "GitHub said no", and only one
+	// of the two is fixed by asking for a scope (design 2026-09-14 §8).
 	if body.Permissions == nil {
-		return false, nil
+		return false, ports.ErrNoPermissionsBlock
 	}
 	// maintain and triage are not read: GitHub sets push true for maintain, and triage does not
 	// grant push. Reading the two booleans the rule is actually about keeps it one sentence long.

@@ -196,9 +196,12 @@ func TestEveryInternalLinkResolves(t *testing.T) {
 // become a /docs URL that 404s, and it must not become a hint that there is more to fetch.
 func TestALinkToAnUnpublishedDocumentIsNotALink(t *testing.T) {
 	h := newTestServer(t).Handler()
-	body := get(h, "/docs/concepts/security-and-tokens").Body.String()
+	// The decisions index is the page that names the design specs, which live under
+	// docs/superpowers and are not published. The sentence naming them has to still be there, or
+	// this test would pass by having nothing to prove.
+	body := get(h, "/docs/decisions/README").Body.String()
 
-	if !strings.Contains(body, "implementation plan") {
+	if !strings.Contains(body, "The records are kept current with the design specs") {
 		t.Fatal("the sentence this test is about is no longer in the document")
 	}
 	for _, unwanted := range []string{"superpowers", ".md"} {

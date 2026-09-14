@@ -2,6 +2,7 @@ package github_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/gernotstarke/zorgscope/internal/adapters/github"
 	"github.com/gernotstarke/zorgscope/internal/fakesources"
+	"github.com/gernotstarke/zorgscope/internal/ports"
 )
 
 // The fixture server answers the same permissions block GitHub does, so this exercises every level
@@ -18,14 +20,26 @@ func TestHasPushAccessReadsThePermissionsBlock(t *testing.T) {
 	fake := httptest.NewServer(fakesources.NewServer())
 	defer fake.Close()
 	a := github.NewAccessChecker(fake.URL, "gernotstarke/zorgscope", fake.Client())
-	for perm, want := range map[string]bool{"admin": true, "maintain": true, "push": true, "pull": false, "none": false, "absent": false} {
+	// "absent" is refused like "pull", but it is refused for a different reason and says so: only
+	// a missing block is fixed by asking the OAuth App for a scope (design 2026-09-14 §8).
+	for perm, want := range map[string]struct {
+		access  bool
+		wantErr error
+	}{
+		"admin":    {access: true},
+		"maintain": {access: true},
+		"push":     {access: true},
+		"pull":     {},
+		"none":     {},
+		"absent":   {wantErr: ports.ErrNoPermissionsBlock},
+	} {
 		control(t, fake.URL+"/_control/oauth-user?permission="+perm)
 		got, err := a.HasPushAccess(context.Background(), "fake-token")
-		if err != nil {
-			t.Fatalf("%s: %v", perm, err)
+		if !errors.Is(err, want.wantErr) {
+			t.Fatalf("%s: err = %v, want %v", perm, err, want.wantErr)
 		}
-		if got != want {
-			t.Errorf("%s: HasPushAccess = %v, want %v", perm, got, want)
+		if got != want.access {
+			t.Errorf("%s: HasPushAccess = %v, want %v", perm, got, want.access)
 		}
 	}
 }
