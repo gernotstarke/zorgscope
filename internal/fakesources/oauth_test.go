@@ -45,6 +45,22 @@ func TestTokenExchangeAcceptsOnlyTheFakeCode(t *testing.T) {
 	}
 }
 
+// TestTokenExchangeAcceptsAJSONBodyToo proves the JSON branch of handleAccessToken, which
+// TestTokenExchangeAcceptsOnlyTheFakeCode above never exercises — it only ever posts a form body.
+// GitHub's real endpoint accepts either encoding depending on the request's own Content-Type, and
+// the backend (Task 6) is free to use either, so both must work here.
+func TestTokenExchangeAcceptsAJSONBodyToo(t *testing.T) {
+	h := fakesources.NewServer()
+	ok := postJSON(t, h, "/login/oauth/access_token", `{"code":"fake-code","client_id":"abc","client_secret":"s"}`)
+	if ok.Code != http.StatusOK || !strings.Contains(ok.Body.String(), `"access_token":"fake-token"`) {
+		t.Fatalf("exchange = %d %s", ok.Code, ok.Body.String())
+	}
+	bad := postJSON(t, h, "/login/oauth/access_token", `{"code":"stale"}`)
+	if bad.Code != http.StatusBadRequest {
+		t.Fatalf("bad code = %d", bad.Code)
+	}
+}
+
 func TestRepositoryPermissionsFollowTheControl(t *testing.T) {
 	h := fakesources.NewServer()
 	for perm, want := range map[string]string{
@@ -123,6 +139,18 @@ func getWithBearer(t *testing.T, h http.Handler, path, token string) *httptest.R
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, path, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// postJSON posts body as an application/json request to path on h and returns the recorded
+// response without asserting on its status, since callers exercise both the accepted and the
+// rejected case.
+func postJSON(t *testing.T, h http.Handler, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
 	h.ServeHTTP(rec, req)
 	return rec
 }

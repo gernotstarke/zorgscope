@@ -58,9 +58,9 @@ func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAccessToken serves POST /login/oauth/access_token, the code-for-token exchange. GitHub
-// accepts this either as a form body or as JSON depending on the caller's Accept header; the fake
-// only needs to read the code back out, so it tries JSON when the caller says so and otherwise
-// falls back to a form body.
+// accepts this either as a form body or as JSON depending on the request's own Content-Type; the
+// fake only needs to read the code back out, so it decodes JSON when the request says that is
+// what it sent and otherwise falls back to a form body.
 func (s *server) handleAccessToken(w http.ResponseWriter, r *http.Request) {
 	code := ""
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
