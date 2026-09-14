@@ -181,8 +181,11 @@ One middleware wraps every response with:
 
 ## Rotating each secret
 
-Both secrets are Fly secrets in production and `.env` entries locally — never repository content
-(C‑9). The examples below use `<new-value>` as a placeholder, never a real secret.
+`GITHUB_OAUTH_CLIENT_SECRET`, `REFRESH_SECRET` and `GITHUB_TOKEN` are Fly secrets in production and
+`.env` entries locally — never repository content (C‑9). The two below are the ones with a procedure
+worth writing down; `GITHUB_TOKEN` is rotated like any other GitHub personal access token, and
+nothing in zorgscope is derived from it. The examples use `<new-value>` as a placeholder, never a
+real secret.
 
 **Rotating the OAuth client secret.** Generate a new one on GitHub — Settings → Developer settings →
 OAuth Apps → the App for this environment → *Generate a new client secret* — and set it as a Fly

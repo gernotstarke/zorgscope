@@ -28,6 +28,8 @@ Priority: **M** must (v1), **S** should (v2), **W** won't.
 | FR‑2.3 | M | As the user I see whether each repository builds. | AC1 The latest completed GitHub Actions run on the default branch is shown per repository with its conclusion, workflow name and finishing time. AC2 A run in progress is shown as such next to the previous conclusion. AC3 A repository without workflows shows no build state rather than an error. AC4 The dashboard itself carries only a three-state indicator — green when every repository’s last completed run succeeded, red when at least one failed, amber otherwise — with the per-repository detail one click away, so that the front page stays about new and unhandled issues and pull requests. AC5 The details page shows each repository’s build badge from shields.io beside the stored state. The badge is fetched by the *refresh run* and stored with the build, so the page draws it from its own bytes and makes no request while it is being read; it is rendered as an image and never inlined. A run with no workflow file behind it, and a badge that did not arrive, both show no badge and say why, and neither ever fails a refresh. |
 | FR‑2.4 | S | As the user I see mentions and review requests addressed to me anywhere on GitHub. | AC1 Notifications with reason `mention`, `review_requested` or `assign` for the configured login appear as items. AC2 They are deduplicated against items already present from the configured repositories. |
 
+E‑3 (site statistics) and E‑4 (tasks) were retired on 2026-09-14; their ids are not reused.
+
 ## E‑5 Refresh and new-detection (QG‑1)
 
 | Id | Prio | Story | Acceptance criteria |
@@ -44,7 +46,7 @@ Priority: **M** must (v1), **S** should (v2), **W** won't.
 |----|------|-------|---------------------|
 | FR‑6.1 | S | As the user I am told in Slack when a new issue or pull request appears. | AC1 A refresh run posts one message per newly first-seen GitHub item to the configured Slack webhook. AC2 Each item is announced at most once, also across restarts and repeated runs. AC3 A Slack failure is recorded but never fails the refresh run. |
 | FR‑6.2 | S | As the user I can be notified by email instead of, or in addition to, Slack. | AC1 The same notification content is deliverable by a second notifier without changing the refresh logic. |
-| FR‑6.3 | W | Notifications about traffic changes. | Deferred; revisit once the statistics have been watched for a while. |
+| FR‑6.3 | W | Notifications about traffic changes. | No longer applicable: site statistics were retired on 2026-09-14 together with E‑3. |
 
 ## E‑7 Documentation in the product (G‑6)
 
@@ -68,7 +70,7 @@ Priority: **M** must (v1), **S** should (v2), **W** won't.
 |----|------|-------|---------------------|
 | FR‑9.1 | M | As the operator I run the whole system locally with Docker and make. | AC1 `make backend` starts the backend and a local libsql-server against `.env`. AC2 `make client` opens the browser at the local backend and reports clearly when nothing answers. AC3 `make check` needs only Docker and make and runs what CI runs. |
 | FR‑9.2 | M | As the operator I develop without touching the real upstream services. | AC1 A fake-sources server serves GitHub responses — issues, pull requests, workflow runs, and the OAuth endpoints a sign-in needs — from fixtures. AC2 Pointing the API base URLs at it produces a fully populated dashboard. |
-| FR‑9.3 | M | As the operator I deploy from CI, not from my machine. | AC1 A push to `main` deploys to Fly through GitHub Actions; `make check` validates `deploy/fly.toml` before it gets there. |
+| FR‑9.3 | M | As the operator I deploy from CI, not from my machine. | AC1 `make check` validates `deploy/fly.toml` before a push reaches CI, so a broken deployment configuration fails on the operator's machine rather than halfway through a release; deploying itself is CI's job (FR‑9.5 AC2), and there is no deploy target to run by hand. |
 | FR‑9.4 | M | As the operator I see structured logs and a health endpoint. | AC1 Logs are JSON via `log/slog`, level configurable, secrets redacted. AC2 `GET /healthz` answers without authentication and without touching upstreams. |
 | FR‑9.5 | M | As the operator I want CI to check every push. | AC1 GitHub Actions runs lint, tests and the documentation lint. AC2 A push to `main` deploys to Fly. |
 

@@ -82,7 +82,7 @@ every target is the whole interface a contributor or an agent needs.
 * Bad: it reopens exactly what C‑2 exists to close — "a different Go/Node version per contributor
   machine" is no longer prevented by the constraint, it is merely undocumented drift waiting to
   happen, and an agent whose sandbox lacks a Go toolchain (a real and common case for this project's
-  intended contributors, per QG‑5) cannot run `make test` at all rather than running it slightly
+  intended contributors, per QG‑5) cannot run `make check` at all rather than running it slightly
   slower.
 
 ### Devcontainer or Nix shell

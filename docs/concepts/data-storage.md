@@ -54,15 +54,18 @@ CREATE TABLE IF NOT EXISTS notified (
 ```
 
 `app_state` is a generic key-value table with two known keys: `last_visit_at` (the timestamp "mark
-all seen" writes) and `refresh_lease` (below). `notified` exists for v2's Slack notifications
-(FR‑6.1) and is empty until Task 17 lands. Every timestamp is an RFC 3339 UTC string, with the empty
+all seen" writes) and `refresh_lease` (below). `notified` records which items Slack has already been
+told about (FR‑6.1), so that an item is announced once and not again on the next run. Every timestamp
+is an RFC 3339 UTC string, with the empty
 string standing for the zero `time.Time` — `sqlTime` and `parseTime` in `store.go` are the two
 functions responsible for that round trip.
 
-Migration `0005_github_only.sql` is what removed the rest: it drops the `metrics` table, deletes the
-items and source-state rows of the two retired sources, and drops the `due_at` and `priority`
-columns from `items`, which existed only to carry a task's deadline. Like every migration here it is
-one-way ([ADR‑0005](../decisions/0005-embedded-sql-migrations.md)), and it leaves the GitHub items —
+Migration `0005_github_only.sql` is what removed the rest. It drops the `metrics` table, which is
+where the site statistics lived — they were figures, never items, so there is nothing of theirs in
+`items` to delete. It deletes the items whose source was `todoist`, the only retired source that
+produced any, and the `source_state` rows of both. And it drops the `due_at` and `priority` columns
+from `items`, which existed only to carry a task's deadline. Like every migration here it is one-way
+([ADR‑0005](../decisions/0005-embedded-sql-migrations.md)), and it leaves the GitHub items —
 first-seen times included — untouched.
 
 ## The first-seen invariant

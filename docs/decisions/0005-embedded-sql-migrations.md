@@ -54,14 +54,18 @@ func (s *Store) Migrate(ctx context.Context) error {
 }
 ```
 
-Files live under `internal/adapters/libsql/migrations/` (`0001_initial.sql` at the time of writing),
+Files live under `internal/adapters/libsql/migrations/` (`0001_initial.sql` through
+`0005_github_only.sql` today),
 embedded with `//go:embed migrations/*.sql`, applied in file-name order inside one transaction per
 file together with its `schema_migrations` row — "a half-applied migration cannot be recorded as
 done", per the code's own comment — and `recordVersion` uses `INSERT ... ON CONFLICT(version) DO
 NOTHING` because "two machines starting at the same time may both apply an idempotent migration;
-only the row must not be duplicated." FR‑9.3 AC2 asks for a `make db-migrate` target calling this
-same method directly, without starting the binary; that target does not exist in the `Makefile` at
-the time of writing and is outstanding work, not a design choice this record needs to justify.
+only the row must not be duplicated." There is no make target for migrating: the server applies
+every migration on start-up, so an ordinary deploy is the migration. `cmd/migrate` calls the same
+method without starting the binary, for the one case start-up does not cover — preparing a fresh
+Turso database by hand before the first deploy — and it is run the way the SQL shell in
+[data storage](../concepts/data-storage.md) is, through a `docker run` of the Go image with
+`TURSO_URL` and `TURSO_AUTH_TOKEN` in its environment.
 
 ### Consequences
 

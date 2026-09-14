@@ -36,7 +36,7 @@ push access admits a visitor (FR‑8.3 AC3, [ADR‑0009](../decisions/0009-githu
 It sits in the YAML file rather than the environment because it is not a secret and it is exactly
 the kind of thing a reader of this repository should be able to look up.
 
-Everything else — every credential and the two test-only base URL overrides — comes from the
+Everything else — every credential and the three test-only base URL overrides — comes from the
 environment: `internal/config.Load(path string, env func(string) string) (Config, error)` reads the
 YAML file for the settings above and calls `env` for the rest. `env` is injected rather than
 `Load` calling `os.Getenv` itself, so `internal/config/config_test.go` can supply a fixed map and
@@ -46,14 +46,15 @@ needs no process environment to test start-up failures.
 |---|---|
 | `timezone`, `refresh.interval`, `refresh.stale_after` | `GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET`, `REFRESH_SECRET` |
 | `github.login`, `github.repos`, `github.auth_repo` | `GITHUB_TOKEN`, `SLACK_WEBHOOK_URL`, `TURSO_URL`, `TURSO_AUTH_TOKEN` |
-| `notifications.slack.enabled` | `GITHUB_BASE_URL`, `GITHUB_OAUTH_BASE_URL` |
+| `notifications.slack.enabled` | `GITHUB_BASE_URL`, `GITHUB_OAUTH_BASE_URL`, `GITHUB_BADGE_BASE_URL` |
 
-The last row is not a secret at all: `Load` reads `GITHUB_BASE_URL` and `GITHUB_OAUTH_BASE_URL` from
-the environment purely so `make fakes` and the tests can point at a local fixture server instead of
-the real upstream, without a YAML field that would tempt someone into committing a real one. They are
-two variables rather than one because GitHub serves them from two hosts: the API lives at
-`api.github.com` and the OAuth authorize and token endpoints at `github.com`. Left unset,
-`GITHUB_BASE_URL` means the real API and `GITHUB_OAUTH_BASE_URL` means `https://github.com`.
+The last row is not a secret at all: `Load` reads those three from the environment purely so
+`make fakes` and the tests can point at a local fixture server instead of the real upstream, without
+a YAML field that would tempt someone into committing a real one. There are three of them because
+what looks like one upstream is served from three hosts: the API at `api.github.com`
+(`GITHUB_BASE_URL`), the OAuth authorize and token endpoints at `github.com`
+(`GITHUB_OAUTH_BASE_URL`), and the build badges at `img.shields.io` (`GITHUB_BADGE_BASE_URL`, which
+this design left alone). Left unset, each means its real host.
 
 `deploy/env.example` is the template for the local `.env` file (git-ignored), and the same names are
 set as Fly secrets in production:

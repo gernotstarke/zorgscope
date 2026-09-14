@@ -38,7 +38,7 @@ make help                    # every target
 |------|---------|
 | `docs/requirements/` | Requirements in [req42](https://req42.de) form: goals, stakeholders, constraints, functional and quality requirements |
 | `docs/decisions/` | Architecture decisions (MADR) |
-| `docs/concepts/` | Security and token handling, data storage, configuration, operations |
+| `docs/concepts/` | Security and token handling, data storage, configuration |
 | `docs/superpowers/` | The design specs and their implementation plans |
 | `cmd/zorgscope/` | The binary |
 | `cmd/fakesources/` | Fixture-backed GitHub, including the OAuth endpoints |
