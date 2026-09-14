@@ -45,7 +45,7 @@ func TestFailControlMakesTheSourceFail(t *testing.T) {
 	srv := httptest.NewServer(fakesources.NewServer())
 	defer srv.Close()
 
-	post(t, srv.URL+"/_control/fail?source=github&status=500")
+	postURL(t, srv.URL+"/_control/fail?source=github&status=500")
 
 	resp, err := http.Post(srv.URL+"/graphql", "application/json", strings.NewReader(`{"query":"{}"}`))
 	if err != nil {
@@ -87,8 +87,11 @@ func TestAnUnknownPathIsStill404(t *testing.T) {
 	}
 }
 
-// post posts an empty body to url and fails the test on error or a non-2xx status.
-func post(t *testing.T, url string) {
+// postURL posts an empty body to a full URL over a real listener (the other tests in this file
+// use httptest.NewServer, not a bare handler) and fails the test on error or a non-2xx status.
+// It is named postURL, not post, to leave "post" free for oauth_test.go's handler-based helper of
+// that name.
+func postURL(t *testing.T, url string) {
 	t.Helper()
 	resp, err := http.Post(url, "application/json", nil)
 	if err != nil {
