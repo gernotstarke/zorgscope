@@ -1,6 +1,6 @@
 # 0007. Token sign-in with a session cookie derived from the token
 
-* Status: accepted
+* Status: superseded by [0009](0009-github-sign-in-push-access.md)
 * Date: 2026-08-17
 * Requirements: FR‑8.2, FR‑8.3, QS‑4.1, QS‑4.2, QS‑4.3
 

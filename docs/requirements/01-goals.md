@@ -3,16 +3,16 @@
 ## Vision
 
 One page that answers "does anything need me right now?" — open it, glance, close it. zorgscope
-collects what is scattered over GitHub, Plausible and Todoist, marks what is new since the last look,
-and costs almost nothing to run.
+collects the open issues and pull requests of the arc42 sites' repositories on GitHub, marks what is
+new since the last look, and costs almost nothing to run.
 
 ## Goals
 
 | Id | Goal |
 |----|------|
 | G‑1 | The user sees open issues and pull requests of the configured GitHub repositories, with build status, and recognises at a glance which of them are new. |
-| G‑2 | The user sees visitor numbers of the configured Plausible sites and how they moved. |
-| G‑3 | The user sees the Todoist tasks that are overdue or due today. |
+| G‑2 | ~~The user sees visitor numbers of the configured Plausible sites and how they moved.~~ — *retired 2026-09-14, see [the design](../superpowers/specs/2026-09-14-github-signin-and-focus-design.md)* |
+| G‑3 | ~~The user sees the Todoist tasks that are overdue or due today.~~ — *retired 2026-09-14, see [the design](../superpowers/specs/2026-09-14-github-signin-and-focus-design.md)* |
 | G‑4 | The user is notified out-of-band when something interesting appears, without having to open the page. |
 | G‑5 | Running zorgscope costs at most a euro a month and needs no routine maintenance. |
 | G‑6 | The repository is readable as a worked example of req42 requirements and MADR decisions; the running system serves that documentation. |

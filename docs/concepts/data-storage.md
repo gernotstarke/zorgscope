@@ -7,8 +7,8 @@ the way it is — this page describes the mechanism those two records decided on
 
 ## Schema
 
-`internal/adapters/libsql/migrations/0001_initial.sql` is the schema as it exists today, applied by
-`(*Store).Migrate` (`internal/adapters/libsql/migrate.go`) on every start-up:
+The migrations under `internal/adapters/libsql/migrations/` are applied in order by
+`(*Store).Migrate` (`internal/adapters/libsql/migrate.go`) on every start-up, and leave this:
 
 ```sql
 CREATE TABLE IF NOT EXISTS items (
@@ -23,8 +23,6 @@ CREATE TABLE IF NOT EXISTS items (
   state           TEXT,
   created_at      TEXT,
   updated_at      TEXT,
-  due_at          TEXT,
-  priority        INTEGER,
   first_seen_at   TEXT NOT NULL,
   last_fetched_at TEXT NOT NULL,
   payload         TEXT,
@@ -34,12 +32,6 @@ CREATE TABLE IF NOT EXISTS items (
 CREATE TABLE IF NOT EXISTS builds (
   repo TEXT PRIMARY KEY, workflow TEXT, conclusion TEXT, status TEXT,
   run_url TEXT, finished_at TEXT, fetched_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS metrics (
-  site TEXT, window_days INTEGER, visitors INTEGER, pageviews INTEGER,
-  prev_visitors INTEGER, prev_pageviews INTEGER, fetched_at TEXT,
-  PRIMARY KEY (site, window_days)
 );
 
 CREATE TABLE IF NOT EXISTS refresh_run (
@@ -67,6 +59,12 @@ all seen" writes) and `refresh_lease` (below). `notified` exists for v2's Slack 
 string standing for the zero `time.Time` — `sqlTime` and `parseTime` in `store.go` are the two
 functions responsible for that round trip.
 
+Migration `0005_github_only.sql` is what removed the rest: it drops the `metrics` table, deletes the
+items and source-state rows of the two retired sources, and drops the `due_at` and `priority`
+columns from `items`, which existed only to carry a task's deadline. Like every migration here it is
+one-way ([ADR‑0005](../decisions/0005-embedded-sql-migrations.md)), and it leaves the GitHub items —
+first-seen times included — untouched.
+
 ## The first-seen invariant
 
 The whole "what's new" mechanism (ADR‑0006) rests on one asymmetry in `upsertItemSQL`,
@@ -75,14 +73,13 @@ The whole "what's new" mechanism (ADR‑0006) rests on one asymmetry in `upsertI
 ```sql
 INSERT INTO items (
   source, external_id, kind, repo, number, title, url, author, state,
-  created_at, updated_at, due_at, priority, first_seen_at, last_fetched_at, payload)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)
+  created_at, updated_at, first_seen_at, last_fetched_at, payload)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)
 ON CONFLICT(source, external_id) DO UPDATE SET
   kind = excluded.kind, repo = excluded.repo, number = excluded.number,
   title = excluded.title, url = excluded.url, author = excluded.author,
   state = excluded.state, created_at = excluded.created_at,
-  updated_at = excluded.updated_at, due_at = excluded.due_at,
-  priority = excluded.priority, last_fetched_at = excluded.last_fetched_at
+  updated_at = excluded.updated_at, last_fetched_at = excluded.last_fetched_at
 ```
 
 `first_seen_at` is in the `INSERT` column list, so every row gets one the first time it is written.
@@ -162,24 +159,28 @@ lease; zero means someone else does. `ReleaseRefreshLease` deletes the row only 
 in it is still the holder, so a lease that expired and was taken over by someone else is never
 accidentally freed by the machine that used to hold it.
 
-## Inspecting the database with `make db-shell`
+## Looking at the database yourself
+
+There is no make target for this; the Makefile has six of them and a SQL prompt is not a thing CI
+does. With `make backend` running in another terminal, its `libsql-server` container is up, and a
+shell against it is one `docker run` that shares that container's network namespace — so no port
+needs publishing and no client needs installing on the host (ADR‑0008):
 
 ```sh
-make db-shell
+docker run --rm -it \
+  --network=container:$(docker compose -f deploy/compose.yml ps -q db) \
+  ghcr.io/tursodatabase/libsql-shell:latest http://localhost:8080
 ```
 
-This starts the local `libsql-server` container if it is not already running (`db-up`), then opens
-`ghcr.io/tursodatabase/libsql-shell` against it, sharing the database container's network namespace
-so no port needs publishing and no client needs installing on the host (ADR‑0008) — the shell speaks
-plain SQLite SQL. From the prompt:
+The shell speaks plain SQLite SQL. From the prompt:
 
 ```sql
 .tables
 SELECT * FROM app_state;
-SELECT source, count(*) FROM items GROUP BY source;
+SELECT repo, count(*) FROM items GROUP BY repo;
 SELECT id, started_at, "trigger", ok, detail FROM refresh_run ORDER BY id DESC LIMIT 5;
 ```
 
-This connects to the local development database only, the same one `make backend` runs against —
-not production Turso, which has its own credentials and is not reachable through this target.
-`make db-reset` drops the local database and its volume entirely, for a clean slate.
+This reaches the local development database only, the same one `make backend` runs against — not
+production Turso, which has its own credentials and is not on that container's network at all.
+`make clean` drops the local database and its volume entirely, for a clean slate.

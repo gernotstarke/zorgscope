@@ -12,13 +12,15 @@ the old record stays, because the reasoning is the point.
 | 0004 | Turso and libSQL for persistence, `libsql-server` locally | `0004-turso-libsql.md` | accepted |
 | 0005 | Embedded SQL migrations rather than a schema tool | `0005-embedded-sql-migrations.md` | accepted |
 | 0006 | First-seen versus last-visit as the definition of "new" | `0006-first-seen-versus-last-visit.md` | accepted |
-| 0007 | Token sign-in with a session cookie derived from the token | `0007-token-sign-in-derived-cookie.md` | accepted |
+| 0007 | Token sign-in with a session cookie derived from the token | `0007-token-sign-in-derived-cookie.md` | superseded |
 | 0008 | Docker and make as the only local toolchain | `0008-docker-and-make-only.md` | accepted |
+| 0009 | GitHub sign-in gated on push access to the repository | `0009-github-sign-in-push-access.md` | accepted |
 
-The records themselves are written in Task 19 of the
-[implementation plan](../superpowers/plans/2026-08-17-zorgscope-v1.md); the decisions they document
-are already made and are described in the
-[design](../superpowers/specs/2026-08-17-zorgscope-reset-design.md).
+The records are kept current with the design specs. A spec that decides something — the
+[reset](../superpowers/specs/2026-08-17-zorgscope-reset-design.md), the
+[GitHub sign-in and focus](../superpowers/specs/2026-09-14-github-signin-and-focus-design.md) — is
+followed by a record for each decision it made, so that the reasoning can be read on its own rather
+than excavated from the document that happened to occasion it.
 
 The previous decision set (ADR‑0001…0014 under the former `docs/architecture/decisions/`) was removed
 on 2026-08-17 rather than superseded one by one. It described an always-on machine with a persistent
