@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -14,9 +15,10 @@ func env(pairs map[string]string) func(string) string {
 
 func TestLoadValid(t *testing.T) {
 	cfg, err := config.Load("testdata/valid.yaml", env(map[string]string{
-		"ZORGSCOPE_TOKEN": strings.Repeat("t", 32),
-		"REFRESH_SECRET":  strings.Repeat("r", 32),
-		"GITHUB_TOKEN":    "ghp_x",
+		"GITHUB_OAUTH_CLIENT_ID":     "id",
+		"GITHUB_OAUTH_CLIENT_SECRET": "secret",
+		"REFRESH_SECRET":             strings.Repeat("r", 32),
+		"GITHUB_TOKEN":               "ghp_x",
 	}))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -37,8 +39,9 @@ func TestLoadValid(t *testing.T) {
 
 func TestLoadRejectsBadDuration(t *testing.T) {
 	_, err := config.Load("testdata/bad-interval.yaml", env(map[string]string{
-		"ZORGSCOPE_TOKEN": strings.Repeat("t", 32),
-		"REFRESH_SECRET":  strings.Repeat("r", 32),
+		"GITHUB_OAUTH_CLIENT_ID":     "id",
+		"GITHUB_OAUTH_CLIENT_SECRET": "secret",
+		"REFRESH_SECRET":             strings.Repeat("r", 32),
 	}))
 	if err == nil {
 		t.Fatal("want an error for an unparsable interval (FR-8.1 AC3)")
@@ -48,13 +51,34 @@ func TestLoadRejectsBadDuration(t *testing.T) {
 	}
 }
 
-func TestLoadRequiresAppToken(t *testing.T) {
+func TestLoadRequiresALongEnoughRefreshSecret(t *testing.T) {
 	_, err := config.Load("testdata/valid.yaml", env(map[string]string{
-		"ZORGSCOPE_TOKEN": "short",
-		"REFRESH_SECRET":  strings.Repeat("r", 32),
+		"GITHUB_OAUTH_CLIENT_ID":     "id",
+		"GITHUB_OAUTH_CLIENT_SECRET": "secret",
+		"REFRESH_SECRET":             "short",
 	}))
 	if err == nil {
-		t.Fatal("want an error: ZORGSCOPE_TOKEN below 32 characters")
+		t.Fatal("want an error: REFRESH_SECRET below 32 characters")
+	}
+}
+
+// FR-8.3: sign-in needs the OAuth App's pair and the repository whose push access admits a
+// visitor, so a deployment missing any of the three fails at start-up rather than at the callback.
+func TestLoadRequiresTheOAuthPairAndTheAuthRepo(t *testing.T) {
+	base := map[string]string{"REFRESH_SECRET": strings.Repeat("r", 32), "GITHUB_OAUTH_CLIENT_ID": "id", "GITHUB_OAUTH_CLIENT_SECRET": "secret"}
+
+	if _, err := config.Load("testdata/valid.yaml", env(base)); err != nil {
+		t.Fatalf("valid: %v", err)
+	}
+	for _, missing := range []string{"GITHUB_OAUTH_CLIENT_ID", "GITHUB_OAUTH_CLIENT_SECRET"} {
+		m := maps.Clone(base)
+		delete(m, missing)
+		if _, err := config.Load("testdata/valid.yaml", env(m)); err == nil || !strings.Contains(err.Error(), missing) {
+			t.Errorf("without %s: err = %v", missing, err)
+		}
+	}
+	if _, err := config.Load("testdata/no-auth-repo.yaml", env(base)); err == nil || !strings.Contains(err.Error(), "github.auth_repo") {
+		t.Errorf("without auth_repo: err = %v", err)
 	}
 }
 
@@ -62,8 +86,9 @@ func TestLoadRequiresAppToken(t *testing.T) {
 // "github") being silently dropped, which would leave that source unconfigured with no error.
 func TestLoadRejectsUnknownField(t *testing.T) {
 	_, err := config.Load("testdata/unknown-key.yaml", env(map[string]string{
-		"ZORGSCOPE_TOKEN": strings.Repeat("t", 32),
-		"REFRESH_SECRET":  strings.Repeat("r", 32),
+		"GITHUB_OAUTH_CLIENT_ID":     "id",
+		"GITHUB_OAUTH_CLIENT_SECRET": "secret",
+		"REFRESH_SECRET":             strings.Repeat("r", 32),
 	}))
 	if err == nil {
 		t.Fatal("want an error for an unknown top-level key")
@@ -78,8 +103,9 @@ func TestLoadRejectsUnknownField(t *testing.T) {
 // surface as a start-up failure in production.
 func TestLoadRealConfigFile(t *testing.T) {
 	_, err := config.Load("../../config/zorgscope.yaml", env(map[string]string{
-		"ZORGSCOPE_TOKEN": strings.Repeat("t", 32),
-		"REFRESH_SECRET":  strings.Repeat("r", 32),
+		"GITHUB_OAUTH_CLIENT_ID":     "id",
+		"GITHUB_OAUTH_CLIENT_SECRET": "secret",
+		"REFRESH_SECRET":             strings.Repeat("r", 32),
 	}))
 	if err != nil {
 		t.Fatalf("Load(config/zorgscope.yaml): %v", err)
@@ -89,8 +115,9 @@ func TestLoadRealConfigFile(t *testing.T) {
 func TestErrorNeverContainsSecretValues(t *testing.T) {
 	const canary = "canary-secret-value-canary"
 	_, err := config.Load("testdata/bad-interval.yaml", env(map[string]string{
-		"ZORGSCOPE_TOKEN": canary + strings.Repeat("x", 32),
-		"REFRESH_SECRET":  strings.Repeat("r", 32),
+		"GITHUB_OAUTH_CLIENT_ID":     canary + "-client-id",
+		"GITHUB_OAUTH_CLIENT_SECRET": canary + "-client-secret",
+		"REFRESH_SECRET":             canary + strings.Repeat("r", 32),
 	}))
 	if err != nil && strings.Contains(err.Error(), canary) {
 		t.Fatal("a secret value leaked into an error message (QS-4.3)")

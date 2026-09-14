@@ -16,15 +16,24 @@ import (
 const (
 	// sessionCookieName is the only cookie this application sets.
 	sessionCookieName = "zorgscope_session"
-	// sessionTTL is how long one sign-in lasts. It is deliberately long: this is a single-user
-	// dashboard on a private token, and the cost of a short session is re-typing a 32-character
-	// secret on a phone.
+	// sessionTTL is how long one sign-in lasts. It is deliberately long: the cost of a short
+	// session is a round trip to GitHub on a phone, for a dashboard whose whole purpose is being
+	// glanced at.
 	sessionTTL = 30 * 24 * time.Hour
-	// sessionKeyContext domain-separates the signing key, so that the same token used for
-	// anything else in future cannot produce the same key.
-	sessionKeyContext = "zorgscope-session-v1"
+	// sessionKeyContext domain-separates the signing key, so that the client secret used for
+	// anything else cannot produce the same key. It says v2 because the seed changed from
+	// ZORGSCOPE_TOKEN to the OAuth client secret (design 2026-09-14 §2): every cookie minted under
+	// the old scheme stops verifying the moment this deploys, which is the correct answer to
+	// replacing the credential a session stood for.
+	sessionKeyContext = "zorgscope-session-v2"
 
-	// signInAttempts and signInWindow are the rate limit on failed credentials (QS-4.2).
+	// stateCookieName holds the CSRF state of a sign-in in flight, and stateTTL is how long that
+	// sign-in may take. Ten minutes is long enough to authorise the App and log into GitHub on the
+	// way, and short enough that an abandoned attempt leaves nothing behind.
+	stateCookieName = "zorgscope_oauth_state"
+	stateTTL        = 10 * time.Minute
+
+	// signInAttempts and signInWindow are the rate limit on refused sign-ins (QS-4.2).
 	signInAttempts = 10
 	signInWindow   = 15 * time.Minute
 )
@@ -35,15 +44,19 @@ var sessionEncoding = base64.RawURLEncoding
 // sessionCodec mints and verifies session cookie values.
 //
 // A cookie value is base64(expiry) + "." + base64(HMAC-SHA256(key, expiry)), where the key is
-// SHA-256 of sessionKeyContext concatenated with ZORGSCOPE_TOKEN. Two properties fall out of that
-// derivation. The browser never holds the token — only an expiry and a signature over it, so
-// FR-8.3 AC2 needs no separate store. And changing the token changes the key, which invalidates
-// every signature ever minted under the old one: FR-8.3 AC3 without a session table, a revocation
-// list or anything else that would have to survive the Machine being stopped.
+// SHA-256 of sessionKeyContext concatenated with GITHUB_OAUTH_CLIENT_SECRET. Two properties fall
+// out of that derivation. The browser never holds a credential — only an expiry and a signature
+// over it, so FR-8.3 AC2 needs no separate store, and neither the visitor's GitHub token nor the
+// client secret is ever in the cookie jar. And rotating the client secret changes the key, which
+// invalidates every signature ever minted under the old one: FR-8.3 AC3 without a session table, a
+// revocation list or anything else that would have to survive the Machine being stopped.
+//
+// The cookie holds no identity on purpose. The product has no per-user state, and "which
+// collaborator is this" is a question it would then have to keep answering correctly.
 type sessionCodec struct{ key [32]byte }
 
-func newSessionCodec(token string) *sessionCodec {
-	return &sessionCodec{key: sha256.Sum256([]byte(sessionKeyContext + token))}
+func newSessionCodec(secret string) *sessionCodec {
+	return &sessionCodec{key: sha256.Sum256([]byte(sessionKeyContext + secret))}
 }
 
 // mint returns the cookie value for a session expiring at exp.
@@ -124,10 +137,10 @@ func (s *Server) signedIn(r *http.Request) bool {
 func (s *Server) requireSession(next http.Handler, redirect bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.signedIn(r) {
-			// Rotating ZORGSCOPE_TOKEN is the only sign-out this product has (FR-8.3 AC3), and
-			// a rotation cannot reach a page the browser has already stored. Without no-store
-			// the dashboard — names of repositories, issue titles — stays in the
-			// back-forward cache and in any disk cache after the token is rotated, which is
+			// Rotating the OAuth client secret is the only sign-out this product has
+			// (FR-8.3 AC3), and a rotation cannot reach a page the browser has already stored.
+			// Without no-store the dashboard — names of repositories, issue titles — stays in
+			// the back-forward cache and in any disk cache after the secret is rotated, which is
 			// precisely the state the rotation was performed to end.
 			w.Header().Set("Cache-Control", "no-store")
 			next.ServeHTTP(w, r)
@@ -181,7 +194,7 @@ func (s *Server) unauthorised(w http.ResponseWriter) {
 
 // requireBearer refuses a request that does not carry REFRESH_SECRET as a bearer token.
 //
-// It never consults the session cookie. ZORGSCOPE_TOKEN and REFRESH_SECRET are independent
+// It never consults the session cookie. Signing in and triggering a refresh rest on independent
 // credentials on purpose: the cron service that calls this endpoint holds the ability to trigger a
 // refresh and nothing else, and a stolen session must not become a way to hammer the upstream
 // APIs. The comparison is constant-time, and failures are rate-limited per client just as
@@ -203,54 +216,6 @@ func (s *Server) requireBearer(next http.Handler) http.Handler {
 		// else, and a log is not the place for either (QS-4.2, FR-8.3 AC4).
 		s.log.Warn("refresh authentication failed", "ip", ip)
 		http.Error(w, "Not authorised.", http.StatusUnauthorized)
-	})
-}
-
-// handleLoginForm shows the sign-in page, or sends an already signed-in browser to the dashboard
-// so that a bookmarked /login is not a dead end.
-func (s *Server) handleLoginForm(w http.ResponseWriter, r *http.Request) {
-	if s.signedIn(r) {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
-		return
-	}
-	s.render(w, r, http.StatusOK, "login.html", pageData{Title: "Sign in"})
-}
-
-// handleLoginSubmit checks the submitted token and, on success, issues the session cookie.
-//
-// The token is compared before the rate limit is consulted, and the limit counts failures only.
-// That is what QS-4.2 asks for: an attacker who has burned the budget gains nothing, while the
-// legitimate user — who is behind the same NAT as nobody in particular, but may well have mistyped
-// the token ten times — is never locked out of their own dashboard by their own typos.
-func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		s.render(w, r, http.StatusBadRequest, "login.html", pageData{
-			Title: "Sign in",
-			Error: "That sign-in form could not be read.",
-		})
-		return
-	}
-	submitted := r.PostFormValue("token")
-	if subtle.ConstantTimeCompare([]byte(submitted), []byte(s.cfg.Secrets.AppToken)) == 1 {
-		s.setSession(w, s.clock.Now())
-		http.Redirect(w, r, "/", http.StatusSeeOther)
-		return
-	}
-
-	ip := s.clientIP(r)
-	if !s.signIn.allow(ip, s.clock.Now()) {
-		s.log.Warn("sign-in rate-limited", "ip", ip)
-		s.render(w, r, http.StatusTooManyRequests, "login.html", pageData{
-			Title: "Sign in",
-			Error: "Too many attempts. Try again later.",
-		})
-		return
-	}
-	// FR-8.3 AC4: the attempt is logged, the submitted value is not.
-	s.log.Warn("sign-in failed", "ip", ip)
-	s.render(w, r, http.StatusUnauthorized, "login.html", pageData{
-		Title: "Sign in",
-		Error: "That token was not accepted.",
 	})
 }
 
@@ -292,8 +257,9 @@ func (s *Server) clientIP(r *http.Request) string {
 // It is in memory on purpose (QS-4.2). The Machine stops when nothing is in flight, so a counter
 // in the database would survive a restart the attacker can simply wait out — while adding a write
 // to every failed attempt, which is a denial-of-service amplifier rather than a defence. What the
-// limit is actually for is making an online brute force of a 32-character secret pointless, and an
-// in-memory bucket does that for exactly as long as the process is up to be attacked.
+// limit is actually for is making the two things worth guessing — the refresh bearer, and a
+// sign-in state — pointless to guess online, and an in-memory bucket does that for exactly as long
+// as the process is up to be attacked.
 type rateLimiter struct {
 	mu      sync.Mutex
 	limit   float64

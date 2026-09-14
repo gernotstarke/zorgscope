@@ -12,6 +12,8 @@ refresh:
 
 github:
   login: gernotstarke
+  # Push access here admits a visitor (FR-8.3).
+  auth_repo: gernotstarke/zorgscope
   # The repository names are the ones GitHub actually uses, which for the arc42 family means the
   # "-site" suffix on every property that has a website: arc42/quality.arc42.org does not exist,
   # arc42/quality.arc42.org-site does. A name that is merely wrong fetches nothing and reports the

@@ -57,6 +57,11 @@ var pageFiles = []string{
 // markup that differs from what the page drew.
 const fragmentGlob = "templates/fragments/*.html"
 
+// oauthTimeout bounds the code-for-token exchange when Options names no client of its own. A
+// visitor is waiting on it: a GitHub that has not answered in fifteen seconds is better reported
+// as a refusal they can retry than watched in silence.
+const oauthTimeout = 15 * time.Second
+
 // strictTransportSecurity is sent on every response (QS-4.4). Fly terminates TLS in front of this
 // process and only ever serves it over HTTPS, so there is no plaintext deployment for the header
 // to break.
@@ -65,11 +70,16 @@ const strictTransportSecurity = "max-age=31536000; includeSubDomains"
 // contentSecurityPolicy carries no 'unsafe-inline' because it does not need to: htmx is vendored
 // under /static and the stylesheet is a file, so there is no inline script or style to allow
 // (QS-4.4).
-// form-action and base-uri are named explicitly because default-src covers neither. The one form
-// on this site submits ZORGSCOPE_TOKEN, so where a form may post to is not a detail: without
-// form-action an injected <form action="https://elsewhere"> would be a working exfiltration route
-// for the credential, and without base-uri an injected <base> would re-point every relative URL on
-// the page, including that form's action.
+// form-action and base-uri are named explicitly because default-src covers neither. Sign-in no
+// longer submits anything — the button is a link to GET /auth/github — but the filter and the page
+// controls are forms, and where a form may post to is not a detail: without form-action an
+// injected <form action="https://elsewhere"> would be a working exfiltration route for whatever a
+// page holds, and without base-uri an injected <base> would re-point every relative URL on the
+// page, including that form's action and the sign-in link itself.
+//
+// form-action does not cover the sign-in redirect to github.com, and it must not have to: Chrome
+// enforces form-action on the redirect that follows a *form submission*, which is exactly why
+// starting the flow is a link navigation rather than a POST (design 2026-09-14 §2).
 //
 // img-src allows data: and nothing external. The build badges are someone else's artwork, and they
 // used to be someone else's *request*: the policy named img.shields.io so the browser could fetch
@@ -87,6 +97,13 @@ type Options struct {
 	Runner *refresh.Runner
 	Clock  ports.Clock
 	Log    *slog.Logger
+	// Access decides who may sign in: it is asked, once per callback, whether the visitor whose
+	// token it is given may push to the configured repository (FR-8.3). It is required — a server
+	// that cannot answer that question would have to admit everybody or nobody.
+	Access ports.AccessChecker
+	// HTTPClient is what the OAuth code-for-token exchange uses. nil means a client bounded by
+	// oauthTimeout; the tests point it at their in-process GitHub.
+	HTTPClient *http.Client
 	// BehindFlyProxy says whether Fly's proxy sits in front of this process, which decides
 	// whether the Fly-Client-IP header may be believed (see clientIP). nil means "work it out
 	// from the runtime environment"; the tests set it either way to exercise both paths.
@@ -119,7 +136,12 @@ type Server struct {
 	session  *sessionCodec
 	signIn   *rateLimiter
 	bearer   *rateLimiter
-	handler  http.Handler
+	access   ports.AccessChecker
+	// httpClient is the client the code-for-token exchange runs on. It is an option rather than a
+	// constant so that a test can point the exchange at an in-process GitHub; a deployment hands
+	// in the same client its adapters use.
+	httpClient *http.Client
+	handler    http.Handler
 	// ceiling is how long one refresh run may take; New sets it to refreshCeiling. It is a field
 	// rather than a bare use of the constant so that a test can exercise the ceiling actually
 	// firing without waiting the whole ceiling out — see refresh.go for what the value has to be.
@@ -154,8 +176,16 @@ func New(o Options) (*Server, error) {
 	if o.Runner == nil {
 		return nil, errors.New("web: a refresh runner is required")
 	}
-	if o.Config.Secrets.AppToken == "" {
-		return nil, errors.New("web: ZORGSCOPE_TOKEN is not set")
+	// The three things sign-in is made of. Without any of them this process would serve a sign-in
+	// page that can only ever refuse, which is an outage wearing a working dashboard's clothes.
+	if o.Config.Secrets.OAuthClientID == "" {
+		return nil, errors.New("web: GITHUB_OAUTH_CLIENT_ID is not set")
+	}
+	if o.Config.Secrets.OAuthClientSecret == "" {
+		return nil, errors.New("web: GITHUB_OAUTH_CLIENT_SECRET is not set")
+	}
+	if o.Access == nil {
+		return nil, errors.New("web: an access checker is required")
 	}
 	if o.Config.Secrets.RefreshSecret == "" {
 		return nil, errors.New("web: REFRESH_SECRET is not set")
@@ -165,6 +195,9 @@ func New(o Options) (*Server, error) {
 	}
 	if o.Log == nil {
 		o.Log = slog.New(slog.DiscardHandler)
+	}
+	if o.HTTPClient == nil {
+		o.HTTPClient = &http.Client{Timeout: oauthTimeout}
 	}
 
 	pages := make(map[string]*template.Template, len(pageFiles))
@@ -217,9 +250,11 @@ func New(o Options) (*Server, error) {
 		assets:           assets,
 		docs:             docs,
 		docIndex:         docIndex,
-		session:          newSessionCodec(o.Config.Secrets.AppToken),
+		session:          newSessionCodec(o.Config.Secrets.OAuthClientSecret),
 		signIn:           newRateLimiter(signInAttempts, signInWindow),
 		bearer:           newRateLimiter(signInAttempts, signInWindow),
+		access:           o.Access,
+		httpClient:       o.HTTPClient,
 		trustFlyClientIP: trustFly,
 		ceiling:          refreshCeiling,
 		stop:             o.Stop,
@@ -297,8 +332,12 @@ func (r route) probePath() string {
 func (s *Server) routes() []route {
 	return []route{
 		{http.MethodGet, "/healthz", authPublic, s.handleHealthz, ""},
+		// The three public routes sign-in is made of (FR-8.3): the page, the redirect to GitHub,
+		// and the callback that turns GitHub's answer into a session or into a refusal. They are
+		// public because they are how a session is acquired; nothing behind them is.
 		{http.MethodGet, "/login", authPublic, s.handleLoginForm, ""},
-		{http.MethodPost, "/login", authPublic, s.handleLoginSubmit, ""},
+		{http.MethodGet, "/auth/github", authPublic, s.handleAuthStart, ""},
+		{http.MethodGet, "/auth/callback", authPublic, s.handleAuthCallback, ""},
 		{http.MethodGet, "/docs", authPublic, s.handleDocs, ""},
 		{http.MethodGet, "/docs/", authPublic, s.handleDocs, "/docs/requirements/01-goals"},
 		{http.MethodGet, "/static/", authPublic, s.handleStatic, "/static/app.css"},
@@ -484,6 +523,8 @@ func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = w.Write([]byte("ok"))
 }
+
+// handleLoginForm, handleAuthStart and handleAuthCallback live in signin.go.
 
 // handleDashboard, handleItems and handleSeen live in dashboard.go.
 

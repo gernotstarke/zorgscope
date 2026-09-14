@@ -79,7 +79,7 @@ func TestAPIRefreshRejectsAWrongSecretAndFetchesNothing(t *testing.T) {
 	}{
 		{"a wrong secret", "Bearer wrong"},
 		{"no Authorization header at all", ""},
-		{"the app token instead of the refresh secret", "Bearer " + testToken},
+		{"the OAuth client secret instead of the refresh secret", "Bearer " + testClientSecret},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &ports.FakeFetcher{SourceName: "github"}
@@ -662,7 +662,7 @@ func TestNewRefusesAServerThatCannotRefresh(t *testing.T) {
 	if s != nil {
 		t.Error("New returned a Server alongside its error")
 	}
-	if strings.Contains(err.Error(), testToken) || strings.Contains(err.Error(), testSecret) {
+	if strings.Contains(err.Error(), testClientSecret) || strings.Contains(err.Error(), testSecret) {
 		t.Errorf("the error names a credential: %q (QS-4.3)", err)
 	}
 	// And with the check in New, the per-request branch that used to answer "no refresh runner is

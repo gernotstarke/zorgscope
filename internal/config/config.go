@@ -32,14 +32,23 @@ type Refresh struct {
 
 // GitHub is the non-secret GitHub configuration.
 type GitHub struct {
-	Login   string
-	Repos   []string
-	BaseURL string // "" means api.github.com; make fakes sets this via GITHUB_BASE_URL.
+	Login string
+	// AuthRepo is the repository whose push access admits a visitor to the dashboard (FR-8.3), in
+	// owner/name form. It is required, and it is deliberately not derived from Repos: the list of
+	// repositories being watched is a product decision that changes often, while who may read the
+	// dashboard is a security decision that should change only when someone means it to.
+	AuthRepo string
+	Repos    []string
+	BaseURL  string // "" means api.github.com; make fakes sets this via GITHUB_BASE_URL.
 	// BadgeBaseURL is where a workflow's badge image comes from; "" means shields.io. It is its
 	// own setting rather than derived from BaseURL because badges are a different service
 	// entirely — a deployment against real GitHub still wants real badges, and one against the
 	// fixture server wants neither.
 	BadgeBaseURL string // "" means img.shields.io; set via GITHUB_BADGE_BASE_URL.
+	// OAuthBaseURL is where the OAuth App's authorize and token endpoints live; "" means
+	// github.com. It is separate from BaseURL because those two endpoints are not on the API host
+	// even at the real GitHub: the API answers at api.github.com and sign-in at github.com.
+	OAuthBaseURL string // "" means github.com; set via GITHUB_OAUTH_BASE_URL.
 }
 
 // Notifications holds outbound notification settings.
@@ -47,12 +56,18 @@ type Notifications struct {
 	Slack struct{ Enabled bool }
 }
 
-// Secrets holds every value read from the environment. None of these are ever logged, rendered,
-// or included in an error message (QS-4.3).
+// Secrets holds every value read from the environment. None of these is ever logged or included
+// in an error message, and none but OAuthClientID is ever rendered (QS-4.3) — the client id has to
+// reach the browser, because it is half of the authorize URL a sign-in is redirected to.
 type Secrets struct {
 	GitHubToken, SlackWebhook string
-	AppToken, RefreshSecret   string
-	TursoURL, TursoAuthToken  string
+	// OAuthClientID and OAuthClientSecret are the GitHub OAuth App this deployment signs people in
+	// as (FR-8.3). The id is not really a secret — it travels in the browser's address bar — but it
+	// is read from the environment beside its secret and redacted with it, because a value that is
+	// only sometimes worth hiding is a value someone eventually forgets to hide.
+	OAuthClientID, OAuthClientSecret string
+	RefreshSecret                    string
+	TursoURL, TursoAuthToken         string
 }
 
 // fileConfig mirrors the shape of the YAML file. Durations are strings here so that a malformed
@@ -64,8 +79,9 @@ type fileConfig struct {
 		StaleAfter string `yaml:"stale_after"`
 	} `yaml:"refresh"`
 	GitHub struct {
-		Login string   `yaml:"login"`
-		Repos []string `yaml:"repos"`
+		Login    string   `yaml:"login"`
+		AuthRepo string   `yaml:"auth_repo"`
+		Repos    []string `yaml:"repos"`
 	} `yaml:"github"`
 	Notifications struct {
 		Slack struct {
@@ -77,7 +93,8 @@ type fileConfig struct {
 // repoPattern matches a GitHub "owner/name" repository reference.
 var repoPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
-// minSecretLen is the minimum length required of ZORGSCOPE_TOKEN and REFRESH_SECRET.
+// minSecretLen is the minimum length required of REFRESH_SECRET. The OAuth pair has no such
+// minimum: GitHub chooses both values, so a length check here would only reject what GitHub issued.
 const minSecretLen = 32
 
 // Load reads the YAML file at path, overlays secrets from env, and validates the result.
@@ -124,23 +141,35 @@ func Load(path string, env func(string) string) (Config, error) {
 		},
 		GitHub: GitHub{
 			Login:        fc.GitHub.Login,
+			AuthRepo:     fc.GitHub.AuthRepo,
 			Repos:        fc.GitHub.Repos,
 			BaseURL:      env("GITHUB_BASE_URL"),
 			BadgeBaseURL: env("GITHUB_BADGE_BASE_URL"),
+			OAuthBaseURL: env("GITHUB_OAUTH_BASE_URL"),
 		},
 		Secrets: Secrets{
-			GitHubToken:    env("GITHUB_TOKEN"),
-			SlackWebhook:   env("SLACK_WEBHOOK_URL"),
-			AppToken:       env("ZORGSCOPE_TOKEN"),
-			RefreshSecret:  env("REFRESH_SECRET"),
-			TursoURL:       env("TURSO_URL"),
-			TursoAuthToken: env("TURSO_AUTH_TOKEN"),
+			GitHubToken:       env("GITHUB_TOKEN"),
+			SlackWebhook:      env("SLACK_WEBHOOK_URL"),
+			OAuthClientID:     env("GITHUB_OAUTH_CLIENT_ID"),
+			OAuthClientSecret: env("GITHUB_OAUTH_CLIENT_SECRET"),
+			RefreshSecret:     env("REFRESH_SECRET"),
+			TursoURL:          env("TURSO_URL"),
+			TursoAuthToken:    env("TURSO_AUTH_TOKEN"),
 		},
 	}
 	cfg.Notifications.Slack.Enabled = fc.Notifications.Slack.Enabled
 
-	if len(cfg.Secrets.AppToken) < minSecretLen {
-		return Config{}, errors.New("ZORGSCOPE_TOKEN must be at least 32 characters")
+	// The three values sign-in is made of. A deployment missing any of them would start, serve the
+	// sign-in page and refuse everybody at the callback, which looks like an outage rather than a
+	// misconfiguration; it fails here instead, where a deployment notices (FR-8.3).
+	if !repoPattern.MatchString(fc.GitHub.AuthRepo) {
+		return Config{}, fmt.Errorf("github.auth_repo: %q is not in owner/name form", fc.GitHub.AuthRepo)
+	}
+	if cfg.Secrets.OAuthClientID == "" {
+		return Config{}, errors.New("GITHUB_OAUTH_CLIENT_ID is not set")
+	}
+	if cfg.Secrets.OAuthClientSecret == "" {
+		return Config{}, errors.New("GITHUB_OAUTH_CLIENT_SECRET is not set")
 	}
 	if len(cfg.Secrets.RefreshSecret) < minSecretLen {
 		return Config{}, errors.New("REFRESH_SECRET must be at least 32 characters")

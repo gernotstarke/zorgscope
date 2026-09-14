@@ -4,7 +4,6 @@ refresh:
   stale_after: 45m
 github:
   login: someone
-  auth_repo: gernotstarke/zorgscope
   repos: [org/one, org/two]
 notifications:
   slack:

@@ -650,8 +650,9 @@ func TestNoRenderedHTMLNeedsUnsafeInline(t *testing.T) {
 		// so the route renders its refusal. It is visitor-facing HTML and is swept like the rest.
 		"POST /stop (501)": postAs(h, "/stop", nil, c).Body.String(),
 	}
-	// The sign-in form's error state renders visitor-facing text, so it is swept too.
-	pages["POST /login (rejected)"] = post(h, "/login", url.Values{"token": {"wrong"}}).Body.String()
+	// The sign-in page's error state renders visitor-facing text, so it is swept too. A callback
+	// with no state cookie is the refusal anyone who did not start here is answered with.
+	pages["GET /auth/callback (refused)"] = get(h, "/auth/callback?code=x&state=y").Body.String()
 
 	for name, body := range pages {
 		t.Run(name, func(t *testing.T) {
@@ -731,14 +732,7 @@ func BenchmarkDashboard(b *testing.B) {
 	}
 	h := s.Handler()
 
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(url.Values{"token": {testToken}}.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	h.ServeHTTP(rec, req)
-	c := cookieNamed(rec, sessionCookieName)
-	if c == nil {
-		b.Fatal("no session cookie")
-	}
+	c := mintSession()
 
 	b.ReportAllocs()
 	for b.Loop() {
@@ -1026,11 +1020,24 @@ func dashHandler(t *testing.T, store ports.Store) http.Handler {
 	}).Handler()
 }
 
+// mintSession is the cookie a browser holds after a successful sign-in, made directly from the
+// client secret every test server is built with rather than by walking the OAuth flow. The flow
+// itself is signin_test.go's subject; everywhere else a session is a precondition, and driving
+// three requests through a fixture GitHub to reach it would make every other test depend on it.
+func mintSession() *http.Cookie {
+	return &http.Cookie{
+		Name:  sessionCookieName,
+		Value: newSessionCodec(testClientSecret).mint(testNow.Add(sessionTTL)),
+	}
+}
+
+// signIn returns that cookie and proves h actually accepts it, so a server built with a different
+// client secret fails here rather than in whatever the test went on to assert.
 func signIn(t *testing.T, h http.Handler) *http.Cookie {
 	t.Helper()
-	c := cookieNamed(post(h, "/login", url.Values{"token": {testToken}}), sessionCookieName)
-	if c == nil {
-		t.Fatal("signing in issued no session cookie")
+	c := mintSession()
+	if rec := getAs(h, "/login", c); rec.Code != http.StatusSeeOther {
+		t.Fatalf("the minted session cookie does not sign in: GET /login = %d, want 303", rec.Code)
 	}
 	return c
 }

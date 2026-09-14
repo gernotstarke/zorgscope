@@ -111,20 +111,14 @@ h1 { font-size: 1.4rem; margin: 0 0 1rem; }
   border-radius: var(--radius);
 }
 
-.signin form { display: grid; gap: 0.5rem; }
-
 label { color: var(--muted); font-size: 0.9rem; }
 
-input[type="password"] {
-  padding: 0.6rem 0.7rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg);
-  color: var(--text);
-  font: inherit;
-}
-
-button {
+/* .button is the link that starts the sign-in flow. It is a link rather than a form control
+   because the CSP's form-action would let the browser block the redirect to GitHub that follows a
+   form submission, so it has to look like a button without being one. */
+button,
+.button {
+  display: inline-block;
   margin-top: 0.5rem;
   padding: 0.6rem 1rem;
   border: 0;
@@ -136,7 +130,10 @@ button {
   cursor: pointer;
 }
 
-button:hover { filter: brightness(1.08); }
+.button { text-decoration: none; }
+
+button:hover,
+.button:hover { filter: brightness(1.08); }
 
 .error {
   margin: 0 0 0.5rem;

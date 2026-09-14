@@ -20,13 +20,18 @@ import (
 
 	"github.com/gernotstarke/zorgscope/internal/config"
 	"github.com/gernotstarke/zorgscope/internal/domain"
+	"github.com/gernotstarke/zorgscope/internal/fakesources"
 	"github.com/gernotstarke/zorgscope/internal/ports"
 	"github.com/gernotstarke/zorgscope/internal/refresh"
 )
 
 const (
-	testToken  = "test-app-token-0123456789abcdefghij"
-	testSecret = "test-refresh-secret-0123456789abcdef"
+	// The OAuth App every test server signs people in as. The client secret is also the session
+	// key's seed (design 2026-09-14 §2), which is why rotating it in a test invalidates cookies.
+	testClientID     = "test-client-id"
+	testClientSecret = "test-client-secret-0123456789abcdef"
+	testAuthRepo     = "gernotstarke/zorgscope"
+	testSecret       = "test-refresh-secret-0123456789abcdef"
 )
 
 var testNow = time.Date(2026, 8, 17, 10, 0, 0, 0, time.UTC)
@@ -68,10 +73,15 @@ func TestEveryRouteIsEitherDeliberatelyPublicOrRefusesAnonymousAccess(t *testing
 	public := map[string]bool{
 		"GET /healthz": true,
 		"GET /login":   true,
-		"POST /login":  true,
-		"GET /docs":    true,
-		"GET /docs/":   true,
-		"GET /static/": true,
+		// The two halves of the sign-in flow. They have to be public — they are how a visitor
+		// acquires a session in the first place — and neither reads or writes anything of this
+		// application's: one sets a random state cookie, the other trades a code GitHub issued
+		// for a session, refusing anyone GitHub does not vouch for (FR-8.3).
+		"GET /auth/github":   true,
+		"GET /auth/callback": true,
+		"GET /docs":          true,
+		"GET /docs/":         true,
+		"GET /static/":       true,
 		// It sets a display-preference cookie and redirects: no data is read, none is written,
 		// and no access is granted. /login is public, and the sign-in page is the one page an
 		// anonymous visitor sees, so a switch that needed a session would be missing exactly
@@ -118,80 +128,9 @@ func TestPublicRoutesNeedNoSession(t *testing.T) {
 	}
 }
 
-func TestSignInIssuesAHardenedCookie(t *testing.T) {
-	h := newTestServer(t).Handler()
-
-	rec := post(h, "/login", url.Values{"token": {testToken}})
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("status = %d, want 303", rec.Code)
-	}
-	c := cookieNamed(rec, sessionCookieName)
-	if c == nil {
-		t.Fatal("no session cookie")
-	}
-	if !c.HttpOnly || c.SameSite != http.SameSiteLaxMode || !c.Secure {
-		t.Errorf("cookie = %+v, want HttpOnly, SameSite=Lax, Secure (FR-8.3 AC2)", c)
-	}
-	if strings.Contains(c.Value, testToken) {
-		t.Error("the cookie contains the token itself (FR-8.3 AC2)")
-	}
-	// Not merely "the token is not in there verbatim": a cookie carrying base64(ZORGSCOPE_TOKEN)
-	// would pass that and still hand the credential to anything that reads the cookie jar.
-	for name, enc := range map[string]string{
-		"base64url":         base64.RawURLEncoding.EncodeToString([]byte(testToken)),
-		"base64":            base64.StdEncoding.EncodeToString([]byte(testToken)),
-		"base64 unpadded":   base64.RawStdEncoding.EncodeToString([]byte(testToken)),
-		"url-encoded":       url.QueryEscape(testToken),
-		"hex-ish uppercase": strings.ToUpper(testToken),
-	} {
-		if strings.Contains(c.Value, enc) {
-			t.Errorf("the cookie carries the token as %s (FR-8.3 AC2)", name)
-		}
-	}
-	// What it does carry is an expiry and a signature over it, and nothing else: the payload
-	// decodes to exactly the session's expiry timestamp.
-	encPayload, _, _ := strings.Cut(c.Value, ".")
-	payload, err := base64.RawURLEncoding.DecodeString(encPayload)
-	if err != nil {
-		t.Fatalf("the cookie payload is not base64url: %v", err)
-	}
-	exp, err := strconv.ParseInt(string(payload), 10, 64)
-	if err != nil {
-		t.Fatalf("the cookie payload is not an expiry timestamp: %q", payload)
-	}
-	if want := testNow.Add(sessionTTL).Unix(); exp != want {
-		t.Errorf("cookie expiry = %d, want %d", exp, want)
-	}
-
-	rec = getAs(h, "/", c)
-	if rec.Code != http.StatusOK {
-		t.Errorf("GET / with the session cookie = %d, want 200", rec.Code)
-	}
-}
-
-// FR-8.3 AC3: a cookie minted by a server with token A is rejected by a server with token B.
-func TestChangingTheTokenInvalidatesExistingSessions(t *testing.T) {
-	old := newTestServer(t)
-	rec := post(old.Handler(), "/login", url.Values{"token": {testToken}})
-	c := cookieNamed(rec, sessionCookieName)
-	if c == nil {
-		t.Fatal("no session cookie")
-	}
-
-	rotated := newTestServerWith(t, func(o *Options) {
-		o.Config.Secrets.AppToken = testToken + "-rotated"
-	})
-	if got := getAs(rotated.Handler(), "/", c); got.Code != http.StatusSeeOther {
-		t.Errorf("GET / with a cookie from the old token = %d, want 303 (FR-8.3 AC3)", got.Code)
-	}
-}
-
 func TestTamperedCookieIsRejected(t *testing.T) {
 	h := newTestServer(t).Handler()
-	c := cookieNamed(post(h, "/login", url.Values{"token": {testToken}}), sessionCookieName)
-	if c == nil {
-		t.Fatal("no session cookie")
-	}
+	c := signIn(t, h)
 
 	payload, sig, ok := strings.Cut(c.Value, ".")
 	if !ok {
@@ -232,10 +171,7 @@ func TestExpiredCookieIsRejected(t *testing.T) {
 	s := newTestServerWith(t, func(o *Options) { o.Clock = clock })
 	h := s.Handler()
 
-	c := cookieNamed(post(h, "/login", url.Values{"token": {testToken}}), sessionCookieName)
-	if c == nil {
-		t.Fatal("no session cookie")
-	}
+	c := signIn(t, h)
 	if got := getAs(h, "/", c); got.Code != http.StatusOK {
 		t.Fatalf("GET / right after sign-in = %d, want 200", got.Code)
 	}
@@ -253,10 +189,7 @@ func TestExpiredCookieIsRejected(t *testing.T) {
 func TestEveryRouteRefusesTheCredentialItsKindDoesNotName(t *testing.T) {
 	s := newTestServer(t)
 	h := s.Handler()
-	session := cookieNamed(post(h, "/login", url.Values{"token": {testToken}}), sessionCookieName)
-	if session == nil {
-		t.Fatal("no session cookie")
-	}
+	session := signIn(t, h)
 
 	for _, rt := range s.routes() {
 		if rt.auth == authPublic {
@@ -300,10 +233,7 @@ func TestEveryRouteRefusesTheCredentialItsKindDoesNotName(t *testing.T) {
 // The two credentials are independent, so cron-job.org holds only refresh rights.
 func TestRefreshEndpointTakesTheBearerNotTheCookie(t *testing.T) {
 	h := newTestServer(t).Handler()
-	c := cookieNamed(post(h, "/login", url.Values{"token": {testToken}}), sessionCookieName)
-	if c == nil {
-		t.Fatal("no session cookie")
-	}
+	c := signIn(t, h)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/refresh", nil)
@@ -357,11 +287,11 @@ func TestBearerDoesNotGrantDashboardAccess(t *testing.T) {
 func TestWrongBearerIsRefused(t *testing.T) {
 	h := newTestServer(t).Handler()
 	for name, header := range map[string]string{
-		"missing":          "",
-		"wrong scheme":     "Token " + testSecret,
-		"wrong value":      "Bearer " + testSecret + "x",
-		"the app token":    "Bearer " + testToken,
-		"empty credential": "Bearer ",
+		"missing":           "",
+		"wrong scheme":      "Token " + testSecret,
+		"wrong value":       "Bearer " + testSecret + "x",
+		"the client secret": "Bearer " + testClientSecret,
+		"empty credential":  "Bearer ",
 	} {
 		t.Run(name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
@@ -377,58 +307,29 @@ func TestWrongBearerIsRefused(t *testing.T) {
 	}
 }
 
-// QS-4.2
-func TestFailedSignInsAreRateLimited(t *testing.T) {
-	h := newTestServer(t).Handler()
-	for i := 0; i < signInAttempts; i++ {
-		if got := post(h, "/login", url.Values{"token": {"wrong"}}); got.Code != http.StatusUnauthorized {
-			t.Fatalf("attempt %d: status = %d, want 401", i+1, got.Code)
-		}
-	}
-	rec := post(h, "/login", url.Values{"token": {"wrong"}})
-	if rec.Code != http.StatusTooManyRequests {
-		t.Fatalf("status = %d, want 429", rec.Code)
-	}
-	if got := post(h, "/login", url.Values{"token": {testToken}}); got.Code != http.StatusSeeOther {
-		t.Error("a valid token must still be accepted after the limit (QS-4.2)")
-	}
-}
-
-// QS-4.2: the submitted value never reaches a log, and neither does the configured one.
-func TestFailedSignInsAreLoggedWithoutTheSubmittedValue(t *testing.T) {
-	var logged strings.Builder
-	s := newTestServerWith(t, func(o *Options) {
-		o.Log = slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	})
-	post(s.Handler(), "/login", url.Values{"token": {"hunter2-the-submitted-value"}})
-
-	out := logged.String()
-	if out == "" {
-		t.Fatal("a failed sign-in was not logged at all (FR-8.3 AC4)")
-	}
-	for _, forbidden := range []string{"hunter2-the-submitted-value", testToken, testSecret} {
-		if strings.Contains(out, forbidden) {
-			t.Errorf("the log contains %q:\n%s", forbidden, out)
-		}
-	}
-}
-
 // QS-4.3: fake secrets with recognisable values are configured, the whole surface is exercised —
 // including error paths — and every response body, every response header and the log are searched
 // for them.
 func TestNoResponseEverContainsASecret(t *testing.T) {
 	const canary = "canary-token-value"
+	// The OAuth client id is the one configured value that is public by construction: it travels
+	// in the authorize URL the browser is redirected to, and a sign-in that hid it could not
+	// happen at all. It gets a canary of its own so that this sweep can say precisely where it is
+	// allowed to appear, rather than exempting the field and letting some other handler quietly
+	// start echoing it.
+	const publicID = "public-client-id-canary"
 
 	var logged strings.Builder
 	store := &fakeStore{}
 	s := newTestServerWith(t, func(o *Options) {
 		o.Config.Secrets = config.Secrets{
-			GitHubToken:    canary + "-github",
-			SlackWebhook:   "https://hooks.example/" + canary + "-slack",
-			AppToken:       canary + "-app",
-			RefreshSecret:  canary + "-refresh",
-			TursoURL:       "libsql://db.example?authToken=" + canary + "-turso",
-			TursoAuthToken: canary + "-turso",
+			GitHubToken:       canary + "-github",
+			SlackWebhook:      "https://hooks.example/" + canary + "-slack",
+			OAuthClientID:     publicID,
+			OAuthClientSecret: canary + "-client-secret",
+			RefreshSecret:     canary + "-refresh",
+			TursoURL:          "libsql://db.example?authToken=" + canary + "-turso",
+			TursoAuthToken:    canary + "-turso",
 		}
 		o.Store = store
 		o.Log = slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -450,14 +351,12 @@ func TestNoResponseEverContainsASecret(t *testing.T) {
 	})
 	h := s.Handler()
 
-	// A signed-in browser, so the authenticated rendering of every route is exercised too.
-	signIn := post(h, "/login", url.Values{"token": {canary + "-app"}})
-	session := cookieNamed(signIn, sessionCookieName)
-	if session == nil {
-		t.Fatal("no session cookie")
-	}
+	// A signed-in browser, so the authenticated rendering of every route is exercised too. The
+	// cookie is minted from this server's own codec, because its client secret is a canary rather
+	// than the one every other test server uses.
+	session := &http.Cookie{Name: sessionCookieName, Value: s.session.mint(testNow.Add(sessionTTL))}
 
-	responses := []*httptest.ResponseRecorder{signIn}
+	var responses []*httptest.ResponseRecorder
 	record := func(req *http.Request) {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -477,15 +376,12 @@ func TestNoResponseEverContainsASecret(t *testing.T) {
 		record(withBearer)
 	}
 
-	// Error paths: a wrong token, the rate limit, a malformed body, an unknown path, and — the one
-	// that matters most — a store error whose message carries the secret, as an error from the
-	// libSQL DSN would.
+	// Error paths: every refusal the callback can produce, the rate limit behind them, an unknown
+	// path, and — the one that matters most — a store error whose message carries the secret, as
+	// an error from the libSQL DSN would.
 	for i := 0; i < signInAttempts+2; i++ {
-		responses = append(responses, post(h, "/login", url.Values{"token": {canary + "-wrong"}}))
+		record(httptest.NewRequest(http.MethodGet, "/auth/callback?code="+canary+"-code&state="+canary+"-state", nil))
 	}
-	malformed := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("%zz"))
-	malformed.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	record(malformed)
 	record(httptest.NewRequest(http.MethodGet, "/no-such-page", nil))
 
 	store.err = errors.New("dial libsql://db.example?authToken=" + canary + "-turso: refused")
@@ -499,6 +395,7 @@ func TestNoResponseEverContainsASecret(t *testing.T) {
 	s.fail(failing, httptest.NewRequest(http.MethodGet, "/", nil), "refreshing", store.err)
 	responses = append(responses, failing)
 
+	const authorizePrefix = "https://github.com/login/oauth/authorize"
 	for i, rec := range responses {
 		if strings.Contains(rec.Body.String(), canary) {
 			t.Errorf("response %d body contains the canary:\n%s", i, rec.Body.String())
@@ -510,22 +407,32 @@ func TestNoResponseEverContainsASecret(t *testing.T) {
 				}
 			}
 		}
+		carriesID := strings.Contains(rec.Body.String(), publicID) ||
+			strings.Contains(rec.Header().Get("Location"), publicID)
+		if carriesID && !strings.HasPrefix(rec.Header().Get("Location"), authorizePrefix) {
+			t.Errorf("response %d carries the OAuth client id outside the redirect to GitHub:\n%s",
+				i, rec.Body.String())
+		}
 	}
 	if out := logged.String(); strings.Contains(out, canary) {
 		t.Errorf("the log contains the canary:\n%s", out)
+	}
+	if out := logged.String(); strings.Contains(out, publicID) {
+		t.Errorf("the log contains the OAuth client id:\n%s", out)
 	}
 }
 
 func TestRedactScrubsEverySecretValue(t *testing.T) {
 	secrets := config.Secrets{
-		AppToken:       "app-secret-value",
-		RefreshSecret:  "refresh-secret-value",
-		TursoAuthToken: "turso-secret-value",
-		GitHubToken:    "",
+		OAuthClientID:     "client-id-value",
+		OAuthClientSecret: "client-secret-value",
+		RefreshSecret:     "refresh-secret-value",
+		TursoAuthToken:    "turso-secret-value",
+		GitHubToken:       "",
 	}
-	in := "dial libsql://db.example?authToken=turso-secret-value failed for app-secret-value"
+	in := "dial libsql://db.example?authToken=turso-secret-value failed for client-secret-value"
 	got := Redact(secrets, in)
-	for _, s := range []string{"turso-secret-value", "app-secret-value"} {
+	for _, s := range []string{"turso-secret-value", "client-secret-value"} {
 		if strings.Contains(got, s) {
 			t.Errorf("Redact left %q in %q", s, got)
 		}
@@ -560,7 +467,8 @@ func TestSecurityHeaders(t *testing.T) {
 	if csp == "" || strings.Contains(csp, "unsafe-inline") {
 		t.Errorf("CSP = %q, want a policy without unsafe-inline", csp)
 	}
-	// default-src covers neither of these, and the one form on this site submits ZORGSCOPE_TOKEN.
+	// default-src covers neither of these, and an injected <base> would re-point every relative
+	// URL on the page — including the sign-in link that starts the OAuth flow.
 	for _, directive := range []string{"form-action 'self'", "base-uri 'self'", "frame-ancestors 'none'"} {
 		if !strings.Contains(csp, directive) {
 			t.Errorf("CSP = %q, want it to carry %q (QS-4.4)", csp, directive)
@@ -589,7 +497,9 @@ func TestSecurityHeadersAreOnEveryResponse(t *testing.T) {
 
 func TestNewRejectsAMissingCredential(t *testing.T) {
 	for name, mutate := range map[string]func(*Options){
-		"no app token":      func(o *Options) { o.Config.Secrets.AppToken = "" },
+		"no client id":      func(o *Options) { o.Config.Secrets.OAuthClientID = "" },
+		"no client secret":  func(o *Options) { o.Config.Secrets.OAuthClientSecret = "" },
+		"no access checker": func(o *Options) { o.Access = nil },
 		"no refresh secret": func(o *Options) { o.Config.Secrets.RefreshSecret = "" },
 		"no store":          func(o *Options) { o.Store = nil },
 	} {
@@ -605,10 +515,7 @@ func TestNewRejectsAMissingCredential(t *testing.T) {
 
 func TestSignInRedirectsAnAlreadySignedInBrowserToTheDashboard(t *testing.T) {
 	h := newTestServer(t).Handler()
-	c := cookieNamed(post(h, "/login", url.Values{"token": {testToken}}), sessionCookieName)
-	if c == nil {
-		t.Fatal("no session cookie")
-	}
+	c := signIn(t, h)
 	rec := getAs(h, "/login", c)
 	if rec.Code != http.StatusSeeOther {
 		t.Errorf("GET /login while signed in = %d, want 303", rec.Code)
@@ -640,28 +547,6 @@ func TestFailedBearerAttemptsAreRateLimited(t *testing.T) {
 	// locked out of its own endpoint by someone else's guessing.
 	if got := attempt("Bearer " + testSecret); got != http.StatusOK {
 		t.Errorf("the real bearer after the limit = %d, want 200 (QS-4.2)", got)
-	}
-}
-
-// QS-4.2: a lockout is a lockout for a while, not for as long as the Machine happens to stay up.
-// The limiter's refill runs off the injected clock, so this is the only way to execute it.
-func TestASignInLockoutRecoversAsTheClockAdvances(t *testing.T) {
-	clock := &ports.FixedClock{T: testNow}
-	h := newTestServerWith(t, func(o *Options) { o.Clock = clock }).Handler()
-
-	for i := range signInAttempts {
-		if got := post(h, "/login", url.Values{"token": {"wrong"}}); got.Code != http.StatusUnauthorized {
-			t.Fatalf("attempt %d: status = %d, want 401", i+1, got.Code)
-		}
-	}
-	if got := post(h, "/login", url.Values{"token": {"wrong"}}); got.Code != http.StatusTooManyRequests {
-		t.Fatalf("status = %d, want 429", got.Code)
-	}
-
-	clock.Advance(signInWindow)
-	if got := post(h, "/login", url.Values{"token": {"wrong"}}); got.Code != http.StatusUnauthorized {
-		t.Errorf("a failed attempt a whole window later = %d, want 401: the bucket never "+
-			"refilled, so the legitimate user stays locked out until the Machine restarts", got.Code)
 	}
 }
 
@@ -776,7 +661,7 @@ func TestClientIPBelievesTheFlyHeaderOnlyBehindFlysProxy(t *testing.T) {
 	off := newTestServerWith(t, func(o *Options) { o.BehindFlyProxy = boolPtr(false) })
 
 	request := func(header string) *http.Request {
-		r := httptest.NewRequest(http.MethodPost, "/login", nil)
+		r := httptest.NewRequest(http.MethodGet, "/auth/callback", nil)
 		r.RemoteAddr = "192.0.2.10:41234"
 		if header != "" {
 			r.Header.Set("Fly-Client-IP", header)
@@ -786,7 +671,7 @@ func TestClientIPBelievesTheFlyHeaderOnlyBehindFlysProxy(t *testing.T) {
 
 	// A RemoteAddr net/http could not split into host and port is still a stable identity: it
 	// comes from the connection, not from the caller.
-	odd := httptest.NewRequest(http.MethodPost, "/login", nil)
+	odd := httptest.NewRequest(http.MethodGet, "/auth/callback", nil)
 	odd.RemoteAddr = "a-unix-socket"
 	for name, s := range map[string]*Server{"behind Fly's proxy": behind, "off the proxy": off} {
 		if got := s.clientIP(odd); got != "a-unix-socket" {
@@ -823,19 +708,19 @@ func TestClientIPBelievesTheFlyHeaderOnlyBehindFlysProxy(t *testing.T) {
 func TestVaryingTheFlyHeaderCannotEscapeTheRateLimitOffTheProxy(t *testing.T) {
 	h := newTestServerWith(t, func(o *Options) { o.BehindFlyProxy = boolPtr(false) }).Handler()
 
+	// A callback with no state cookie: the refusal the flow produces for anyone who did not start
+	// here, and one of the refusals that counts against the budget (design 2026-09-14 §2).
 	attempt := func(i int) int {
 		rec := httptest.NewRecorder()
-		form := url.Values{"token": {"wrong"}}
-		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req := httptest.NewRequest(http.MethodGet, "/auth/callback?code=guess&state=guess", nil)
 		req.Header.Set("Fly-Client-IP", "203.0.113."+strconv.Itoa(i))
 		h.ServeHTTP(rec, req)
 		return rec.Code
 	}
 
 	for i := range signInAttempts {
-		if got := attempt(i); got != http.StatusUnauthorized {
-			t.Fatalf("attempt %d: status = %d, want 401", i+1, got)
+		if got := attempt(i); got != http.StatusBadRequest {
+			t.Fatalf("attempt %d: status = %d, want 400", i+1, got)
 		}
 	}
 	if got := attempt(signInAttempts); got != http.StatusTooManyRequests {
@@ -892,7 +777,7 @@ func TestARouteWithNoDeclaredCredentialFailsClosed(t *testing.T) {
 
 	withSession := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/forgotten", nil)
-	req.AddCookie(cookieNamed(post(s.Handler(), "/login", url.Values{"token": {testToken}}), sessionCookieName))
+	req.AddCookie(signIn(t, s.Handler()))
 	h.ServeHTTP(withSession, req)
 	if withSession.Code == http.StatusOK {
 		t.Errorf("a session request to a route with no declared credential = %d, want a refusal: "+
@@ -900,15 +785,12 @@ func TestARouteWithNoDeclaredCredentialFailsClosed(t *testing.T) {
 	}
 }
 
-// Rotating ZORGSCOPE_TOKEN is this product's only sign-out (FR-8.3 AC3), and it cannot reach a
-// page the browser has already stored. Authenticated responses therefore say no-store.
+// Rotating the OAuth client secret is this product's only sign-out (FR-8.3 AC3), and it cannot
+// reach a page the browser has already stored. Authenticated responses therefore say no-store.
 func TestAuthenticatedResponsesAreNotStoredByTheBrowser(t *testing.T) {
 	s := newTestServer(t)
 	h := s.Handler()
-	c := cookieNamed(post(h, "/login", url.Values{"token": {testToken}}), sessionCookieName)
-	if c == nil {
-		t.Fatal("no session cookie")
-	}
+	c := signIn(t, h)
 
 	for _, rt := range s.routes() {
 		if rt.auth != authSessionPage && rt.auth != authSessionFragment {
@@ -1015,10 +897,15 @@ func testOptions() Options {
 	cfg := config.Config{
 		Timezone: "UTC",
 		Refresh:  config.Refresh{Interval: 15 * time.Minute, StaleAfter: 45 * time.Minute},
-		GitHub:   config.GitHub{Login: "someone", Repos: []string{"org/repo"}},
+		GitHub: config.GitHub{
+			Login:    "someone",
+			AuthRepo: testAuthRepo,
+			Repos:    []string{"org/repo"},
+		},
 		Secrets: config.Secrets{
-			AppToken:      testToken,
-			RefreshSecret: testSecret,
+			OAuthClientID:     testClientID,
+			OAuthClientSecret: testClientSecret,
+			RefreshSecret:     testSecret,
 		},
 	}
 	store := &fakeStore{}
@@ -1029,7 +916,41 @@ func testOptions() Options {
 		Runner: refresh.New(store, nil, clock, nil, slog.New(slog.NewTextHandler(io.Discard, nil))),
 		Clock:  clock,
 		Log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		// The visitor GitHub vouches for in the tests is whoever presents the fake's token. A test
+		// about being refused replaces this with a stub that admits nobody.
+		Access: &stubAccess{allow: map[string]bool{"fake-token": true}},
 	}
+}
+
+// stubAccess stands in for the GitHub adapter: it decides by token, or fails outright, so a test
+// can exercise the collaborator, the stranger and an unreachable GitHub without a fixture for each.
+type stubAccess struct {
+	allow map[string]bool
+	err   error
+}
+
+func (s *stubAccess) HasPushAccess(_ context.Context, token string) (bool, error) {
+	return s.allow[token], s.err
+}
+
+// startFakeGitHub starts the fixture server, points the options' OAuth base URL at it, and
+// registers the app's callback with it. It returns the fake's URL.
+//
+// The callback is registered rather than sent as redirect_uri because that is the shape of the
+// real request: zorgscope never sends redirect_uri, so GitHub uses the one on the App (design
+// 2026-09-14 §2) — and the fake insists on the same.
+func startFakeGitHub(t *testing.T, o *Options) string {
+	t.Helper()
+	fake := httptest.NewServer(fakesources.NewServer())
+	t.Cleanup(fake.Close)
+	o.Config.GitHub.OAuthBaseURL = fake.URL
+	o.HTTPClient = fake.Client()
+	resp, err := http.Post(fake.URL+"/_control/oauth-callback?url=http://zorgscope.test/auth/callback", "", nil) //nolint:noctx // a test helper against a local fixture server
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	return fake.URL
 }
 
 func newTestServer(t *testing.T) *Server { return newTestServerWith(t, func(*Options) {}) }

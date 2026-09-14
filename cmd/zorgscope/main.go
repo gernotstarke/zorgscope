@@ -79,6 +79,11 @@ func run(ctx context.Context, stop func(), log *slog.Logger) error {
 		Clock:  clock,
 		Log:    log,
 		Stop:   stop,
+		// Who may sign in is decided by GitHub, against the repository named in the configuration
+		// file (FR-8.3). The REST root is the same setting the build fetcher uses, so a deployment
+		// pointed at the fixture server signs people in against fixtures too.
+		Access:     github.NewAccessChecker(cfg.GitHub.BaseURL, cfg.GitHub.AuthRepo, hc),
+		HTTPClient: hc,
 	})
 	if err != nil {
 		return fmt.Errorf("web server: %w", err)

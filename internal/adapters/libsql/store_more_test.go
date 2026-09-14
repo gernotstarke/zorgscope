@@ -115,7 +115,7 @@ func TestReplaceItemsHandlesMoreItemsThanTheParameterLimit(t *testing.T) {
 	}
 }
 
-// Times are RFC 3339 UTC in SQL and time.Time in Go, and a local time is normalized to UTC on the
+// Times are RFC 3339 UTC in SQL and time.Time in Go, and a local time is normalised to UTC on the
 // round trip.
 func TestItemTimesRoundTrip(t *testing.T) {
 	s, ctx := newStore(t), context.Background()

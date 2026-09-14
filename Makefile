@@ -7,8 +7,8 @@
 #     terminal 1:  make backend    the backend image and its database on http://localhost:8080
 #     terminal 2:  make client     the browser, pointed at that backend
 #
-# Add `make fakes` in a third terminal to develop against fixture upstreams instead of the real
-# GitHub, Plausible and Todoist (FR-9.2). `make check` runs what CI runs; `make clean` resets.
+# Add `make fakes` in a third terminal to develop against a fixture GitHub instead of the real
+# one (FR-9.2). `make check` runs what CI runs; `make clean` resets.
 
 SHELL          := /bin/sh
 APP            := zorgscope
@@ -55,15 +55,16 @@ backend: ## Run the backend image and its database locally; Ctrl-C stops it (ter
 	@# Tests only that a value is present — never what it is — and echoes no values (QS-4.3).
 	@test -f .env || { cp deploy/env.example .env; \
 	  printf '\n  Created .env from deploy/env.example.\n\n'; \
-	  printf '  Fill in ZORGSCOPE_TOKEN and REFRESH_SECRET (openssl rand -base64 32 each),\n'; \
+	  printf '  Fill in GITHUB_OAUTH_CLIENT_ID, GITHUB_OAUTH_CLIENT_SECRET and REFRESH_SECRET (openssl rand -base64 32),\n'; \
 	  printf '  then the tokens of the sources you want, and run make backend again.\n\n'; exit 1; }
 	@ok=1; \
 	need() { grep -Eq "^$$1=[^[:space:]#]" .env || { printf '  missing in .env: %s\n' "$$1"; ok=0; }; }; \
-	need ZORGSCOPE_TOKEN; \
+	need GITHUB_OAUTH_CLIENT_ID; \
+	need GITHUB_OAUTH_CLIENT_SECRET; \
 	need REFRESH_SECRET; \
 	test $$ok -eq 1 || { \
 	  printf '\n  The backend exits on a bad configuration rather than starting half-ready.\n'; \
-	  printf '  Both values need at least 32 characters: openssl rand -base64 32\n\n'; exit 1; }
+	  printf '  The OAuth pair comes from the GitHub OAuth App; REFRESH_SECRET needs at least 32 characters\n\n'; exit 1; }
 	@echo ">> backend on http://localhost:$(PORT) — Ctrl-C to stop"
 	$(COMPOSE) up --build
 
@@ -74,7 +75,7 @@ client: ## Open the browser at the local backend (terminal 2)
 	    printf '==> nothing answering there — run "make backend" in another terminal first\n'; exit 1; }; \
 	  printf '==> backend answering (/healthz)\n'; \
 	fi
-	@printf '==> sign in with ZORGSCOPE_TOKEN from .env\n'
+	@printf '==> sign in with GitHub\n'
 	@open "http://localhost:$(PORT)" 2>/dev/null || printf '==> open http://localhost:%s in your browser\n' "$(PORT)"
 
 fakes: ## Serve fixture GitHub, Plausible and Todoist responses on http://localhost:9090 (terminal 3)
