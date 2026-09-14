@@ -24,24 +24,24 @@ Chosen: **server-rendered `html/template` plus htmx**, because it needs nothing 
 already provides on the host (Docker and make; no Node, no local Go toolchain) and nothing beyond
 what the design already budgets for payload size.
 
-At the time of writing, `internal/web/templates` does not yet exist — Task 14 of the
-[implementation plan](../superpowers/plans/2026-08-17-zorgscope-v1.md) creates
-`internal/web/templates/dashboard.html` and the per-tile fragments it names. The decision is
-visible today in two places that do exist: `internal/web/static/htmx.min.js`, the vendored copy
-checked into the repository, and the absence of any `package.json` anywhere in the repository —
-there is no JavaScript dependency to install, so there is nothing to lock, audit or build.
+The decision is visible in `internal/web/templates`, in `internal/web/static/htmx.min.js` — the
+vendored copy checked into the repository — and in the absence of any `package.json` anywhere in the
+repository: there is no JavaScript dependency to install, so there is nothing to lock, audit or
+build.
 
-Each tile renders as its own fragment, addressable at `/tile/{name}` (design §6), so htmx can
-replace one tile without a full page reload — this is FR‑1.6 for v2 — and so one slow or failing
-source cannot hold up the others. This works because the server already assembles a `Dashboard`
-struct with per-tile state (`internal/domain/dashboard.go`, Task 13); htmx polling a fragment is a
-routing decision layered on data that already exists, not a reason to add a client-side store.
+The list of items renders as its own fragment, addressable at `GET /items`, so htmx can replace the
+list without a full page reload — this is FR‑1.6 — and so a page left open updates itself while
+keeping the filter it was drawn with. This works because the server already assembles a `Dashboard`
+struct carrying the repository groups, their counts and the filter that produced them
+(`internal/domain/dashboard.go`); htmx polling a fragment is a routing decision layered on data that
+already exists, not a reason to add a client-side store. The filter bar is the same argument in the
+other direction: it is a plain `GET` form that reloads the page when JavaScript is off, and htmx
+attributes turn the same submission into a fragment swap when it is on.
 
 ### Consequences
 
-* Good: no Node in CI or on the host — `make lint`, `make test` and `make check` need only Docker
-  and make (FR‑9.1 AC3), and QS‑5.3's three-minute CI budget carries no `npm install` or bundler
-  step.
+* Good: no Node in CI or on the host — `make check` needs only Docker and make (FR‑9.1 AC3), and
+  QS‑5.3's three-minute CI budget carries no `npm install` or bundler step.
 * Good: the response size is bounded by what a template renders, which QS‑2.3 turns into a number
   (≤ 150 kB HTML, ≤ 50 kB static assets including htmx) that a test on a rendered fixture can check
   directly, rather than a bundle-size budget that depends on which packages a dependency update
@@ -49,8 +49,8 @@ routing decision layered on data that already exists, not a reason to add a clie
 * Bad: every interaction that would be a client-side state update in an SPA is a request the server
   answers instead. For a page opened a few times a day this costs nothing measurable, but it is a
   real constraint the design accepts rather than a free win: htmx swaps HTML fragments, so any UI
-  state (which tile was last expanded, say) that would live in browser memory in an SPA has nowhere
-  to live here except back on the server or not at all.
+  state (which filter is in force, say) that would live in browser memory in an SPA has nowhere to
+  live here except in the URL, back on the server, or not at all.
 * Neutral: the dashboard's render input is one Go struct that marshals cleanly to JSON even though
   nothing exposes it as JSON in v1 (design §4); a read-only API or a different client stays a small
   addition rather than a rewrite, without that flexibility being exercised in v1.

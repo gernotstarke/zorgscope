@@ -1,8 +1,11 @@
 # 0007. Token sign-in with a session cookie derived from the token
 
-* Status: accepted
+* Status: superseded by [0009](0009-github-sign-in-push-access.md)
 * Date: 2026-08-17
 * Requirements: FR‑8.2, FR‑8.3, QS‑4.1, QS‑4.2, QS‑4.3
+
+AC numbers below refer to FR‑8.3 as it stood on 2026-08-17; FR‑8.3 was rewritten for
+[ADR‑0009](0009-github-sign-in-push-access.md).
 
 ## Context and problem statement
 
@@ -14,13 +17,6 @@ question is what a browser session should rest on, given that whatever it is mus
 AC1's "redirected to a sign-in page, not answered with a bare 401", and must never be usable to
 authorise `POST /api/refresh` (that is `REFRESH_SECRET`'s job, kept independent — see
 [security-and-tokens.md](../concepts/security-and-tokens.md)).
-
-**A note on evidence.** `internal/web/auth.go` does not exist at the time of writing — it is Task
-12 of the [implementation plan](../superpowers/plans/2026-08-17-zorgscope-v1.md), not yet executed.
-This record documents the decision as specified by the design (§6) and by Task 12's interface and
-implementation notes; every mechanism named below is a commitment the plan makes, not a behaviour
-observed in running code. Re-check this record's claims against `internal/web/auth.go` and
-`internal/web/auth_test.go` once Task 12 lands.
 
 ## Considered options
 

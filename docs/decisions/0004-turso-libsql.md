@@ -46,8 +46,8 @@ func Open(rawURL, authToken string) (*Store, error) {
 local `db` service, and overrides `TURSO_URL` to point at it inside the Compose network — "so a
 production URL cannot be hit from a local run", per its own comment — with `TURSO_AUTH_TOKEN` empty,
 because a local `libsql-server` needs none. Nothing in the adapter branches on which one it is
-talking to; the same code path is exercised by `make test` (against `libsql-server`) and by
-production (against Turso).
+talking to; the same code path is exercised by the store tests `make check` runs (against
+`libsql-server`) and by production (against Turso).
 
 ### Consequences
 

@@ -65,12 +65,14 @@ Task order is a dependency order. Tasks 1→2→3→4 must be sequential (each c
 ### Task 1: Domain — filter, repository groups, no tiles
 
 **Files:**
+
 - Create: `internal/domain/filter.go`, `internal/domain/filter_test.go`
 - Modify: `internal/domain/item.go`, `internal/domain/dashboard.go`, `internal/domain/problem.go`
 - Delete: `internal/domain/metric.go`, `internal/domain/metric_test.go`, `internal/domain/tile_limit_internal_test.go`
 - Test: `internal/domain/dashboard_test.go`, `internal/domain/problem_test.go`, `internal/domain/item_test.go`
 
 **Interfaces:**
+
 - Consumes: nothing new.
 - Produces (later tasks rely on these exact names):
 
@@ -494,11 +496,13 @@ git commit -m "feat(domain): a filter and repository groups replace the tiles (F
 ### Task 2: Ports, store and migration 0005
 
 **Files:**
+
 - Create: `internal/adapters/libsql/migrations/0005_github_only.sql`
 - Modify: `internal/ports/ports.go`, `internal/ports/fake.go`, `internal/adapters/libsql/store.go`, `internal/refresh/runner.go`
 - Test: `internal/adapters/libsql/store_test.go`, `internal/adapters/libsql/store_more_test.go`, `internal/adapters/libsql/migrate_test.go` (create if absent), `internal/refresh/runner_test.go`, `internal/refresh/stubstore_test.go`, `internal/refresh/detail_internal_test.go`
 
 **Interfaces:**
+
 - Consumes: Task 1's `domain.Item` without `DueAt`/`Priority`; no `domain.Metric`.
 - Produces:
 
@@ -625,11 +629,13 @@ git commit -m "feat(store): migration 0005 drops metrics and task rows; ports lo
 ### Task 3: Remove Plausible and Todoist everywhere else; fakes index page
 
 **Files:**
+
 - Delete: `internal/adapters/plausible/`, `internal/adapters/todoist/`, `internal/fakesources/plausible.go`, `internal/fakesources/plausible_test.go`, `internal/fakesources/todoist.go`, `internal/fakesources/todoist_test.go`, `internal/fakesources/testdata/todoist/`
 - Modify: `internal/fakesources/server.go`, `internal/fakesources/fixtures.go`, `internal/fakesources/control.go`, `internal/config/config.go`, `internal/config/testdata/valid.yaml`, `internal/config/config_test.go`, `config/zorgscope.yaml`, `deploy/env.example`, `Makefile`, `cmd/zorgscope/main.go`, `cmd/zorgscope/main_test.go`, `cmd/fakesources/main.go`, `internal/adapters/slack/slack.go`, `internal/adapters/slack/slack_test.go`
 - Test: `internal/fakesources/server_test.go` (create if absent), `internal/config/config_test.go`
 
 **Interfaces:**
+
 - Consumes: Task 2's `ports.FetchResult`.
 - Produces: `config.Config` without `Plausible`/`Todoist`; `config.Secrets{GitHubToken, SlackWebhook, AppToken, RefreshSecret, TursoURL, TursoAuthToken string}` (AppToken goes in Task 6); `Config.Enabled` knows only `"github"`; `fakesources.NewServer()` serving `GET /`.
 
@@ -741,6 +747,7 @@ git commit -m "refactor: remove Plausible and Todoist from backend, fakes and co
 ### Task 4: The front page — one filtered list grouped by repository
 
 **Files:**
+
 - Create: `internal/web/templates/fragments/items.html`, `internal/web/filter.go`, `internal/web/filter_test.go`
 - Move: `internal/web/templates/tiles/{counts,alert,build-status}.html` → `internal/web/templates/fragments/`
 - Delete: `internal/web/templates/tiles/{tile,github,sites,tasks}.html`
@@ -748,6 +755,7 @@ git commit -m "refactor: remove Plausible and Todoist from backend, fakes and co
 - Test: `internal/web/filter_test.go`, `internal/web/dashboard_test.go`
 
 **Interfaces:**
+
 - Consumes: Task 1's `domain.Filter`, `domain.RepoGroup`, `domain.SourceHealth`, `Dashboard.Groups/Shown/Total`.
 - Produces: routes `GET /{$}` and `GET /items` (fragment, `authSessionFragment`); `parseFilter(q url.Values, loc *time.Location) domain.Filter`; the `items` template with the id `items` on its root element; `Server.loc *time.Location`.
 
@@ -1030,10 +1038,12 @@ git commit -m "feat(web): one filtered list grouped by repository replaces the t
 ### Task 5: Fake GitHub OAuth endpoints and the repository endpoint
 
 **Files:**
+
 - Create: `internal/fakesources/oauth.go`, `internal/fakesources/oauth_test.go`
 - Modify: `internal/fakesources/server.go` (routes, `routes` slice, `server` struct, `resetLocked`)
 
 **Interfaces:**
+
 - Consumes: Task 3's `routes` slice and index.
 - Produces, on the fake server:
 
@@ -1265,11 +1275,13 @@ git commit -m "feat(fakes): GitHub OAuth authorize, token and repository endpoin
 ### Task 6: Sign in with GitHub
 
 **Files:**
+
 - Create: `internal/web/signin.go`, `internal/web/signin_test.go`, `internal/adapters/github/access.go`, `internal/adapters/github/access_test.go`
 - Modify: `internal/config/config.go`, `internal/config/config_test.go`, `internal/config/testdata/valid.yaml`, `config/zorgscope.yaml`, `deploy/env.example`, `Makefile` (the `backend` check), `internal/web/auth.go`, `internal/web/server.go` (`Options`, `Server`, `New`, `routes`, the CSP comment), `internal/web/templates/login.html`, `internal/web/auth_test.go`, `internal/web/chrome_test.go`, `cmd/zorgscope/main.go`, `cmd/zorgscope/main_test.go`
 - Delete: `handleLoginSubmit` and the `POST /login` route
 
 **Interfaces:**
+
 - Consumes: `ports.AccessChecker` (Task 2), the fake endpoints (Task 5).
 - Produces:
 
@@ -1807,6 +1819,7 @@ git commit -m "feat(web): sign in with GitHub, admitting push access to the repo
 ### Task 7: Documentation
 
 **Files:**
+
 - Create: `docs/decisions/0009-github-sign-in-push-access.md`
 - Modify: `docs/requirements/01-goals.md`, `02-stakeholders.md`, `03-constraints.md`, `04-functional-requirements.md`, `06-glossary.md`, `docs/decisions/0007-token-sign-in-derived-cookie.md`, `docs/decisions/README.md`, `docs/concepts/security-and-tokens.md`, `docs/concepts/configuration.md`, `docs/concepts/data-storage.md` (if it names metrics or tasks), `README.md`
 - Test: `make check` (markdownlint + lychee), and `go test ./internal/web/ -run 'Docs|Doc'` (the rendered-docs tests, which check every internal link resolves and the index lists every page)
@@ -1815,7 +1828,7 @@ This task only touches Markdown and may run in a worktree in parallel with Tasks
 
 - [ ] **Step 1: Requirements**
 
-- `01-goals.md`: vision sentence → "collects the open issues and pull requests of the arc42 sites' repositories on GitHub, marks what is new since the last look, and costs almost nothing to run." Rows G‑2 and G‑3: wrap the goal text in `~~…~~` and append " — *retired 2026‑09‑14, see [the design](../superpowers/specs/2026-09-14-github-signin-and-focus-design.md)*". Keep the ids.
+- `01-goals.md`: vision sentence → "collects the open issues and pull requests of the arc42 sites' repositories on GitHub, marks what is new since the last look, and costs almost nothing to run." Rows G‑2 and G‑3: wrap the goal text in `~~…~~` and append " — *retired 2026‑09‑14, see \[the design\](../superpowers/specs/2026-09-14-github-signin-and-focus-design.md)*". Keep the ids.
 - `02-stakeholders.md` S‑3: drop Plausible and Todoist. `03-constraints.md` C‑8: drop them from the free-tier list.
 - `04-functional-requirements.md`:
   - FR‑1.1 AC1: "The dashboard is one list of the open issues and pull requests of the configured repositories, a section per repository in configuration order, new items first — plus a single build-status indicator, builds having their own page (FR‑2.3 AC4). AC5 The list can be narrowed by repository, by kind (issue or pull request), by creation date and by a text search over title and description; the filter is carried in the URL, works without JavaScript, and never changes the new count in the tab title or the summary line."
@@ -1833,7 +1846,7 @@ This task only touches Markdown and may run in a worktree in parallel with Tasks
 
 - [ ] **Step 2: Decisions**
 
-Write `0009-github-sign-in-push-access.md` from `adr-template.md`, status accepted, date 2026‑09‑14, requirements FR‑8.2, FR‑8.3, QS‑4.2, QS‑4.3. Context: the shared token names nobody and is pasted by hand; GitHub already maintains exactly the set of people who should see the page. Options: (1) GitHub OAuth App, no scopes, one request for the visitor's permission on the repository, session key derived from the client secret — chosen; (2) keep the shared token; (3) a GitHub App with an installation. Decision outcome: option 1, because the admission rule lives where it is already maintained, the derivation property of ADR‑0007 survives unchanged, and the only new moving part is one HTTP request. Consequences: good — no secret to paste, more than one collaborator can sign in, revocation is a GitHub setting; bad — two OAuth Apps to register (one callback per App), a dependency on GitHub being up at sign-in; neutral — the session still carries no identity, and a stolen cookie still leaks a thirty-day session and nothing else. Name the risk from the spec's §8 about the `permissions` block. Mark `0007` "Status: superseded by [0009](0009-github-sign-in-push-access.md)" in its status line and in the index table (`superseded`). Add the 0009 row to `README.md`'s table and change its "written in Task 19" paragraph to say the records are kept current with the design specs.
+Write `0009-github-sign-in-push-access.md` from `adr-template.md`, status accepted, date 2026‑09‑14, requirements FR‑8.2, FR‑8.3, QS‑4.2, QS‑4.3. Context: the shared token names nobody and is pasted by hand; GitHub already maintains exactly the set of people who should see the page. Options: (1) GitHub OAuth App, no scopes, one request for the visitor's permission on the repository, session key derived from the client secret — chosen; (2) keep the shared token; (3) a GitHub App with an installation. Decision outcome: option 1, because the admission rule lives where it is already maintained, the derivation property of ADR‑0007 survives unchanged, and the only new moving part is one HTTP request. Consequences: good — no secret to paste, more than one collaborator can sign in, revocation is a GitHub setting; bad — two OAuth Apps to register (one callback per App), a dependency on GitHub being up at sign-in; neutral — the session still carries no identity, and a stolen cookie still leaks a thirty-day session and nothing else. Name the risk from the spec's §8 about the `permissions` block. Mark `0007` "Status: superseded by \[0009\](0009-github-sign-in-push-access.md)" in its status line and in the index table (`superseded`). Add the 0009 row to `README.md`'s table and change its "written in Task 19" paragraph to say the records are kept current with the design specs.
 
 - [ ] **Step 3: Concepts**
 
@@ -1859,6 +1872,7 @@ git commit -m "docs: GitHub sign-in (ADR-0009), retire Plausible and Todoist, de
 ### Task 8: Merge, verify end to end, and hand over
 
 **Files:**
+
 - Modify: `docs/superpowers/plans/HANDOVER.md` (append a dated section), memory.
 
 - [ ] **Step 1: Merge Task 7's worktree branch** into the working branch (rebase or merge, no squash), resolve nothing that is not a conflict, and run `go test ./...` and `make check` — green.
