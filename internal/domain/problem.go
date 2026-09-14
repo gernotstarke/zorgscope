@@ -60,8 +60,8 @@ const DetailSeparator = "; "
 // the web layer's Redact before it is rendered (QS-4.3). The two fields are separate precisely so
 // that the sentence a person reads first is never the one carrying a secret.
 type Problem struct {
-	// Source is the interface's wire name ("github", "github-builds", "plausible", "todoist",
-	// "slack"), which is what source health and configuration are keyed by.
+	// Source is the interface's wire name ("github", "github-builds", "slack"), which is what
+	// source health and configuration are keyed by.
 	Source string
 	// Title is its display name.
 	Title    string
@@ -99,6 +99,20 @@ const (
 	summaryNotifyOK   = "announcements are going out"
 	summaryNotifyOff  = "announcements are switched off"
 )
+
+// problemSource maps each fetching interface's display name, as buildProblems walks sourceOrder,
+// to its wire name — the vocabulary States and Disabled are keyed by. "builds" is the one name
+// that differs from its wire name; "github" needs no translation.
+var problemSource = map[string]string{
+	"github": "github",
+	"builds": "github-builds",
+}
+
+// problemTitle gives each fetching interface its display title.
+var problemTitle = map[string]string{
+	"github": "GitHub",
+	"builds": "Builds",
+}
 
 // notifyTitle names the announcement interface on the problems page. Slack is the only notifier
 // v1 has, and naming it is more useful to an operator than the abstraction would be.
@@ -146,15 +160,16 @@ func rankOf(sev Severity) int {
 
 // sourceProblem reports one fetching interface.
 //
-// The order of the checks is the order buildTile uses and for the same reason (FR-8.2 AC2): a
-// source with no credential is not failing and not stale, it simply never ran, and reporting it
-// as an error would send an operator hunting a fault that is a line of configuration.
-func sourceProblem(tile string, in DashboardInput, disabled map[string]bool) Problem {
-	source := tileSource[tile]
+// The order of the checks is the order sourceHealth and buildStatus use and for the same reason
+// (FR-8.2 AC2): a source with no credential is not failing and not stale, it simply never ran,
+// and reporting it as an error would send an operator hunting a fault that is a line of
+// configuration.
+func sourceProblem(name string, in DashboardInput, disabled map[string]bool) Problem {
+	source := problemSource[name]
 	state := in.States[source]
 	p := Problem{
 		Source:   source,
-		Title:    tileTitle[tile],
+		Title:    problemTitle[name],
 		LastOKAt: state.LastSuccessAt,
 	}
 

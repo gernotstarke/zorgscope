@@ -26,8 +26,8 @@ func findProblem(t *testing.T, ps []Problem, source string) Problem {
 // problemInput is a dashboard input with every source healthy and Slack configured, so each test
 // below changes exactly the one thing it is about.
 func problemInput() DashboardInput {
-	states := make(map[string]SourceState, 4)
-	for _, s := range []string{"github", "github-builds", "plausible", "todoist"} {
+	states := make(map[string]SourceState, 2)
+	for _, s := range []string{"github", "github-builds"} {
 		states[s] = SourceState{Source: s, LastSuccessAt: problemNow.Add(-time.Minute)}
 	}
 	return DashboardInput{
@@ -46,9 +46,9 @@ func TestAHealthyDashboardHasNothingWrong(t *testing.T) {
 	if d.ProblemCount != 0 {
 		t.Errorf("ProblemCount = %d on a healthy dashboard, want 0", d.ProblemCount)
 	}
-	// Five interfaces: the four fetching sources and the notifier.
-	if len(d.Problems) != 5 {
-		t.Fatalf("got %d problem entries, want 5 (four sources and the notifier)", len(d.Problems))
+	// Three interfaces: the two fetching sources and the notifier.
+	if len(d.Problems) != 3 {
+		t.Fatalf("got %d problem entries, want 3 (two sources and the notifier)", len(d.Problems))
 	}
 	for _, p := range d.Problems {
 		if p.Severity != SeverityOK {
@@ -162,13 +162,13 @@ func TestASourceIsReportedInTheStateItIsActuallyIn(t *testing.T) {
 // "broken since March".
 func TestAFailingSourceCarriesBothTimes(t *testing.T) {
 	in := problemInput()
-	in.States["todoist"] = SourceState{
+	in.States["github-builds"] = SourceState{
 		LastSuccessAt: problemNow.Add(-3 * time.Hour),
-		LastError:     "401 from the Todoist API",
+		LastError:     "500 from the Actions API",
 		LastErrorAt:   problemNow.Add(-5 * time.Minute),
 	}
 
-	p := findProblem(t, BuildDashboard(in).Problems, "todoist")
+	p := findProblem(t, BuildDashboard(in).Problems, "github-builds")
 	if !p.At.Equal(problemNow.Add(-5 * time.Minute)) {
 		t.Errorf("At = %v, want the time of the error", p.At)
 	}
@@ -231,7 +231,7 @@ func TestTheNotifyMarkerIsReadFromTheEnd(t *testing.T) {
 		wantFailed bool
 	}{
 		{name: "empty", detail: ""},
-		{name: "no notify part", detail: "github: 12" + DetailSeparator + "todoist: 3"},
+		{name: "no notify part", detail: "github: 12" + DetailSeparator + "github-builds: 3"},
 		{name: "notify alone", detail: NotifyDetailPrefix + "boom", wantMsg: "boom", wantFailed: true},
 		{
 			name:       "notify last",
@@ -262,29 +262,28 @@ func TestTheNotifyMarkerIsReadFromTheEnd(t *testing.T) {
 	}
 }
 
-// Worst first, and within a severity the order the tiles themselves are in — so the details page
-// and the dashboard read the same way round.
+// Worst first, and within a severity the order the sources themselves are in — so the details
+// page and the dashboard read the same way round.
 func TestProblemsAreOrderedWorstFirst(t *testing.T) {
 	in := problemInput()
-	in.States["plausible"] = SourceState{
+	in.States["github"] = SourceState{
 		LastSuccessAt: problemNow.Add(-time.Hour),
 		LastError:     "500",
 		LastErrorAt:   problemNow,
 	}
 	in.States["github-builds"] = SourceState{LastSuccessAt: problemNow.Add(-2 * problemStaleAfter)}
-	in.Disabled = []string{"todoist"}
 
 	d := BuildDashboard(in)
 	got := make([]string, 0, len(d.Problems))
 	for _, p := range d.Problems {
 		got = append(got, p.Source+"="+string(p.Severity))
 	}
-	want := "plausible=error github-builds=warning todoist=off github=ok slack=ok"
+	want := "github=error github-builds=warning slack=ok"
 	if strings.Join(got, " ") != want {
 		t.Errorf("order = %q,\n want %q", strings.Join(got, " "), want)
 	}
 	if d.ProblemCount != 2 {
-		t.Errorf("ProblemCount = %d, want 2 — off and ok are not things that went wrong", d.ProblemCount)
+		t.Errorf("ProblemCount = %d, want 2 — the two that are actually broken", d.ProblemCount)
 	}
 }
 

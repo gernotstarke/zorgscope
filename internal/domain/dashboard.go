@@ -1,67 +1,40 @@
 package domain
 
-import (
-	"sort"
-	"time"
-)
-
-// tileSource maps each dashboard tile to the name of the fetcher that fills it. Tile names are a
-// display concept ("builds", "sites"); fetcher/source names are a wire concept
-// ("github-builds", "plausible") recorded in States and Disabled. The two vocabularies differ, so
-// this is the one place that translates between them — everything below looks a tile's source up
-// here rather than repeating the string literals.
-var tileSource = map[string]string{
-	"github": "github",
-	"builds": "github-builds",
-	"sites":  "plausible",
-	"tasks":  "todoist",
-}
-
-// tileTitle gives each tile its display title.
-var tileTitle = map[string]string{
-	"github": "GitHub",
-	"builds": "Builds",
-	"sites":  "Sites",
-	"tasks":  "Tasks",
-}
-
-// tileOrder fixes the dashboard tiles' assembly and rendering order (FR-1.1 AC1).
-//
-// Builds is deliberately not among them. The front page is for what needs handling — new and
-// unhandled issues and pull requests — and a list of one row per repository is a report, not a
-// prompt. Builds are one indicator on the front page and a page of their own behind it; see
-// BuildStatus.
-var tileOrder = []string{"github", "sites", "tasks"}
+import "time"
 
 // sourceOrder is every source the dashboard depends on, builds included, in the order they are
-// reported in. It is what the problems page walks: an interface that stopped having a tile did
+// reported in. It is what the problems page walks: an interface that stopped feeding the list did
 // not stop being an interface that can fail.
-var sourceOrder = []string{"github", "builds", "sites", "tasks"}
+var sourceOrder = []string{"github", "builds"}
 
-// githubTileLimit is how many issues and pull requests the GitHub tile shows.
-//
-// The dashboard answers "does anything need me right now", and a list of every open issue across
-// eight repositories answers a different question — one nobody scrolls to the bottom of. Five is
-// the number that fits beside the other three tiles without the page becoming a report. The tile
-// still says how many more there are, because the count is the part a truncated list would
-// otherwise destroy: "5 shown" and "5 open" must not look the same.
-//
-// Only the list is cut. NewCount is counted over every item the source holds, so the badge and
-// the total in the tab title stay true — truncating before counting would make the dashboard
-// report fewer new items the more there were.
-const githubTileLimit = 5
+// githubSource is the fetcher name behind every item on the page.
+const githubSource = "github"
 
-// The two Plausible windows the dashboard shows per site (FR-3.1 AC1). No other window length is
-// paired into a SiteMetrics.
-const (
-	weekWindowDays  = 7
-	monthWindowDays = 30
-)
+// SourceHealth is the GitHub source's own health, the same three facts reported for builds
+// (FR-8.2 AC2): whether it is switched off, whether its last success is too old to trust, and
+// its current error if it has one.
+type SourceHealth struct {
+	Disabled bool
+	Stale    bool
+	Error    string
+	LastOKAt time.Time
+}
+
+// RepoGroup is one repository's row of the dashboard's list: its filtered items, alongside the
+// unfiltered counts a filter must never be allowed to change (FR-1.2).
+type RepoGroup struct {
+	Repo  string
+	Items []Item
+	// NewCount and Total are taken over every item this repository holds, before the filter is
+	// applied — see BuildDashboard's own comment on why the badge cannot follow the filter.
+	NewCount int
+	Total    int
+}
 
 // DashboardInput is everything the store holds that BuildDashboard needs: the current time, the
 // visitor's last-seen watermark, the outcome of the last refresh run and of the last one that
-// succeeded, every stored item across sources, per-source health, and the list of sources disabled
-// for lack of a credential.
+// succeeded, every stored item, per-source health, and the list of sources disabled for lack of a
+// credential.
 type DashboardInput struct {
 	Now         time.Time
 	LastVisitAt time.Time
@@ -75,14 +48,16 @@ type DashboardInput struct {
 	StaleAfter        time.Duration
 	Items             []Item
 	Builds            []Build
-	Metrics           []Metric
 	States            map[string]SourceState
 	Disabled          []string // sources without a credential (FR-8.2 AC2)
 	// Repos is the configured repository list, in configuration order. It is what makes the
-	// build status able to report a repository that has never produced a run: only repositories
-	// with a run are stored, so without this a silent workflow is indistinguishable from a
-	// repository nobody is watching.
+	// build status — and the list's own grouping — able to report a repository that has never
+	// produced an item: without this a silent repository is indistinguishable from one nobody is
+	// watching.
 	Repos []string
+	// Filter narrows which items each group shows. It never changes NewCount or Total: those
+	// answer "what is out there", and the filter answers "what am I looking at right now".
+	Filter Filter
 }
 
 // RunOutcome is what may honestly be said about the last refresh run (FR-1.1 AC3). It exists
@@ -105,8 +80,8 @@ const (
 	RunFailed RunOutcome = "failed"
 )
 
-// Dashboard is the fully assembled page: one tile per source group, plus the header's counts and
-// timestamps.
+// Dashboard is the fully assembled page: one filtered list, grouped by repository, plus the
+// header's counts and timestamps (FR-1.1, FR-1.2).
 type Dashboard struct {
 	GeneratedAt time.Time
 	LastVisitAt time.Time
@@ -128,13 +103,21 @@ type Dashboard struct {
 	// failure never fails a run (FR-6.1 AC3), so nothing else on the page changes when the hook is
 	// revoked. It carries upstream error text and must be scrubbed before it is rendered (QS-4.3).
 	LastRunDetail string
-	NewTotal      int
-	Tiles         []Tile
+	// NewTotal, Total and Shown are counted at three different points: NewTotal and Total over
+	// every item regardless of the filter, Shown over what the filter actually let through. A
+	// filter that also moved the badge or the tab title would make the dashboard lie about what
+	// is new the moment somebody typed into the search box.
+	NewTotal, Total, Shown int
+	// Filter is the filter that was applied, echoed back so the page can render it as the
+	// visitor left it.
+	Filter Filter
+	Groups []RepoGroup
+	Source SourceHealth
+	// Builds is the front page's build indicator and the rows behind it (FR-2.3).
+	Builds BuildStatus
 	// Problems is the health of every external interface, worst first (FR-1.4). Every configured
 	// interface is listed, healthy ones included, so that the details page can answer "is
 	// anything wrong?" positively rather than with an empty list.
-	// Builds is the front page's build indicator and the rows behind it (FR-2.3).
-	Builds   BuildStatus
 	Problems []Problem
 	// ProblemCount is how many of them are actually wrong — errors and warnings, never an
 	// interface that is merely switched off. It is what decides whether the dashboard shows its
@@ -142,47 +125,15 @@ type Dashboard struct {
 	ProblemCount int
 }
 
-// Tile is one section of the dashboard — GitHub items, builds, site statistics or tasks (FR-1.1
-// AC1). Which of Items, Builds and Sites is populated depends on Name; the other two stay empty.
-type Tile struct {
-	Name     string // "github", "builds", "sites", "tasks"
-	Title    string
-	NewCount int
-	Stale    bool
-	Disabled bool
-	Error    string
-	LastOKAt time.Time
-	// Items is what the tile shows, which on a truncated tile is not everything the source holds
-	// — see Total.
-	Items []Item
-	// Total is how many items the source holds in all. It equals len(Items) on a tile that shows
-	// everything, and is larger on one that shows only its first few, so the tile can say how
-	// many it is not showing rather than quietly implying there are none.
-	Total  int
-	Builds []Build
-	Sites  []SiteMetrics
-}
-
-// SiteMetrics pairs one site's week and month Plausible windows (FR-3.1 AC1). A window that never
-// arrived — a partial Plausible failure can leave a site holding only one of the two — is the
-// zero Metric, distinguishable from a real result by its empty Site field.
-type SiteMetrics struct {
-	Site  string
-	Week  Metric
-	Month Metric
-}
-
 // BuildDashboard assembles the dashboard from everything the store holds. It is a pure function:
 // no I/O and no clock of its own — the caller supplies Now — and it never mutates the slices in
-// in. Items destined for a tile are always copied into a fresh slice before any sorting, so the
-// caller's Items slice is untouched; Builds and Metrics are never sorted, so they are shared with
-// the caller directly.
+// in. Items are always copied into a fresh slice before any sorting, so the caller's Items slice
+// is untouched; Builds is never sorted in place and is shared with the caller directly.
 func BuildDashboard(in DashboardInput) Dashboard {
 	disabled := make(map[string]bool, len(in.Disabled))
 	for _, s := range in.Disabled {
 		disabled[s] = true
 	}
-
 	outcome, at := lastRun(in.LastRun)
 	d := Dashboard{
 		GeneratedAt:   in.Now,
@@ -194,15 +145,20 @@ func BuildDashboard(in DashboardInput) Dashboard {
 		// LastRun: a run the store did not report as successful must never end up under the words
 		// "last successful refresh", which is the whole of FR-1.1 AC3's honesty.
 		LastSuccessAt: in.LastSuccessfulRun.FinishedAt,
-		Tiles:         make([]Tile, 0, len(tileOrder)),
+		Filter:        in.Filter,
 	}
 
-	for _, name := range tileOrder {
-		tile := buildTile(name, in, disabled)
-		d.NewTotal += tile.NewCount
-		d.Tiles = append(d.Tiles, tile)
+	items := itemsBySource(in.Items, githubSource)
+	d.Total = len(items)
+	// Counted before filtering: the tab title and the summary say what is new, not what is
+	// visible, and a filter must never make the badge lie.
+	d.NewTotal = CountNew(items, in.LastVisitAt)
+	d.Groups = groupByRepo(items, in.Repos, in.Filter, in.LastVisitAt)
+	for _, g := range d.Groups {
+		d.Shown += len(g.Items)
 	}
 
+	d.Source = sourceHealth(in, disabled)
 	d.Builds = buildStatus(in, disabled)
 	d.Problems = buildProblems(in, disabled)
 	for _, p := range d.Problems {
@@ -211,6 +167,60 @@ func BuildDashboard(in DashboardInput) Dashboard {
 		}
 	}
 	return d
+}
+
+// groupByRepo assembles one group per repository that has at least one item passing f, in the
+// order the repositories are configured; repositories that still hold items but are no longer
+// configured follow, in first-seen order. Total and NewCount are per repository before filtering.
+func groupByRepo(items []Item, repos []string, f Filter, lastVisit time.Time) []RepoGroup {
+	order := append([]string(nil), repos...)
+	known := make(map[string]bool, len(repos))
+	for _, r := range repos {
+		known[r] = true
+	}
+	byRepo := make(map[string]*RepoGroup)
+	for _, it := range items {
+		g, ok := byRepo[it.Repo]
+		if !ok {
+			g = &RepoGroup{Repo: it.Repo}
+			byRepo[it.Repo] = g
+			if !known[it.Repo] {
+				known[it.Repo] = true
+				order = append(order, it.Repo)
+			}
+		}
+		g.Total++
+		if it.IsNew(lastVisit) {
+			g.NewCount++
+		}
+		if f.Match(it) {
+			g.Items = append(g.Items, it)
+		}
+	}
+	out := make([]RepoGroup, 0, len(byRepo))
+	for _, repo := range order {
+		g, ok := byRepo[repo]
+		if !ok || len(g.Items) == 0 {
+			continue
+		}
+		SortItems(g.Items, lastVisit)
+		out = append(out, *g)
+	}
+	return out
+}
+
+// sourceHealth reduces the GitHub source's state to what the page says above the list. Disabled
+// is checked first (FR-8.2 AC2): a source that never runs is neither stale nor failing.
+func sourceHealth(in DashboardInput, disabled map[string]bool) SourceHealth {
+	if disabled[githubSource] {
+		return SourceHealth{Disabled: true}
+	}
+	state := in.States[githubSource]
+	h := SourceHealth{Stale: state.Stale(in.Now, in.StaleAfter), LastOKAt: state.LastSuccessAt}
+	if state.Failing() {
+		h.Error = state.LastError
+	}
+	return h
 }
 
 // lastRun reduces the last refresh run to what the header may say about it, and when.
@@ -249,115 +259,15 @@ func lastRun(run RefreshRun) (RunOutcome, time.Time) {
 	}
 }
 
-// buildTile assembles a single tile: its content first, then its health. Disabled is checked
-// before Stale and before Error (FR-8.2 AC2) — a disabled source is never stale (staleness is
-// meaningless for something that never runs) and never failing (it never ran to fail).
-func buildTile(name string, in DashboardInput, disabled map[string]bool) Tile {
-	source := tileSource[name]
-	tile := Tile{Name: name, Title: tileTitle[name]}
-
-	switch name {
-	case "github":
-		items := itemsBySource(in.Items, source)
-		SortItems(items, in.LastVisitAt)
-		// Counted over everything, shown as the first few: the badge is about the source, the
-		// list is about the screen.
-		tile.NewCount = CountNew(items, in.LastVisitAt)
-		tile.Total = len(items)
-		tile.Items = firstN(items, githubTileLimit)
-	case "tasks":
-		// Not SortItems: that orders new-first then most-recently-updated, which would
-		// silently destroy due-date order (FR-4.1 AC2 needs overdue before due-today).
-		// NewCount is still counted — on this tile newness is a badge, not a rank.
-		items := itemsBySource(in.Items, source)
-		sortTasks(items)
-		tile.Items = items
-		tile.Total = len(items)
-		tile.NewCount = CountNew(items, in.LastVisitAt)
-	case "sites":
-		tile.Sites = siteMetrics(in.Metrics)
-	}
-
-	if disabled[source] {
-		tile.Disabled = true
-		return tile
-	}
-
-	state := in.States[source]
-	tile.Stale = state.Stale(in.Now, in.StaleAfter)
-	tile.LastOKAt = state.LastSuccessAt
-	if state.Failing() {
-		tile.Error = state.LastError
-	}
-	return tile
-}
-
 // itemsBySource returns the items belonging to source, in a freshly allocated slice. Because the
-// result never shares a backing array with items, sorting it in place cannot mutate the caller's
-// slice.
+// result never shares a backing array with items, sorting it — or a per-group slice appended from
+// it — in place cannot mutate the caller's slice.
 func itemsBySource(items []Item, source string) []Item {
 	var out []Item
 	for _, it := range items {
 		if it.Source == source {
 			out = append(out, it)
 		}
-	}
-	return out
-}
-
-// firstN returns the first n items, or all of them when there are fewer. The result shares its
-// backing array with items, which is safe because nothing downstream sorts or appends to a tile's
-// Items — and it is the same slice the caller already owns exclusively, itemsBySource having
-// allocated it.
-func firstN(items []Item, n int) []Item {
-	if len(items) <= n {
-		return items
-	}
-	return items[:n]
-}
-
-// sortTasks orders the tasks tile by due date ascending — overdue tasks before those due today
-// (FR-4.1 AC2) — the order the Todoist adapter already fetches in. Equal due dates tie-break on
-// ExternalID so the order is deterministic and cannot flip between refreshes that change nothing
-// about the tasks themselves.
-//
-// Newness is deliberately not a sort key here. On this tile NEW is a badge, not a rank: a task
-// first seen since the last visit is not more urgent than one overdue by a week, and sorting new
-// first would bury the overdue one below it — which is exactly what FR-4.1 AC2 forbids. The GitHub
-// tile is the other way round (SortItems, new first), because there newness *is* the urgency.
-func sortTasks(items []Item) {
-	sort.SliceStable(items, func(i, j int) bool {
-		if !items[i].DueAt.Equal(items[j].DueAt) {
-			return items[i].DueAt.Before(items[j].DueAt)
-		}
-		return items[i].ExternalID < items[j].ExternalID
-	})
-}
-
-// siteMetrics pairs each site's week and month Metric by (Site, WindowDays), never by position —
-// a partial Plausible failure can leave a site holding only one window, and indexing by position
-// would pair it with a neighbouring site's figures. Site order follows first appearance in
-// metrics, which preserves configuration order (FR-3.1 AC3) without sorting or ranging a map.
-func siteMetrics(metrics []Metric) []SiteMetrics {
-	var order []string
-	windows := make(map[string]map[int]Metric)
-
-	for _, m := range metrics {
-		if _, ok := windows[m.Site]; !ok {
-			order = append(order, m.Site)
-			windows[m.Site] = make(map[int]Metric)
-		}
-		windows[m.Site][m.WindowDays] = m
-	}
-
-	out := make([]SiteMetrics, 0, len(order))
-	for _, site := range order {
-		w := windows[site]
-		out = append(out, SiteMetrics{
-			Site:  site,
-			Week:  w[weekWindowDays],
-			Month: w[monthWindowDays],
-		})
 	}
 	return out
 }
