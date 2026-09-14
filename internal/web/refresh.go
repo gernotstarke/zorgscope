@@ -143,7 +143,10 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 
 // renderBusy re-renders the dashboard, with the busy notice, at 409.
 func (s *Server) renderBusy(w http.ResponseWriter, r *http.Request) {
-	d, err := s.dashboard(r.Context())
+	// The filter comes from the request like everywhere else, so a visitor who pressed "Refresh
+	// now" on a narrowed list is handed back the list they were looking at rather than a widened
+	// one. A plain form post carries none, which is the ordinary case and renders the whole list.
+	d, err := s.dashboard(r.Context(), parseFilter(r.URL.Query(), s.loc))
 	if err != nil {
 		// The page cannot be assembled, but the answer to "may I refresh?" is still no. The
 		// visitor gets the notice as plain text; the reason the page failed goes to the log,

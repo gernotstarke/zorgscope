@@ -50,12 +50,12 @@ var pageFiles = []string{
 	"docs.html", "docs_index.html",
 }
 
-// tileGlob matches the per-tile fragment templates. They are parsed twice on purpose: into every
-// page set, so that dashboard.html can compose the page out of them, and into a set of their own,
-// so that GET /tile/{source} can execute one without a layout (FR-1.6 AC1). One definition, two
-// ways of reaching it — a poll therefore cannot return markup that differs from what the page
-// drew.
-const tileGlob = "templates/tiles/*.html"
+// fragmentGlob matches the templates that are both part of a page and answerable on their own.
+// They are parsed twice on purpose: into every page set, so that dashboard.html can compose the
+// page out of them, and into a set of their own, so that GET /items can execute them without a
+// layout (FR-1.6 AC1). One definition, two ways of reaching it — a poll therefore cannot return
+// markup that differs from what the page drew.
+const fragmentGlob = "templates/fragments/*.html"
 
 // strictTransportSecurity is sent on every response (QS-4.4). Fly terminates TLS in front of this
 // process and only ever serves it over HTTPS, so there is no plaintext deployment for the header
@@ -108,8 +108,10 @@ type Server struct {
 	clock  ports.Clock
 	log    *slog.Logger
 	pages  map[string]*template.Template
-	tiles  *template.Template
-	assets map[string]staticAsset
+	// fragments is the set holding the templates GET /items executes without a layout. See
+	// fragmentGlob for why the same files are also parsed into every page.
+	fragments *template.Template
+	assets    map[string]staticAsset
 	// docs maps a documentation URL to its rendered page, and docIndex is the same pages grouped
 	// for /docs. Both are built once, at start-up, by loadDocs.
 	docs     map[string]*docPage
@@ -131,6 +133,10 @@ type Server struct {
 	// to defaultStopGrace. It is a field for the same reason ceiling is: a test has to be able to
 	// watch the shutdown actually happen without waiting a second for every case.
 	stopGrace time.Duration
+	// loc is the configured timezone, and the only thing that reads it is the filter's date field:
+	// a visitor who asks for items created since a date means their own day, not UTC's. It is
+	// resolved once, in New, because time.LoadLocation reads the embedded database on every call.
+	loc *time.Location
 }
 
 // New builds a Server. It fails when a required dependency or credential is missing: a process
@@ -164,16 +170,25 @@ func New(o Options) (*Server, error) {
 	pages := make(map[string]*template.Template, len(pageFiles))
 	for _, name := range pageFiles {
 		t, err := template.New("layout").ParseFS(embedded,
-			"templates/layout.html", "templates/"+name, tileGlob)
+			"templates/layout.html", "templates/"+name, fragmentGlob)
 		if err != nil {
 			return nil, fmt.Errorf("web: parsing %s: %w", name, err)
 		}
 		pages[name] = t
 	}
 
-	tiles, err := template.New("tiles").ParseFS(embedded, tileGlob)
+	fragments, err := template.New("fragments").ParseFS(embedded, fragmentGlob)
 	if err != nil {
-		return nil, fmt.Errorf("web: parsing the tile fragments: %w", err)
+		return nil, fmt.Errorf("web: parsing the fragments: %w", err)
+	}
+
+	// An empty timezone is UTC, which is what time.LoadLocation itself says; anything else that
+	// will not load is a start-up failure rather than a silent fall back to UTC, because a
+	// dashboard quietly filtering by the wrong day is worse than one that refuses to start.
+	// config.Load validates the same string, so this only fires for a Config built in code.
+	loc, err := time.LoadLocation(o.Config.Timezone)
+	if err != nil {
+		return nil, fmt.Errorf("web: timezone: %w", err)
 	}
 
 	assets, err := loadStatic()
@@ -198,7 +213,7 @@ func New(o Options) (*Server, error) {
 		clock:            o.Clock,
 		log:              o.Log,
 		pages:            pages,
-		tiles:            tiles,
+		fragments:        fragments,
 		assets:           assets,
 		docs:             docs,
 		docIndex:         docIndex,
@@ -209,6 +224,7 @@ func New(o Options) (*Server, error) {
 		ceiling:          refreshCeiling,
 		stop:             o.Stop,
 		stopGrace:        defaultStopGrace,
+		loc:              loc,
 	}
 	s.handler = securityHeaders(s.recoverPanics(canonicalPath(s.mux())))
 	return s, nil
@@ -294,7 +310,7 @@ func (s *Server) routes() []route {
 		{http.MethodPost, "/theme", authPublic, s.handleTheme, ""},
 
 		// "/{$}" and not "/": the bare pattern is the mux's catch-all and matches every path no
-		// other route claims, so /admin, /no-such-page and /tile/github/extra all answered 200
+		// other route claims, so /admin, /no-such-page and /items/extra all answered 200
 		// with the whole dashboard — a typo rendering the page it was not asking for, and a
 		// fragment request answered with a document. "{$}" ends the pattern, so it matches the
 		// root and nothing else and the mux answers everything else with its own 404, before any
@@ -303,7 +319,7 @@ func (s *Server) routes() []route {
 		{http.MethodGet, "/{$}", authSessionPage, s.handleDashboard, "/"},
 		{http.MethodGet, "/problems", authSessionPage, s.handleProblems, ""},
 		{http.MethodGet, "/builds", authSessionPage, s.handleBuilds, ""},
-		{http.MethodGet, "/tile/{source}", authSessionFragment, s.handleTile, "/tile/github"},
+		{http.MethodGet, "/items", authSessionFragment, s.handleItems, ""},
 		{http.MethodPost, "/seen", authSessionFragment, s.handleSeen, ""},
 		{http.MethodPost, "/refresh", authSessionFragment, s.handleRefresh, ""},
 		// Stopping the process is session-authed and POST-only, like the two controls above it.
@@ -469,7 +485,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
-// handleDashboard, handleTile and handleSeen live in dashboard.go.
+// handleDashboard, handleItems and handleSeen live in dashboard.go.
 
 // handleRefresh and handleAPIRefresh live in refresh.go.
 

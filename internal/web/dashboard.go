@@ -28,7 +28,8 @@ const minPollSeconds = 30
 // last-visit watermark, so leaving the tab open and letting it poll never clears a badge
 // (FR-1.6 AC2).
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	d, err := s.dashboard(r.Context())
+	f := parseFilter(r.URL.Query(), s.loc)
+	d, err := s.dashboard(r.Context(), f)
 	if err != nil {
 		s.fail(w, r, "assembling the dashboard", err)
 		return
@@ -36,68 +37,63 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	view := s.dashboardView(d)
 	s.render(w, r, http.StatusOK, "dashboard.html", pageData{
 		// The dashboard is the site, so the tab reads "zorgscope" rather than
-		// "Dashboard · zorgscope". NewCount supplies FR-1.2 AC3's prefix.
+		// "Dashboard · zorgscope". NewCount supplies FR-1.2 AC3's prefix, and it is the total
+		// rather than what the filter let through: a search box that moved the badge would make
+		// the tab lie about what is new.
 		Title:     "",
 		NewCount:  d.NewTotal,
 		Dashboard: &view,
 	})
 }
 
-// handleTile renders one tile on its own, without the layout, so htmx can swap a single tile
-// (FR-1.6 AC1) and so a template change never has to be made twice: the fragment a poll returns
-// is the very same "tile" template the page composed itself from.
+// handleItems renders the list on its own, without the layout, so htmx can swap it (FR-1.6 AC1)
+// and so a template change never has to be made twice: the fragment a poll returns is the very
+// same "items" template the page composed itself from.
 //
-// The wildcard is whatever the caller put in the path, so it is matched against the tiles the
-// domain actually assembled rather than interpolated into a template name.
-func (s *Server) handleTile(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("source")
-	d, err := s.dashboard(r.Context())
+// It reads the filter from its own query string, which is the one the list was drawn with — the
+// poll carries it back — so a tab left open on a narrowed list keeps polling that list rather
+// than quietly widening to everything.
+func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
+	f := parseFilter(r.URL.Query(), s.loc)
+	d, err := s.dashboard(r.Context(), f)
 	if err != nil {
-		s.fail(w, r, "assembling a tile", err)
+		s.fail(w, r, "assembling the list", err)
 		return
 	}
-	for _, tile := range d.Tiles {
-		if tile.Name != name {
-			continue
-		}
-		var buf bytes.Buffer
-		td := s.tileData(tile, d.GeneratedAt, d.LastVisitAt)
-		if err := s.tiles.ExecuteTemplate(&buf, "tile", td); err != nil {
-			s.fail(w, r, "rendering a tile", err)
+
+	var buf bytes.Buffer
+	if err := s.fragments.ExecuteTemplate(&buf, "items", s.itemsView(d)); err != nil {
+		s.fail(w, r, "rendering the list", err)
+		return
+	}
+	// None of the four blocks below is inside the list — they are the tab title (FR-1.2 AC3), the
+	// summary line, the warning box and the build indicator — so a swap that carried only the list
+	// would leave all four showing the figures the page was loaded with, and the page would
+	// contradict itself from the first poll on. They travel back with the fragment as htmx
+	// out-of-band swaps, addressed by id, which keeps this a property of the markup: no inline
+	// script, which the CSP forbids anyway (QS-4.4), and nothing to run for a visitor who has
+	// JavaScript switched off, for whom a full page load is the only thing that ever happens and is
+	// correct on its own (FR-1.3 AC3).
+	for _, oob := range []struct {
+		name string
+		data any
+	}{
+		{"tab-title", titleView{NewCount: d.NewTotal}},
+		{"dash-summary", newSummaryView(d, true)},
+		// FR-1.4: a source that starts failing while a tab sits open has to raise the box then,
+		// not at the next page load — which on a dashboard meant to be left open may be tomorrow.
+		{"dash-alert", newAlertView(d, true)},
+		// The build indicator is outside the list too, and a build that breaks while the tab sits
+		// open has to turn it red then rather than at the next page load.
+		{"build-status", s.buildStatusView(d, true)},
+	} {
+		if err := s.fragments.ExecuteTemplate(&buf, oob.name, oob.data); err != nil {
+			s.fail(w, r, "rendering the list", err)
 			return
 		}
-		// The total count is not inside any tile — it is the tab title (FR-1.2 AC3) and the
-		// summary line — so a swap that carried only the tile would leave both showing the figure
-		// the page was loaded with, and the page would contradict itself from the first poll on.
-		// They travel back with the fragment as htmx out-of-band swaps, addressed by id, which
-		// keeps this a property of the markup: no inline script, which the CSP forbids anyway
-		// (QS-4.4), and nothing to run for a visitor who has JavaScript switched off, for whom a
-		// full page load is the only thing that ever happens and is correct on its own
-		// (FR-1.3 AC3).
-		for _, oob := range []struct {
-			name string
-			data any
-		}{
-			{"tab-title", titleView{NewCount: d.NewTotal}},
-			{"dash-summary", newSummaryView(d, true)},
-			// FR-1.4: a source that starts failing while a tab sits open has to raise the box
-			// then, not at the next page load — which on a dashboard meant to be left open may
-			// be tomorrow.
-			{"dash-alert", newAlertView(d, true)},
-			// The build indicator is outside every tile too, and a build that breaks while the
-			// tab sits open has to turn it red then rather than at the next page load.
-			{"build-status", s.buildStatusView(d, true)},
-		} {
-			if err := s.tiles.ExecuteTemplate(&buf, oob.name, oob.data); err != nil {
-				s.fail(w, r, "rendering a tile", err)
-				return
-			}
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write(buf.Bytes())
-		return
 	}
-	http.NotFound(w, r)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(buf.Bytes())
 }
 
 // handleSeen marks everything seen (FR-1.3 AC1) and sends the browser back to the dashboard.
@@ -122,7 +118,9 @@ func (s *Server) handleSeen(w http.ResponseWriter, r *http.Request) {
 // what is wrong: the box that sent the visitor here and the list that greets them are two
 // renderings of one Dashboard, not two independent judgements of health.
 func (s *Server) handleProblems(w http.ResponseWriter, r *http.Request) {
-	d, err := s.dashboard(r.Context())
+	// Unfiltered: this page is about the interfaces, not about the items, and a filter carried
+	// over from the front page would narrow nothing here while implying it had.
+	d, err := s.dashboard(r.Context(), domain.Filter{})
 	if err != nil {
 		s.fail(w, r, "assembling the problem details", err)
 		return
@@ -143,7 +141,8 @@ func (s *Server) handleProblems(w http.ResponseWriter, r *http.Request) {
 // and a report on the front page pushes the issues and pull requests that do need handling below
 // the fold.
 func (s *Server) handleBuilds(w http.ResponseWriter, r *http.Request) {
-	d, err := s.dashboard(r.Context())
+	// Unfiltered, for the same reason /problems is: the rows here are repositories, not items.
+	d, err := s.dashboard(r.Context(), domain.Filter{})
 	if err != nil {
 		s.fail(w, r, "assembling the build details", err)
 		return
@@ -158,9 +157,14 @@ func (s *Server) handleBuilds(w http.ResponseWriter, r *http.Request) {
 
 // ---------------------------------------------------------------- assembly
 
-// dashboard reads everything the page needs from the store and hands it to the domain. Every read
-// is a plain query against stored data; nothing here talks to an upstream service (FR-1.1 AC2).
-func (s *Server) dashboard(ctx context.Context) (domain.Dashboard, error) {
+// dashboard reads everything the page needs from the store and hands it to the domain, narrowed by
+// f. Every read is a plain query against stored data; nothing here talks to an upstream service
+// (FR-1.1 AC2).
+//
+// The filter is handed to the domain rather than applied here, because the counts it must not
+// change — the badge, the tab title, each repository's total — are counted in the same pass
+// (FR-1.2).
+func (s *Server) dashboard(ctx context.Context, f domain.Filter) (domain.Dashboard, error) {
 	items, err := s.store.Items(ctx)
 	if err != nil {
 		return domain.Dashboard{}, fmt.Errorf("reading items: %w", err)
@@ -168,10 +172,6 @@ func (s *Server) dashboard(ctx context.Context) (domain.Dashboard, error) {
 	builds, err := s.store.Builds(ctx)
 	if err != nil {
 		return domain.Dashboard{}, fmt.Errorf("reading builds: %w", err)
-	}
-	metrics, err := s.store.Metrics(ctx)
-	if err != nil {
-		return domain.Dashboard{}, fmt.Errorf("reading metrics: %w", err)
 	}
 	states, err := s.store.SourceStates(ctx)
 	if err != nil {
@@ -201,29 +201,24 @@ func (s *Server) dashboard(ctx context.Context) (domain.Dashboard, error) {
 		StaleAfter:        s.cfg.Refresh.StaleAfter,
 		Items:             items,
 		Builds:            builds,
-		Metrics:           metrics,
 		States:            states,
 		Disabled:          s.disabledSources(),
-		// Configuration order, so the details page can report a repository that has never
-		// produced a workflow run — the store holds only repositories that have.
-		Repos: s.cfg.GitHub.Repos,
+		// Configuration order, so the list groups the way the YAML reads and the details page can
+		// report a repository that has never produced a workflow run — the store holds only
+		// repositories that have.
+		Repos:  s.cfg.GitHub.Repos,
+		Filter: f,
 	}), nil
 }
 
 // disabledSources names the fetchers with no credential, in the source vocabulary the domain's
 // States and Disabled use (FR-8.2 AC2). GitHub contributes two fetcher names because issues and
-// builds are two fetchers over one credential: without the token both tiles are dark, and naming
-// only "github" would leave the builds tile claiming to be merely stale.
+// builds are two fetchers over one credential: without the token both go dark, and naming only
+// "github" would leave the build indicator claiming to be merely stale.
 func (s *Server) disabledSources() []string {
 	var out []string
 	if !s.cfg.Enabled("github") {
 		out = append(out, "github", "github-builds")
-	}
-	if !s.cfg.Enabled("plausible") {
-		out = append(out, "plausible")
-	}
-	if !s.cfg.Enabled("todoist") {
-		out = append(out, "todoist")
 	}
 	// Slack is not a fetcher and so is not a case Config.Enabled knows about, but the problems
 	// page lists it as an external interface all the same — it is the one service whose failures
@@ -241,49 +236,25 @@ func (s *Server) disabledSources() []string {
 // named after a credential as being one.
 const noAuthNotice = "no credential is configured for this source"
 
-// tileCredential maps a tile to the configured source whose credential and watch list decide
-// whether it is dark. Both GitHub tiles hang off the one entry, because issues and builds are two
-// fetchers over a single token.
-var tileCredential = map[string]string{
-	"github": "github",
-	"builds": "github",
-	"sites":  "plausible",
-	"tasks":  "todoist",
-}
-
-// disabledReason says why a tile is dark, in words that point at the thing that is actually
-// missing.
+// githubDisabledReason says why there is nothing to show, in words that point at the thing that is
+// actually missing.
 //
 // Config.Enabled answers one question with two meanings: it is false when the credential is absent
-// and also when there is nothing configured to watch — no repositories, no sites, no filter. The
-// tile used to render both as "no credential is configured", so an operator who had commented out
-// the repos: list while testing was sent hunting a Fly secrets problem that did not exist, with a
-// correct token in place. Enabled is where the two are conflated and it may not be changed here,
-// so the distinction is drawn where the sentence is written: the credential is checked first, and
-// only when it is present does the empty watch list get named.
-func (s *Server) disabledReason(tile string) string {
-	switch tileCredential[tile] {
-	case "github":
-		if s.cfg.Secrets.GitHubToken == "" {
-			return noAuthNotice
-		}
-		return "no repositories are configured to watch"
-	case "plausible":
-		if s.cfg.Secrets.PlausibleKey == "" {
-			return noAuthNotice
-		}
-		return "no sites are configured to watch"
-	case "todoist":
-		if s.cfg.Secrets.TodoistToken == "" {
-			return noAuthNotice
-		}
-		return "no task filter is configured"
+// and also when there is nothing configured to watch. The page used to render both as "no
+// credential is configured", so an operator who had commented out the repos: list while testing
+// was sent hunting a Fly secrets problem that did not exist, with a correct token in place.
+// Enabled is where the two are conflated and it may not be changed here, so the distinction is
+// drawn where the sentence is written: the credential is checked first, and only when it is
+// present does the empty watch list get named.
+func (s *Server) githubDisabledReason() string {
+	if s.cfg.Secrets.GitHubToken == "" {
+		return noAuthNotice
 	}
-	return noAuthNotice
+	return "no repositories are configured to watch"
 }
 
-// pollSeconds is the htmx poll interval for every tile (FR-1.6 AC1): the configured refresh
-// interval, because a tile cannot change between refreshes and polling faster would only wake a
+// pollSeconds is the htmx poll interval for the list (FR-1.6 AC1): the configured refresh
+// interval, because the list cannot change between refreshes and polling faster would only wake a
 // machine that is meant to scale to zero.
 func (s *Server) pollSeconds() int {
 	secs := int(s.cfg.Refresh.Interval / time.Second)
@@ -321,7 +292,14 @@ type dashboardView struct {
 	// shows up at all.
 	LastRunDetail string
 	LastVisit     timeView
-	Tiles         []tileData
+	// Filter is the filter as the visitor left it, echoed back so the form renders in the state
+	// the page was asked for, and Repos is what its repository list offers — configuration order,
+	// because that is the order the groups below it appear in.
+	Filter filterView
+	Repos  []string
+	// Items is the list itself, and is what both this page and GET /items execute the "items"
+	// template with, so the two can never draw different markup (FR-1.6 AC1).
+	Items itemsView
 	// Problems is every external interface's health, worst first, and ProblemCount how many of
 	// them are actually wrong. The count is what the dashboard's warning box is drawn from: a
 	// deployment with a source switched off is not a deployment with a problem, and a box that
@@ -409,31 +387,49 @@ func newSummaryView(d domain.Dashboard, oob bool) summaryView {
 	}
 }
 
-// tileData is one tile, and is what both the page and the /tile/{source} fragment execute the
-// "tile" template with — the fragment is therefore identical to the tile the page drew.
-type tileData struct {
-	Name     string
-	Title    string
-	NewCount int
-	Stale    bool
-	Disabled bool
-	// DisabledReason is why the tile is dark, set only when Disabled is. It names the credential
-	// or the empty watch list, whichever is actually missing — never both, and never the wrong
-	// one (FR-8.2 AC2).
+// itemsView is the whole list section: the source's health above it, and one group per
+// repository. It is what both the page and the GET /items fragment execute the "items" template
+// with, so the fragment is identical to the list the page drew.
+type itemsView struct {
+	// Query is the filter as a query string — "?kind=pr&q=header", or "" — and is what the poll
+	// re-fetches itself with, so an open tab keeps polling the list it is showing rather than
+	// widening to everything at the first tick. It is a template.URL because it is a URL fragment
+	// composed here rather than borrowed text; url.Values.Encode escapes every value in it.
+	Query          template.URL
+	PollSecs       int
+	Source         sourceView
 	DisabledReason string
+	Groups         []groupView
+	// Filtered says whether a filter is in force, which is the difference between "nothing
+	// matches this filter" and "nothing is open".
+	Filtered  bool
+	ShownLine string // "12 of 40 open" when filtered, "40 open" otherwise
+}
+
+// sourceView is the GitHub source's own health, said above the list rather than on a tile: there
+// is one source, so its state is the state of everything below it.
+type sourceView struct {
+	Disabled, Stale bool
 	// Error is upstream error text, already scrubbed of every configured secret (QS-4.3).
-	Error    string
-	LastOK   timeView
-	PollSecs int
-	Items    []itemView
-	// More is how many items the source holds beyond the ones listed. The tile says the number
-	// rather than trailing off, so a list of five out of forty cannot be read as all there is.
-	More  int
-	Sites []siteView
-	// HasContent says whether this tile has anything stored to show, whatever its health. A
-	// disabled source holding items is the case that needs it: the tile must say that what is
-	// below is the last stored data rather than pretend nothing was ever fetched.
-	HasContent bool
+	Error  string
+	LastOK timeView
+}
+
+// groupView is one repository's block of the list. NewCount and CountLine are taken before the
+// filter is applied, so narrowing the list never makes the page understate what is out there
+// (FR-1.2).
+type groupView struct {
+	Repo      string
+	NewCount  int
+	CountLine string // "3 of 7" when filtered, "7" otherwise
+	Items     []itemView
+}
+
+// filterView is the filter as the form renders it: every field a string, because that is what an
+// input carries, and Since in the form <input type="date"> submits.
+type filterView struct {
+	Repo, Text, Since string
+	Kind              string // "", "issue" or "pr"
 }
 
 // problemView is one external interface on the warning box and the details page. Severity is the
@@ -463,26 +459,20 @@ type timeView struct {
 	Relative string
 }
 
-// itemView is one row of the GitHub or the tasks tile.
+// itemView is one row of the list.
 type itemView struct {
 	Title string
 	// Summary is the first line or so of the item's own description, already cut to the length
 	// the page shows it at. It is borrowed text and is escaped like every other borrowed string
 	// here — never a template.HTML.
-	Summary  string
-	URL      string
-	Repo     string
-	Number   int
-	Kind     string
-	Author   string
-	New      bool
-	Created  timeView
-	Updated  timeView
-	HasDue   bool
-	Overdue  bool
-	Due      string
-	DueAt    string
-	Priority string
+	Summary string
+	URL     string
+	Number  int
+	Kind    string
+	Author  string
+	New     bool
+	Created timeView
+	Updated timeView
 }
 
 // buildView is one row of the build details page.
@@ -505,34 +495,6 @@ type buildView struct {
 	Badge template.URL
 }
 
-// siteView is one site's pair of Plausible windows.
-type siteView struct {
-	Site  string
-	Week  windowView
-	Month windowView
-}
-
-// windowView is one Plausible window. Known is false when the window never arrived — a partial
-// Plausible failure can leave a site holding only one of its two — which must read as missing
-// rather than as a row of zeroes.
-type windowView struct {
-	Known          bool
-	Days           int
-	Visitors       int
-	Pageviews      int
-	VisitorChange  changeView
-	PageviewChange changeView
-}
-
-// changeView is a figure's change against the preceding period (FR-3.1 AC2). Text always carries
-// the direction as a sign or a word, so colour is never the only carrier of the meaning
-// (FR-1.5 AC2).
-type changeView struct {
-	Known     bool
-	Direction string
-	Text      string
-}
-
 // ---------------------------------------------------------------- view construction
 
 // dashboardView turns the assembled domain dashboard into the page's presentation data.
@@ -547,14 +509,13 @@ func (s *Server) dashboardView(d domain.Dashboard) dashboardView {
 		// like every other borrowed string on this page (QS-4.3).
 		LastRunDetail: Redact(s.cfg.Secrets, d.LastRunDetail),
 		LastVisit:     newTimeView(d.LastVisitAt, d.GeneratedAt),
-		Tiles:         make([]tileData, 0, len(d.Tiles)),
+		Filter:        newFilterView(d.Filter),
+		Repos:         s.cfg.GitHub.Repos,
+		Items:         s.itemsView(d),
 		ProblemCount:  d.ProblemCount,
 		Problems:      make([]problemView, 0, len(d.Problems)),
 		Alert:         newAlertView(d, false),
 		Builds:        s.buildStatusView(d, false),
-	}
-	for _, tile := range d.Tiles {
-		v.Tiles = append(v.Tiles, s.tileData(tile, d.GeneratedAt, d.LastVisitAt))
 	}
 	for _, p := range d.Problems {
 		v.Problems = append(v.Problems, s.problemView(p, d.GeneratedAt))
@@ -597,80 +558,70 @@ func severityLabel(sev domain.Severity) string {
 	}
 }
 
-// tileData turns one domain tile into its presentation data. It preserves the order the domain
-// produced: BuildDashboard already sorts GitHub items new-first-then-recently-updated and the
-// tasks tile by due date, and re-sorting here would silently put a task overdue by a week below
-// one due this evening (FR-4.1 AC2).
-func (s *Server) tileData(t domain.Tile, now, lastVisit time.Time) tileData {
-	td := tileData{
-		Name:     t.Name,
-		Title:    t.Title,
-		NewCount: t.NewCount,
-		Stale:    t.Stale,
-		Disabled: t.Disabled,
-		// The error came from an upstream library and may quote a URL, a header or a token.
-		// Nothing reaches the page without going through Redact (QS-4.3).
-		Error:    Redact(s.cfg.Secrets, t.Error),
-		LastOK:   newTimeView(t.LastOKAt, now),
+// itemsView turns the assembled dashboard into the list section. It preserves the order the
+// domain produced — BuildDashboard groups in configuration order and sorts each group new first,
+// then most recently updated (FR-2.2 AC2) — because re-sorting here would silently disagree with
+// the counts the same pass produced.
+func (s *Server) itemsView(d domain.Dashboard) itemsView {
+	v := itemsView{
+		Query:    template.URL(queryString(d.Filter)), // #nosec G203 -- see the field's comment
 		PollSecs: s.pollSeconds(),
+		Source: sourceView{
+			Disabled: d.Source.Disabled,
+			Stale:    d.Source.Stale,
+			// The error came from an upstream library and may quote a URL, a header or a token.
+			// Nothing reaches the page without going through Redact (QS-4.3).
+			Error:  Redact(s.cfg.Secrets, d.Source.Error),
+			LastOK: newTimeView(d.Source.LastOKAt, d.GeneratedAt),
+		},
+		Groups:    make([]groupView, 0, len(d.Groups)),
+		Filtered:  !d.Filter.Empty(),
+		ShownLine: shownLine(d),
 	}
-	if t.Disabled {
-		td.DisabledReason = s.disabledReason(t.Name)
+	if d.Source.Disabled {
+		v.DisabledReason = s.githubDisabledReason()
 	}
-	for _, it := range t.Items {
-		td.Items = append(td.Items, newItemView(it, now, it.IsNew(lastVisit)))
+	for _, g := range d.Groups {
+		gv := groupView{
+			Repo:      g.Repo,
+			NewCount:  g.NewCount,
+			CountLine: countLine(len(g.Items), g.Total, v.Filtered),
+			Items:     make([]itemView, 0, len(g.Items)),
+		}
+		for _, it := range g.Items {
+			gv.Items = append(gv.Items, newItemView(it, d.GeneratedAt, it.IsNew(d.LastVisitAt)))
+		}
+		v.Groups = append(v.Groups, gv)
 	}
-	if t.Total > len(t.Items) {
-		td.More = t.Total - len(t.Items)
-	}
-	if t.Name == "sites" {
-		td.Sites = s.orderedSites(t.Sites)
-	}
-	td.HasContent = len(td.Items) > 0 || len(td.Sites) > 0
-	return td
+	return v
 }
 
-// orderedSites lists the sites the sites tile shows in the order configuration names them
-// (FR-3.1 AC3), rather than in whatever order the store happened to return their metrics in — an
-// ORDER BY added to the query, or a driver returning rows differently, would otherwise silently
-// re-order the tile.
-//
-// A configured site that has no metrics at all still gets a row, with both windows reading as
-// missing. Dropping it would be the wrong answer to "I configured this site and cannot see it":
-// the tile would look complete while a site was quietly absent. A site with metrics that
-// configuration does not name — a site removed from the YAML whose rows are still stored — is
-// listed after the configured ones rather than hidden.
-func (s *Server) orderedSites(sites []domain.SiteMetrics) []siteView {
-	byName := make(map[string]domain.SiteMetrics, len(sites))
-	for _, sm := range sites {
-		byName[sm.Site] = sm
+// shownLine is the count above the list. It names the total whenever a filter is in force,
+// because "12 open" and "12 of 150 open" are different news and only one of them is true.
+func shownLine(d domain.Dashboard) string {
+	if d.Filter.Empty() {
+		return strconv.Itoa(d.Total) + " open"
 	}
-
-	out := make([]siteView, 0, len(sites)+len(s.cfg.Plausible.Sites))
-	done := make(map[string]bool, len(out))
-	for _, name := range s.cfg.Plausible.Sites {
-		if done[name] {
-			continue
-		}
-		done[name] = true
-		out = append(out, newSiteView(name, byName[name]))
-	}
-	for _, sm := range sites {
-		if done[sm.Site] {
-			continue
-		}
-		done[sm.Site] = true
-		out = append(out, newSiteView(sm.Site, sm))
-	}
-	return out
+	return strconv.Itoa(d.Shown) + " of " + strconv.Itoa(d.Total) + " open"
 }
 
-func newSiteView(name string, sm domain.SiteMetrics) siteView {
-	return siteView{
-		Site:  name,
-		Week:  newWindowView(sm.Week, 7),
-		Month: newWindowView(sm.Month, 30),
+// countLine is the same figure per repository, and is drawn from the group's unfiltered total for
+// the reason FR-1.2 gives: the filter says what is being looked at, never what is out there.
+func countLine(shown, total int, filtered bool) string {
+	if !filtered {
+		return strconv.Itoa(total)
 	}
+	return strconv.Itoa(shown) + " of " + strconv.Itoa(total)
+}
+
+// newFilterView renders the filter back into the strings its form fields carry. An unset date is
+// the empty string rather than a zero time formatted, which the date input would refuse anyway.
+func newFilterView(f domain.Filter) filterView {
+	v := filterView{Repo: f.Repo, Kind: string(f.Kind), Text: f.Text}
+	if !f.CreatedSince.IsZero() {
+		v.Since = f.CreatedSince.Format(dateLayout)
+	}
+	return v
 }
 
 func newTimeView(t, now time.Time) timeView {
@@ -688,27 +639,15 @@ func newTimeView(t, now time.Time) timeView {
 // watermark belongs to the dashboard, not to the item.
 func newItemView(it domain.Item, now time.Time, isNew bool) itemView {
 	v := itemView{
-		Title:    it.Title,
-		Summary:  summaryLine(it.Summary),
-		URL:      it.URL,
-		Repo:     it.Repo,
-		Number:   it.Number,
-		Kind:     kindLabel(it.Kind),
-		Author:   it.Author,
-		New:      isNew,
-		Created:  newTimeView(it.CreatedAt, now),
-		Updated:  newTimeView(it.UpdatedAt, now),
-		Priority: priorityLabel(it.Priority),
-	}
-	if !it.DueAt.IsZero() {
-		v.HasDue = true
-		v.DueAt = it.DueAt.UTC().Format(time.RFC3339)
-		if it.DueAt.Before(now) {
-			v.Overdue = true
-			v.Due = "overdue by " + humanise(now.Sub(it.DueAt))
-		} else {
-			v.Due = "due in " + humanise(it.DueAt.Sub(now))
-		}
+		Title:   it.Title,
+		Summary: summaryLine(it.Summary),
+		URL:     it.URL,
+		Number:  it.Number,
+		Kind:    kindLabel(it.Kind),
+		Author:  it.Author,
+		New:     isNew,
+		Created: newTimeView(it.CreatedAt, now),
+		Updated: newTimeView(it.UpdatedAt, now),
 	}
 	return v
 }
@@ -817,7 +756,7 @@ func (s *Server) buildStatusView(d domain.Dashboard, oob bool) buildStatusView {
 		Rows:     make([]buildView, 0, len(b.Rows)),
 	}
 	if b.Disabled {
-		v.DisabledReason = s.disabledReason("builds")
+		v.DisabledReason = s.githubDisabledReason()
 	}
 	for _, row := range b.Rows {
 		v.Rows = append(v.Rows, newBuildView(row, d.GeneratedAt))
@@ -868,49 +807,11 @@ func countOf(n, total int) string {
 	return strconv.Itoa(n) + unit + strconv.Itoa(total)
 }
 
-// newWindowView renders one Plausible window. A window that never arrived is the zero Metric,
-// which the domain marks by an empty Site — the one thing that distinguishes it from a real
-// result of zero visitors.
-func newWindowView(m domain.Metric, days int) windowView {
-	if m.Site == "" {
-		return windowView{Days: days}
-	}
-	visitorPct, visitorKnown := m.VisitorChange()
-	pageviewPct, pageviewKnown := m.PageviewChange()
-	return windowView{
-		Known:          true,
-		Days:           days,
-		Visitors:       m.Visitors,
-		Pageviews:      m.Pageviews,
-		VisitorChange:  newChangeView(visitorPct, visitorKnown),
-		PageviewChange: newChangeView(pageviewPct, pageviewKnown),
-	}
-}
-
-// newChangeView formats a percentage change (FR-3.1 AC2). The direction is a word rather than a
-// sign or an arrow, for two reasons: colour is then never the only carrier of the meaning
-// (FR-1.5 AC2), and a screen reader says "up twenty per cent" instead of spelling a glyph. An
-// unknown change — the preceding period was zero, so a jump from nothing is not a percentage —
-// says so instead of rendering as 0%.
-func newChangeView(percent float64, known bool) changeView {
-	if !known {
-		return changeView{Direction: "unknown", Text: "no baseline"}
-	}
-	switch {
-	case percent > 0:
-		return changeView{Known: true, Direction: "up", Text: fmt.Sprintf("up %.1f%%", percent)}
-	case percent < 0:
-		return changeView{Known: true, Direction: "down", Text: fmt.Sprintf("down %.1f%%", -percent)}
-	default:
-		return changeView{Known: true, Direction: "flat", Text: "no change"}
-	}
-}
-
 // ---------------------------------------------------------------- formatting
 
-// displaySummaryLen is how much of an item's description the tile shows. Eighty characters is
-// about one line at the tile's width in the small type it is set in — long enough to say what an
-// issue is about, short enough that five of them still read as a list rather than as prose.
+// displaySummaryLen is how much of an item's description the list shows. Eighty characters is
+// about one line in the small type it is set in — long enough to say what an issue is about,
+// short enough that a column of them still reads as a list rather than as prose.
 const displaySummaryLen = 80
 
 // summaryLine cuts a stored summary down to what is displayed, on a word boundary, and marks that
@@ -972,21 +873,9 @@ func kindLabel(k domain.Kind) string {
 		return "issue"
 	case domain.KindPR:
 		return "pull request"
-	case domain.KindTask:
-		return "task"
 	default:
 		return string(k)
 	}
-}
-
-// priorityLabel maps Todoist's API priority — where 1 is natural and 4 is urgent — onto the p1..p4
-// labels the Todoist interface itself shows, in which p1 is the urgent one. Anything outside the
-// documented range is rendered as nothing rather than as a wrong label.
-func priorityLabel(p int) string {
-	if p < 1 || p > 4 {
-		return ""
-	}
-	return "P" + strconv.Itoa(5-p)
 }
 
 // spaced turns GitHub's snake_case enumerations into readable words.

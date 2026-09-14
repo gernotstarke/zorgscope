@@ -1,0 +1,61 @@
+{{/* The list section. It is one template for the page and for GET /items, so a poll or a filter
+     change can never draw something the page would not have drawn (FR-1.6 AC1). The root carries
+     the id htmx targets and the poll: every N seconds it re-fetches itself with the filter it was
+     drawn with, so leaving the tab open keeps it current and never counts as a visit
+     (FR-1.6 AC2).
+
+     The link to github.com in each heading is a link, not a fetched resource, so it costs the
+     page nothing while it is being read and the Content-Security-Policy is unaffected. */}}
+{{define "items"}}
+<section class="items-section" id="items"
+         hx-get="/items{{.Query}}" hx-trigger="every {{.PollSecs}}s" hx-swap="outerHTML">
+  {{/* The source's health above the list rather than on a tile: there is one source now, so its
+       state is the state of everything below it. A disabled source is said first — a source that
+       never runs is neither stale nor failing (FR-8.2 AC2). */}}
+  <p class="source-line">
+    {{/* A disabled source that still has groups below it has to say what they are: the rows were
+         fetched while the credential was there and are as old as that, and a bare "disabled" over
+         a list of issues invites the reader to take them for current (FR-1.4 AC1). */}}
+    {{if .Source.Disabled}}<span class="notice notice-disabled" role="status">Disabled — {{.DisabledReason}}.{{if .Groups}} What follows is the data that was stored before it went away.{{end}}</span>
+    {{else if .Source.Error}}<span class="notice notice-error" role="alert">Failing — {{.Source.Error}} (last success {{if .Source.LastOK.Known}}<time datetime="{{.Source.LastOK.Absolute}}">{{.Source.LastOK.Relative}}</time>{{else}}never{{end}})</span>
+    {{else if .Source.Stale}}<span class="notice notice-stale" role="status">Stale — nothing has been fetched recently.</span>
+    {{else if .Source.LastOK.Known}}<span class="source-age">Fetched <time datetime="{{.Source.LastOK.Absolute}}">{{.Source.LastOK.Relative}}</time></span>
+    {{else}}<span class="source-age">Never fetched</span>{{end}}
+    <span class="shown-count">{{.ShownLine}}</span>
+  </p>
+  {{range .Groups}}
+  <section class="repo-group">
+    <h2 class="repo-title"><a href="https://github.com/{{.Repo}}" target="_blank" rel="noopener noreferrer">{{.Repo}}</a>
+      {{/* The new count and the total are taken before the filter is applied, so narrowing the
+           list never makes the page understate what is out there (FR-1.2). */}}
+      {{if gt .NewCount 0}}<span class="new-count">{{.NewCount}} new</span>{{end}}
+      <span class="repo-count">{{.CountLine}}</span></h2>
+    <ul class="items">
+      {{range .Items}}
+      <li class="item{{if .New}} is-new{{end}}">
+        <p class="item-line">
+          {{if .New}}<span class="badge badge-new">NEW</span>{{end}}
+          {{if .Number}}<span class="item-number">#{{.Number}}</span>{{end}}
+          <a class="item-title" href="{{.URL}}" target="_blank" rel="noopener noreferrer">{{.Title}}</a>
+        </p>
+        {{/* The item's own description, in small type under its title: a number and a headline
+             often do not say what an issue is actually about. Absent when the source has none —
+             an issue opened with an empty body — in which case the row is simply shorter rather
+             than carrying an empty line. */}}
+        {{with .Summary}}<p class="item-summary">{{.}}</p>{{end}}
+        <p class="item-meta">{{.Kind}}{{if .Author}} · {{.Author}}{{end}}</p>
+        {{/* Both stamps are guarded by .Known: a zero timestamp — a stored row whose created_at
+             failed to parse — must read as unknown rather than render <time datetime=""></time>,
+             which is invalid HTML and shows the visitor the word "opened" followed by nothing. */}}
+        <p class="item-meta">{{if .Created.Known}}opened <time datetime="{{.Created.Absolute}}">{{.Created.Relative}}</time>{{else}}opened at an unknown time{{end}}{{if .Updated.Known}}, updated <time datetime="{{.Updated.Absolute}}">{{.Updated.Relative}}</time>{{end}}</p>
+      </li>
+      {{end}}
+    </ul>
+  </section>
+  {{else}}
+  {{/* An empty list has two different causes, and saying which one it is saves the reader
+       wondering whether the filter or the world is responsible. */}}
+  <p class="empty">{{if .Filtered}}Nothing matches this filter.{{else}}Nothing open.{{end}}</p>
+  {{end}}
+</section>
+{{end}}

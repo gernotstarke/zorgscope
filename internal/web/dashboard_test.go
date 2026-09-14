@@ -28,7 +28,7 @@ import (
 )
 
 // FR-1.1 AC1, FR-1.2 AC1/AC2.
-func TestDashboardRendersTilesAndNewBadges(t *testing.T) {
+func TestDashboardRendersTheListAndNewBadges(t *testing.T) {
 	store := &dashStore{
 		lastVisit: testNow.Add(-2 * time.Hour),
 		items: []domain.Item{
@@ -39,15 +39,13 @@ func TestDashboardRendersTilesAndNewBadges(t *testing.T) {
 	}
 	body := getAuthed(t, dashHandler(t, store), "/").Body.String()
 
-	// Builds is not among them: it is one indicator on this page and a page of its own
-	// (FR-2.3), so that the front page stays about what needs handling.
-	for _, want := range []string{"GitHub", "Sites", "Tasks"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("no %q tile on the dashboard (FR-1.1 AC1)", want)
-		}
+	// One list, grouped by repository (FR-1.1 AC1). Builds are one indicator on this page and a
+	// page of their own (FR-2.3), so that the front page stays about what needs handling.
+	if !strings.Contains(body, `id="items"`) {
+		t.Error("the dashboard has no list section (FR-1.1 AC1)")
 	}
-	if strings.Contains(body, `id="tile-builds"`) {
-		t.Error("builds are still a tile on the front page (FR-2.3)")
+	if !strings.Contains(body, `<a href="https://github.com/org/repo"`) {
+		t.Error("the list does not group by repository, or the heading does not link it (FR-1.1 AC1)")
 	}
 	if !strings.Contains(body, "NEW") {
 		t.Error("the new item has no NEW badge (FR-1.2 AC1)")
@@ -56,7 +54,10 @@ func TestDashboardRendersTilesAndNewBadges(t *testing.T) {
 		t.Errorf("NEW appears %d times, want 1 (FR-1.2 AC1)", n)
 	}
 	if !strings.Contains(body, "1 new") {
-		t.Error("the GitHub tile does not state how many of its items are new (FR-1.2 AC2)")
+		t.Error("the repository heading does not state how many of its items are new (FR-1.2 AC2)")
+	}
+	if !strings.Contains(body, "2 open") {
+		t.Error("the list does not state how many items are open (FR-1.2 AC2)")
 	}
 }
 
@@ -134,7 +135,7 @@ func TestDashboardMakesNoUpstreamRequest(t *testing.T) {
 	h := s.Handler()
 
 	getAuthed(t, h, "/")
-	getAuthed(t, h, "/tile/github")
+	getAuthed(t, h, "/items")
 
 	if n := fetcher.CallCount(); n != 0 {
 		t.Errorf("rendering the dashboard fetched %d time(s) upstream, want 0 (FR-1.1 AC2)", n)
@@ -228,54 +229,140 @@ func TestHeaderStatesNoSuccessfulRunWhenThereHasNeverBeenOne(t *testing.T) {
 }
 
 // FR-1.6 AC1.
-func TestTileFragmentRendersWithoutTheLayout(t *testing.T) {
+func TestTheItemsFragmentRendersWithoutTheLayout(t *testing.T) {
 	store := &dashStore{
 		items:  []domain.Item{ghItem(1, "An issue", testNow.Add(-time.Hour))},
 		states: healthyStates(testNow),
 	}
-	rec := getAuthed(t, dashHandler(t, store), "/tile/github")
+	rec := getAuthed(t, dashHandler(t, store), "/items")
 	body := rec.Body.String()
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /tile/github = %d, want 200", rec.Code)
+		t.Fatalf("GET /items = %d, want 200", rec.Code)
 	}
 	if strings.Contains(body, "<html") {
-		t.Error("a tile fragment must be a fragment, not a page (FR-1.6 AC1)")
+		t.Error("the list fragment must be a fragment, not a page (FR-1.6 AC1)")
 	}
-	if !strings.Contains(body, `id="tile-github"`) {
-		t.Error("the fragment does not replace the tile it came from (FR-1.6 AC1)")
+	if !strings.Contains(body, `id="items"`) {
+		t.Error("the fragment does not replace the list it came from (FR-1.6 AC1)")
 	}
 	if !strings.Contains(body, "An issue") {
 		t.Error("the fragment carries no content")
 	}
 }
 
-// FR-1.6 AC1: the tiles poll themselves at the configured refresh interval.
-func TestTilesPollAtTheConfiguredInterval(t *testing.T) {
+// FR-1.6 AC1: the list polls itself at the configured refresh interval, carrying the filter it was
+// drawn with — an open tab must keep polling the list it is showing, not widen to everything.
+func TestTheListPollsItselfAtTheConfiguredInterval(t *testing.T) {
 	store := &dashStore{states: healthyStates(testNow)}
-	body := getAuthed(t, dashHandler(t, store), "/").Body.String()
+	h := dashHandler(t, store)
+	body := getAuthed(t, h, "/").Body.String()
 
-	if !strings.Contains(body, `hx-get="/tile/github"`) {
-		t.Error("the GitHub tile does not poll its own fragment (FR-1.6 AC1)")
+	// testOptions configures a 15-minute interval. The swap has to be outerHTML: the fragment is
+	// the whole <section id="items">, so htmx's default innerHTML swap would nest the returned
+	// list inside the existing one on every poll, duplicating its items and its id.
+	if !strings.Contains(body, `hx-get="/items" hx-trigger="every 900s" hx-swap="outerHTML"`) {
+		t.Errorf("the list does not replace itself on a poll at the configured interval (FR-1.6 AC1):\n%s",
+			firstLineContaining(body, "items-section"))
 	}
-	// testOptions configures a 15-minute interval.
-	if !strings.Contains(body, "every 900s") {
-		t.Error("the poll trigger does not follow the configured refresh interval (FR-1.6 AC1)")
-	}
-	// The swap has to be outerHTML: the fragment is a whole <section class="tile">, so htmx's
-	// default innerHTML swap would nest the returned tile inside the existing one on every poll,
-	// duplicating its items and its id, four levels deep after an hour.
-	if !strings.Contains(body, `hx-get="/tile/github" hx-trigger="every 900s" hx-swap="outerHTML"`) {
-		t.Error("the GitHub tile does not replace itself on a poll (FR-1.6 AC1)")
-	}
-	if n := strings.Count(body, `hx-swap="outerHTML"`); n != 3 {
-		t.Errorf("%d of 3 tiles replace themselves on a poll (FR-1.6 AC1)", n)
+	filtered := getAuthed(t, h, "/?kind=pr").Body.String()
+	if !strings.Contains(filtered, `hx-get="/items?kind=pr"`) {
+		t.Errorf("a filtered list polls the unfiltered fragment (FR-1.6 AC1):\n%s",
+			firstLineContaining(filtered, "items-section"))
 	}
 	// And the fragment carries it too, or polling stops after the first swap.
-	fragment := getAuthed(t, dashHandler(t, store), "/tile/github").Body.String()
+	fragment := getAuthed(t, h, "/items").Body.String()
 	if !strings.Contains(fragment, `hx-swap="outerHTML"`) {
-		t.Error("the tile fragment does not carry its own swap, so the tile stops polling " +
+		t.Error("the list fragment does not carry its own swap, so the list stops polling " +
 			"after the first one (FR-1.6 AC1)")
+	}
+}
+
+// FR-1.2: the filter narrows the list from the query string alone, so the narrowed page is a URL
+// that can be reloaded, bookmarked and shared — everything htmx does on top of it is enhancement.
+func TestTheFrontPageFiltersByQueryString(t *testing.T) {
+	h := dashHandler(t, representativeStore())
+	c := signIn(t, h)
+
+	all := getAs(h, "/", c).Body.String()
+	prs := getAs(h, "/?kind=pr", c).Body.String()
+	if strings.Count(prs, `class="item`) >= strings.Count(all, `class="item`) {
+		t.Fatal("kind=pr did not narrow the list")
+	}
+	if !strings.Contains(prs, `value="pr" checked`) {
+		t.Fatal("the filter form does not echo the applied kind")
+	}
+	// A filter that matches nothing says which of the two empty lists this is: a filter with
+	// nothing behind it, or a dashboard with nothing on it.
+	none := getAs(h, "/?q=zzz-no-such-text", c).Body.String()
+	if !strings.Contains(none, "Nothing matches this filter.") {
+		t.Fatal("an empty filtered result should say so")
+	}
+	if strings.Contains(getAs(h, "/", c).Body.String(), "Nothing matches this filter.") {
+		t.Error("an unfiltered empty list would blame a filter that is not there")
+	}
+}
+
+// FR-1.6 AC1: the fragment a poll returns carries the four blocks that live outside the list, or
+// each of them would keep the figure the page was loaded with from the first swap on.
+func TestTheItemsFragmentCarriesTheOutOfBandBlocks(t *testing.T) {
+	h := dashHandler(t, representativeStore())
+	c := signIn(t, h)
+
+	body := getAs(h, "/items?kind=issue", c).Body.String()
+	for _, want := range []string{`id="items"`, `hx-get="/items?kind=issue"`, `<title>`, `id="dash-summary"`, `hx-swap-oob="true"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("fragment lacks %s", want)
+		}
+	}
+	if strings.Contains(body, "<html") {
+		t.Fatal("the fragment must not be a whole document")
+	}
+}
+
+// FR-1.3 AC3: the filter is a plain GET form with htmx on top, never a form that only works with
+// script. The htmx attributes fetch this page and swap the list out of it, rather than fetching
+// the fragment endpoint: what hx-push-url then puts in the address bar is a URL that renders the
+// page being looked at, so reloading it shows the same narrowed list.
+func TestTheFilterFormIsAPlainGetFormWithHtmxOnTop(t *testing.T) {
+	h := dashHandler(t, representativeStore())
+	body := getAs(h, "/", signIn(t, h)).Body.String()
+
+	for _, want := range []string{
+		`<form class="filter" method="get" action="/"`,
+		`hx-get="/"`, `hx-select="#items"`, `hx-target="#items"`, `hx-push-url=`,
+		`name="repo"`, `name="kind"`, `name="since"`, `name="q"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("form lacks %s", want)
+		}
+	}
+	// Without script the submit button is the only way to apply the filter, so it has to be there
+	// for exactly the visitor who has no script.
+	if !strings.Contains(body, "<noscript><button type=\"submit\">Apply</button></noscript>") {
+		t.Error("the form cannot be applied with JavaScript switched off (FR-1.3 AC3)")
+	}
+}
+
+// FR-1.2: the badge and the tab title count what is new, not what is visible. A filter that moved
+// either would make the dashboard lie about what has arrived the moment somebody typed in the box.
+func TestTheBadgeIgnoresTheFilter(t *testing.T) {
+	h := dashHandler(t, representativeStore())
+	c := signIn(t, h)
+
+	all := getAs(h, "/", c).Body.String()
+	some := getAs(h, "/?q=zzz-no-such-text", c).Body.String()
+	title := func(s string) string {
+		i := strings.Index(s, "<title>")
+		j := strings.Index(s, "</title>")
+		return s[i:j]
+	}
+	if title(all) != title(some) {
+		t.Fatalf("tab title changed with the filter: %q vs %q", title(all), title(some))
+	}
+	summary := func(s string) string { return firstLineContaining(s, `id="dash-summary"`) }
+	if summary(all) != summary(some) {
+		t.Errorf("the summary line changed with the filter:\n%s\n%s", summary(all), summary(some))
 	}
 }
 
@@ -308,64 +395,66 @@ func TestFailingSourceShowsItsErrorAndKeepsContent(t *testing.T) {
 			},
 		},
 	}
-	body := getAuthed(t, dashHandler(t, store), "/tile/github").Body.String()
+	body := getAuthed(t, dashHandler(t, store), "/items").Body.String()
 
 	if !strings.Contains(body, "github: unexpected status 502") {
-		t.Error("the tile does not show the error text (FR-1.4 AC2)")
+		t.Error("the list does not show the error text (FR-1.4 AC2)")
 	}
-	// As one contiguous string: "30 minutes ago" on its own is equally satisfied by the tile
-	// header's age span, so the whole "(last success …)" clause could be deleted unnoticed.
+	// As one contiguous string: "30 minutes ago" on its own is equally satisfied by the source
+	// line's own age span, so the whole "(last success …)" clause could be deleted unnoticed.
 	lastSuccess := `(last success <time datetime="` +
 		testNow.Add(-30*time.Minute).UTC().Format(time.RFC3339) + `">30 minutes ago</time>)`
 	if !strings.Contains(body, lastSuccess) {
-		t.Errorf("the failing tile does not state when the source last succeeded (FR-1.4 AC2).\nwant: %s", lastSuccess)
+		t.Errorf("the failing list does not state when the source last succeeded (FR-1.4 AC2).\nwant: %s", lastSuccess)
 	}
 	if !strings.Contains(body, "Still visible") {
-		t.Error("a failing source blanked the tile (FR-1.4 AC3)")
+		t.Error("a failing source blanked the list (FR-1.4 AC3)")
 	}
 }
 
 // FR-1.4 AC1.
-func TestEveryTileStatesTheAgeOfItsData(t *testing.T) {
+func TestTheListStatesTheAgeOfItsData(t *testing.T) {
 	store := &dashStore{states: map[string]domain.SourceState{
 		"github":        {LastSuccessAt: testNow.Add(-5 * time.Minute)},
 		"github-builds": {LastSuccessAt: testNow.Add(-5 * time.Minute)},
-		"plausible":     {LastSuccessAt: testNow.Add(-5 * time.Minute)},
-		"todoist":       {LastSuccessAt: testNow.Add(-5 * time.Minute)},
 	}}
 	body := getAuthed(t, dashHandler(t, store), "/").Body.String()
 
-	if n := strings.Count(body, "5 minutes ago"); n != 3 {
-		t.Errorf("%d of 3 tiles state the age of their data (FR-1.4 AC1)", n)
+	if !strings.Contains(body, "Fetched <time") || !strings.Contains(body, "5 minutes ago") {
+		t.Errorf("the list does not state the age of its data (FR-1.4 AC1):\n%s",
+			firstLineContaining(body, "source-line"))
 	}
 }
 
 // FR-1.4 AC1: a source whose last success is older than stale_after says so in words, not only in
 // colour (FR-1.5 AC2).
-func TestStaleTileSaysSoInWords(t *testing.T) {
+func TestAStaleSourceSaysSoInWords(t *testing.T) {
 	store := &dashStore{states: map[string]domain.SourceState{
 		"github": {LastSuccessAt: testNow.Add(-3 * time.Hour)}, // stale_after is 45m
 	}}
-	body := getAuthed(t, dashHandler(t, store), "/tile/github").Body.String()
+	body := getAuthed(t, dashHandler(t, store), "/items").Body.String()
 	if !strings.Contains(body, "Stale") {
-		t.Error("a stale tile does not say so (FR-1.4 AC1, FR-1.5 AC2)")
+		t.Error("a stale source does not say so (FR-1.4 AC1, FR-1.5 AC2)")
 	}
 }
 
 // FR-8.2 AC2.
-func TestSourceWithoutACredentialSaysSoOnItsTile(t *testing.T) {
+func TestASourceWithoutACredentialSaysSoAboveTheList(t *testing.T) {
 	// The default test options configure no upstream credential at all.
 	body := getAuthed(t, newTestServerWith(t, func(o *Options) {
 		o.Store = &dashStore{}
 	}).Handler(), "/").Body.String()
 
-	if n := strings.Count(body, "no credential is configured"); n != 3 {
-		t.Errorf("%d of 3 tiles say their source is disabled for lack of a credential (FR-8.2 AC2)", n)
+	if n := strings.Count(body, "no credential is configured"); n != 1 {
+		t.Errorf("the list says its source is disabled for lack of a credential %d times, want 1 (FR-8.2 AC2)", n)
+	}
+	if !strings.Contains(body, "Disabled —") {
+		t.Error("a source with no credential is not reported as disabled (FR-8.2 AC2)")
 	}
 }
 
-// QS-4.3: a tile renders upstream error text, and upstream error text can quote a credential.
-func TestATileErrorIsScrubbedOfSecrets(t *testing.T) {
+// QS-4.3: the list renders upstream error text, and upstream error text can quote a credential.
+func TestASourceErrorIsScrubbedOfSecrets(t *testing.T) {
 	const secret = "ghp-canary-value-0123456789abcdef"
 	store := &dashStore{states: map[string]domain.SourceState{
 		"github": {
@@ -382,123 +471,10 @@ func TestATileErrorIsScrubbedOfSecrets(t *testing.T) {
 	body := getAuthed(t, s.Handler(), "/").Body.String()
 
 	if strings.Contains(body, secret) {
-		t.Error("a tile rendered a secret out of an upstream error (QS-4.3)")
+		t.Error("the list rendered a secret out of an upstream error (QS-4.3)")
 	}
 	if !strings.Contains(body, "[redacted]") {
 		t.Error("the error text was dropped rather than scrubbed; the visitor loses the diagnosis")
-	}
-}
-
-// FR-3.1 AC1/AC2/AC3.
-func TestSitesTileShowsBothWindowsWithTheirChange(t *testing.T) {
-	store := &dashStore{
-		metrics: []domain.Metric{
-			{Site: "one.example", WindowDays: 7, Visitors: 120, Pageviews: 400, PrevVisitors: 100, PrevPageviews: 500},
-			{Site: "one.example", WindowDays: 30, Visitors: 500, Pageviews: 1500, PrevVisitors: 500, PrevPageviews: 1000},
-			{Site: "two.example", WindowDays: 7, Visitors: 10, Pageviews: 20, PrevVisitors: 0, PrevPageviews: 0},
-		},
-		states: healthyStates(testNow),
-	}
-	body := getAuthed(t, dashHandler(t, store), "/tile/sites").Body.String()
-
-	for _, want := range []string{"one.example", "two.example"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("the sites tile does not show %q (FR-3.1 AC1)", want)
-		}
-	}
-
-	// Each figure is asserted together with the change beside it, as one contiguous string. The
-	// presence of "120", "400", "up 20.0%" and "down 20.0%" somewhere in the body proves nothing:
-	// swapping visitors with pageviews, or the up arm of newChangeView with the down arm, leaves
-	// every one of those strings present while the tile tells the visitor the opposite of the
-	// truth — a growing site reported as shrinking, in words and in colour.
-	for _, want := range []string{
-		// one.example, 7 days: visitors 100 → 120, pageviews 500 → 400.
-		`visitors <b>120</b> <span class="change change-up">up 20.0%</span>`,
-		`pageviews <b>400</b> <span class="change change-down">down 20.0%</span>`,
-		// one.example, 30 days: visitors flat at 500, pageviews 1000 → 1500.
-		`visitors <b>500</b> <span class="change change-flat">no change</span>`,
-		`pageviews <b>1500</b> <span class="change change-up">up 50.0%</span>`,
-		// two.example, 7 days: no preceding period at all, so no percentage exists.
-		`visitors <b>10</b> <span class="change change-unknown">no baseline</span>`,
-		`pageviews <b>20</b> <span class="change change-unknown">no baseline</span>`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("the sites tile does not pair a figure with its change (FR-3.1 AC1/AC2).\nwant: %s", want)
-		}
-	}
-	if strings.Index(body, "one.example") > strings.Index(body, "two.example") {
-		t.Error("sites are not listed in configuration order (FR-3.1 AC3)")
-	}
-}
-
-// FR-3.1 AC3: "in configuration order". The order has to come from the configuration, not from
-// whatever order the store happened to return the metrics in — so this fixture configures the
-// sites in the opposite order to the one the data arrives in, which is the only way the assertion
-// can fail when the handler ignores the configuration.
-func TestSitesFollowConfigurationOrderRatherThanTheStoresOrder(t *testing.T) {
-	store := &dashStore{
-		metrics: []domain.Metric{
-			{Site: "first-in-the-data.example", WindowDays: 7, Visitors: 1, Pageviews: 2},
-			{Site: "second-in-the-data.example", WindowDays: 7, Visitors: 3, Pageviews: 4},
-		},
-		states: healthyStates(testNow),
-	}
-	s := newTestServerWith(t, func(o *Options) {
-		credentialAllSources(o)
-		o.Config.Plausible.Sites = []string{
-			"second-in-the-data.example",
-			"first-in-the-data.example",
-			"configured-but-never-fetched.example",
-			// A site named twice in the YAML is one site, not two rows.
-			"second-in-the-data.example",
-		}
-		o.Store = store
-	})
-	body := getAuthed(t, s.Handler(), "/tile/sites").Body.String()
-
-	second := strings.Index(body, "second-in-the-data.example")
-	first := strings.Index(body, "first-in-the-data.example")
-	if second < 0 || first < 0 {
-		t.Fatalf("a site is missing from the tile: second=%d first=%d", second, first)
-	}
-	if second > first {
-		t.Error("the sites tile follows the store's order, not the configured one (FR-3.1 AC3)")
-	}
-
-	// A site named in the configuration that has no metrics at all must read as missing rather
-	// than quietly vanish: "I configured this site and cannot see it" needs an answer on the tile.
-	absent := strings.Index(body, "configured-but-never-fetched.example")
-	if absent < 0 {
-		t.Fatal("a configured site with no metrics is not shown at all (FR-3.1 AC3)")
-	}
-	if absent < first {
-		t.Error("the configured order was not preserved for the site with no metrics")
-	}
-	if !strings.Contains(body[absent:], "not available") {
-		t.Error("a configured site with no metrics does not read as missing")
-	}
-	if n := strings.Count(body, "second-in-the-data.example"); n != 1 {
-		t.Errorf("a site configured twice appears %d times, want 1", n)
-	}
-}
-
-// A partial Plausible failure leaves a site holding one of its two windows. The missing one must
-// read as missing, not as zero.
-func TestSiteWithOnlyOneWindowRendersTheOtherAsMissing(t *testing.T) {
-	store := &dashStore{
-		metrics: []domain.Metric{
-			{Site: "one.example", WindowDays: 7, Visitors: 120, Pageviews: 400, PrevVisitors: 100},
-		},
-		states: healthyStates(testNow),
-	}
-	body := getAuthed(t, dashHandler(t, store), "/tile/sites").Body.String()
-
-	if !strings.Contains(body, "not available") {
-		t.Error("a window that never arrived is not marked as missing")
-	}
-	if strings.Contains(body, ">0<") {
-		t.Error("a window that never arrived rendered as a zero figure")
 	}
 }
 
@@ -556,39 +532,6 @@ func TestARepositoryWithNoBuildsIsNamedRatherThanHidden(t *testing.T) {
 	}
 }
 
-// FR-4.1 AC1/AC2. BuildDashboard already orders the tasks tile by due date; the renderer must not
-// reorder it back into SortItems' new-first-then-recently-updated order.
-func TestTasksTileKeepsTheDomainsUrgencyOrder(t *testing.T) {
-	seen := testNow.Add(-100 * time.Hour)
-	store := &dashStore{
-		lastVisit: testNow,
-		items: []domain.Item{
-			{Source: "todoist", ExternalID: "todoist:2", Kind: domain.KindTask, Title: "Due this evening",
-				URL: "https://todoist.com/showTask?id=2", DueAt: testNow.Add(6 * time.Hour),
-				UpdatedAt: testNow, Priority: 1, FirstSeenAt: seen},
-			{Source: "todoist", ExternalID: "todoist:1", Kind: domain.KindTask, Title: "Overdue by a week",
-				URL: "https://todoist.com/showTask?id=1", DueAt: testNow.Add(-7 * 24 * time.Hour),
-				UpdatedAt: testNow.Add(-30 * 24 * time.Hour), Priority: 4, FirstSeenAt: seen},
-		},
-		states: healthyStates(testNow),
-	}
-	body := getAuthed(t, dashHandler(t, store), "/tile/tasks").Body.String()
-
-	overdue, evening := strings.Index(body, "Overdue by a week"), strings.Index(body, "Due this evening")
-	if overdue < 0 || evening < 0 {
-		t.Fatalf("a task is missing from the tile: overdue=%d evening=%d (FR-4.1 AC1)", overdue, evening)
-	}
-	if overdue > evening {
-		t.Error("the renderer re-sorted the tasks tile away from due-date order (FR-4.1 AC2)")
-	}
-	if !strings.Contains(body, "overdue by 7 days") {
-		t.Error("an overdue task is not distinguished in words from one due later (FR-4.1 AC2, FR-1.5 AC2)")
-	}
-	if !strings.Contains(body, "P1") {
-		t.Error("a task does not show its priority (FR-4.1 AC1)")
-	}
-}
-
 // Nothing derived from upstream data may reach the page unescaped.
 func TestUpstreamTextIsEscaped(t *testing.T) {
 	store := &dashStore{
@@ -616,29 +559,23 @@ var inlineEventHandler = regexp.MustCompile(`(?i)\son[a-z]+\s*=`)
 // the very same document.
 func TestNoRenderedHTMLNeedsUnsafeInline(t *testing.T) {
 	store := &dashStore{
-		items: []domain.Item{
-			ghItem(1, "An issue", testNow.Add(-time.Hour)),
-			{Source: "todoist", ExternalID: "todoist:1", Kind: domain.KindTask, Title: "A task",
-				URL: "https://todoist.com/showTask?id=1", DueAt: testNow.Add(-time.Hour),
-				Priority: 4, FirstSeenAt: testNow.Add(-time.Hour)},
-		},
-		builds:  []domain.Build{{Repo: "org/repo", Workflow: "CI", Status: "completed", Conclusion: "success"}},
-		metrics: []domain.Metric{{Site: "one.example", WindowDays: 7, Visitors: 1}},
-		states:  healthyStates(testNow),
+		items:  []domain.Item{ghItem(1, "An issue", testNow.Add(-time.Hour))},
+		builds: []domain.Build{{Repo: "org/repo", Workflow: "CI", Status: "completed", Conclusion: "success"}},
+		states: healthyStates(testNow),
 	}
 	h := dashHandler(t, store)
 	c := signIn(t, h)
 
-	// Every HTML-producing route: the page, the sign-in form, the documentation, all four tile
-	// fragments, and the body of a 401 on a fragment route.
+	// Every HTML-producing route: the page, the sign-in form, the documentation, the list
+	// fragment — filtered, because the filter form is markup too — and the body of a 401 on a
+	// fragment route.
 	pages := map[string]string{
 		"GET /":            getAs(h, "/", c).Body.String(),
+		"GET /?kind=pr":    getAs(h, "/?kind=pr", c).Body.String(),
 		"GET /login":       get(h, "/login").Body.String(),
 		"GET /docs":        get(h, "/docs").Body.String(),
-		"GET /tile/github": getAs(h, "/tile/github", c).Body.String(),
+		"GET /items":       getAs(h, "/items", c).Body.String(),
 		"GET /builds":      getAs(h, "/builds", c).Body.String(),
-		"GET /tile/sites":  getAs(h, "/tile/sites", c).Body.String(),
-		"GET /tile/tasks":  getAs(h, "/tile/tasks", c).Body.String(),
 		"POST /seen (401)": post(h, "/seen", nil).Body.String(),
 		// The stop page in the state this handler can produce: it was built with no way to stop,
 		// so the route renders its refusal. It is visitor-facing HTML and is swept like the rest.
@@ -678,8 +615,8 @@ func TestNoRenderedHTMLNeedsUnsafeInline(t *testing.T) {
 					}
 				}
 			}
-			if strings.HasPrefix(name, "GET /tile/") && external != 0 {
-				t.Error("a tile fragment carries a script tag (QS-4.4)")
+			if name == "GET /items" && external != 0 {
+				t.Error("the list fragment carries a script tag (QS-4.4)")
 			}
 		})
 	}
@@ -690,7 +627,7 @@ func TestAStoreFailureRendersTheFixedMessage(t *testing.T) {
 	store := &dashStore{fakeStore: fakeStore{err: errors.New("dial libsql://db.example: refused")}}
 	h := dashHandler(t, store)
 
-	for _, path := range []string{"/", "/tile/github"} {
+	for _, path := range []string{"/", "/items"} {
 		rec := getAuthed(t, h, path)
 		if rec.Code != http.StatusInternalServerError {
 			t.Errorf("GET %s with a broken store = %d, want 500", path, rec.Code)
@@ -698,13 +635,6 @@ func TestAStoreFailureRendersTheFixedMessage(t *testing.T) {
 		if strings.Contains(rec.Body.String(), "libsql") {
 			t.Errorf("GET %s leaked the store's error text (QS-4.3)", path)
 		}
-	}
-}
-
-func TestUnknownTileIsNotFound(t *testing.T) {
-	rec := getAuthed(t, dashHandler(t, &dashStore{}), "/tile/nonsense")
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("GET /tile/nonsense = %d, want 404", rec.Code)
 	}
 }
 
@@ -777,53 +707,8 @@ func TestHumanise(t *testing.T) {
 	}
 }
 
-// FR-1.2 AC1 on the tasks tile. The badge is the product's core feature — NEW means the item was
-// first seen after the last visit — and it is rendered by a second template, which the GitHub
-// test cannot cover. Deleting the badge from tasks.html must not leave a green suite.
-func TestTasksTileBadgesATaskFirstSeenSinceTheLastVisit(t *testing.T) {
-	store := &dashStore{
-		lastVisit: testNow.Add(-2 * time.Hour),
-		items: []domain.Item{
-			{
-				Source: "todoist", ExternalID: "todoist:1", Kind: domain.KindTask,
-				Title: "Stood there before your last visit", URL: "https://todoist.com/showTask?id=1",
-				DueAt: testNow.Add(3 * time.Hour), Priority: 1,
-				FirstSeenAt: testNow.Add(-72 * time.Hour),
-			},
-			{
-				Source: "todoist", ExternalID: "todoist:2", Kind: domain.KindTask,
-				Title: "Arrived since your last visit", URL: "https://todoist.com/showTask?id=2",
-				DueAt: testNow.Add(6 * time.Hour), Priority: 1,
-				FirstSeenAt: testNow.Add(-time.Hour),
-			},
-		},
-		states: healthyStates(testNow),
-	}
-	body := getAuthed(t, dashHandler(t, store), "/tile/tasks").Body.String()
-
-	if n := strings.Count(body, "NEW"); n != 1 {
-		t.Fatalf("the tasks tile carries %d NEW badges, want exactly 1 (FR-1.2 AC1)", n)
-	}
-	// Which task carries it matters as much as that one does: a badge on the wrong row tells the
-	// visitor the wrong thing. Each rendered item is inspected on its own.
-	for _, item := range strings.Split(body, `<li class="item`)[1:] {
-		hasBadge := strings.Contains(item, `class="badge badge-new">NEW<`)
-		switch {
-		case strings.Contains(item, "Arrived since your last visit") && !hasBadge:
-			t.Error("the task first seen since the last visit carries no NEW badge (FR-1.2 AC1)")
-		case strings.Contains(item, "Stood there before your last visit") && hasBadge:
-			t.Error("a task seen before the last visit carries a NEW badge (FR-1.2 AC1)")
-		}
-	}
-	// And the tile's own count agrees with the badges, so the header can never say "1 new" above
-	// a list in which nothing is marked.
-	if !strings.Contains(body, "1 new") {
-		t.Error("the tasks tile does not state how many of its items are new (FR-1.2 AC2)")
-	}
-}
-
 // FR-1.4 AC1 read together with FR-8.2 AC2: a source disabled for lack of a credential still shows
-// whatever was stored while it had one, so the tile must not claim it was never fetched.
+// whatever was stored while it had one, so the list must not claim it was never fetched.
 func TestADisabledSourceHoldingStoredItemsIsHonestAboutTheirAge(t *testing.T) {
 	// The default test options carry no GitHub credential, so the source is disabled.
 	store := &dashStore{
@@ -831,23 +716,23 @@ func TestADisabledSourceHoldingStoredItemsIsHonestAboutTheirAge(t *testing.T) {
 		states: healthyStates(testNow),
 	}
 	h := newTestServerWith(t, func(o *Options) { o.Store = store }).Handler()
-	body := getAuthed(t, h, "/tile/github").Body.String()
+	body := getAuthed(t, h, "/items").Body.String()
 
 	if !strings.Contains(body, "Stored while the token still worked") {
-		t.Fatal("the fixture is wrong: the disabled tile shows no stored item")
+		t.Fatal("the fixture is wrong: the disabled list shows no stored item")
 	}
-	if strings.Contains(body, "never fetched") {
-		t.Error("a disabled tile above items stamped '1 hour ago' claims the source was never " +
+	if strings.Contains(body, "Never fetched") {
+		t.Error("a disabled list above items stamped '1 hour ago' claims the source was never " +
 			"fetched, which is false (FR-1.4 AC1)")
 	}
-	if !strings.Contains(body, "not fetching") {
-		t.Error("a disabled tile does not say that nothing is being fetched (FR-8.2 AC2)")
+	if !strings.Contains(body, "Disabled —") {
+		t.Error("a disabled list does not say that nothing is being fetched (FR-8.2 AC2)")
 	}
 	if !strings.Contains(body, "no credential is configured") {
-		t.Error("a disabled tile no longer says why it is disabled (FR-8.2 AC2)")
+		t.Error("a disabled list no longer says why it is disabled (FR-8.2 AC2)")
 	}
 	if !strings.Contains(body, "stored before it went away") {
-		t.Error("a disabled tile showing stored data does not say that is what it is")
+		t.Error("a disabled list showing stored data does not say that is what it is")
 	}
 }
 
@@ -857,7 +742,7 @@ func TestAnItemWithoutACreationTimeSaysSo(t *testing.T) {
 	item := ghItem(1, "An issue whose creation time did not survive", testNow.Add(-time.Hour))
 	item.CreatedAt = time.Time{}
 	store := &dashStore{items: []domain.Item{item}, states: healthyStates(testNow)}
-	body := getAuthed(t, dashHandler(t, store), "/tile/github").Body.String()
+	body := getAuthed(t, dashHandler(t, store), "/items").Body.String()
 
 	if strings.Contains(body, `datetime=""`) {
 		t.Error("a zero timestamp rendered as an empty <time datetime=\"\">")
@@ -872,8 +757,8 @@ func TestAnItemWithoutACreationTimeSaysSo(t *testing.T) {
 }
 
 // FR-1.6 AC1: the poll interval follows the configured refresh interval, but never below a floor.
-// A misconfigured `refresh.interval: 5s` would otherwise turn every open tab into four requests
-// every five seconds against a Machine that is billed for being awake.
+// A misconfigured `refresh.interval: 5s` would otherwise turn every open tab into a request every
+// five seconds against a Machine that is billed for being awake.
 func TestThePollIntervalNeverDropsBelowItsFloor(t *testing.T) {
 	for _, tc := range []struct {
 		interval time.Duration
@@ -1043,21 +928,22 @@ func TestStaticIsServedUncompressedWhenTheClientCannotAcceptGzip(t *testing.T) {
 
 // ---------------------------------------------------------------- helpers
 
-// credentialAllSources gives every source a credential and something to watch, so that no tile
+// credentialAllSources gives every source a credential and something to watch, so that nothing
 // renders as disabled. The default test options deliberately carry no upstream secret.
 func credentialAllSources(o *Options) {
-	o.Config.Plausible.Sites = []string{"one.example", "two.example"}
-	o.Config.Todoist.Filter = "today | overdue"
 	o.Config.Secrets.GitHubToken = "github-token-for-tests"
-	o.Config.Secrets.PlausibleKey = "plausible-key-for-tests"
-	o.Config.Secrets.TodoistToken = "todoist-token-for-tests"
 }
 
-// dashHandler builds a fully credentialed server over store and returns its handler.
+// dashHandler builds a fully credentialed server over store and returns its handler. A test that
+// needs a different watch list configures one itself with newTestServerWith.
 func dashHandler(t *testing.T, store ports.Store) http.Handler {
 	t.Helper()
 	return newTestServerWith(t, func(o *Options) {
 		credentialAllSources(o)
+		// The one repository ghItem produces, plus the ten representativeStore holds: the
+		// grouping follows configuration order, so a fixture repository nobody is watching would
+		// be listed after the configured ones rather than where the tests expect it.
+		o.Config.GitHub.Repos = append([]string{"org/repo"}, representativeRepos()...)
 		o.Store = store
 	}).Handler()
 }
@@ -1114,25 +1000,32 @@ func ghItem(number int, title string, at time.Time) domain.Item {
 }
 
 func healthyStates(at time.Time) map[string]domain.SourceState {
-	m := make(map[string]domain.SourceState, 4)
-	for _, s := range []string{"github", "github-builds", "plausible", "todoist"} {
+	m := make(map[string]domain.SourceState, 2)
+	for _, s := range []string{"github", "github-builds"} {
 		m[s] = domain.SourceState{Source: s, LastSuccessAt: at}
 	}
 	return m
 }
 
-// representativeStore is QS-2.3's representative configuration: 10 repositories, 4 sites and
-// 30 tasks.
+// representativeStore is QS-2.3's representative configuration: 10 repositories holding 150 open
+// items between them, of both kinds, half of them new — which is the expensive case for the
+// badges, for the grouping and for every filter that has to be counted around.
 func representativeStore() *dashStore {
 	s := &dashStore{lastVisit: testNow.Add(-24 * time.Hour), states: healthyStates(testNow)}
 	for r := range 10 {
 		repo := "org/repository-number-" + strconv.Itoa(r)
 		for i := range 15 {
 			n := r*100 + i
+			// Every third item is a pull request, so a kind filter has something to narrow to
+			// and something to leave out in every repository.
+			kind := domain.KindIssue
+			if i%3 == 0 {
+				kind = domain.KindPR
+			}
 			s.items = append(s.items, domain.Item{
 				Source:     "github",
-				ExternalID: "issue:" + repo + "#" + strconv.Itoa(n),
-				Kind:       domain.KindIssue,
+				ExternalID: string(kind) + ":" + repo + "#" + strconv.Itoa(n),
+				Kind:       kind,
 				Repo:       repo,
 				Number:     n,
 				Title:      "A reasonably long issue title that describes some problem, number " + strconv.Itoa(n),
@@ -1151,29 +1044,18 @@ func representativeStore() *dashStore {
 			FinishedAt: testNow.Add(-time.Duration(r) * time.Hour),
 		})
 	}
-	for i := range 4 {
-		site := "site-number-" + strconv.Itoa(i) + ".example"
-		for _, w := range []int{7, 30} {
-			s.metrics = append(s.metrics, domain.Metric{
-				Site: site, WindowDays: w, Visitors: 1000 + i, Pageviews: 5000 + i,
-				PrevVisitors: 900 + i, PrevPageviews: 5100 + i, FetchedAt: testNow,
-			})
-		}
-	}
-	for i := range 30 {
-		s.items = append(s.items, domain.Item{
-			Source:      "todoist",
-			ExternalID:  "todoist:" + strconv.Itoa(i),
-			Kind:        domain.KindTask,
-			Title:       "A task with a reasonably descriptive title, number " + strconv.Itoa(i),
-			URL:         "https://app.todoist.com/app/task/" + strconv.Itoa(i),
-			DueAt:       testNow.Add(time.Duration(i-15) * 24 * time.Hour),
-			Priority:    1 + i%4,
-			UpdatedAt:   testNow.Add(-time.Duration(i) * time.Hour),
-			FirstSeenAt: testNow.Add(-time.Duration(i) * time.Hour),
-		})
-	}
 	return s
+}
+
+// representativeRepos is what a server over representativeStore has to be configured to watch, so
+// that the groups come out in configuration order and the filter's repository list offers the
+// repositories the store actually holds.
+func representativeRepos() []string {
+	out := make([]string, 0, 10)
+	for r := range 10 {
+		out = append(out, "org/repository-number-"+strconv.Itoa(r))
+	}
+	return out
 }
 
 // dashStore is a ports.Store holding a fixture in memory. It extends auth_test.go's fakeStore
@@ -1183,7 +1065,6 @@ type dashStore struct {
 	fakeStore
 	items   []domain.Item
 	builds  []domain.Build
-	metrics []domain.Metric
 	states  map[string]domain.SourceState
 	lastRun domain.RefreshRun
 	// lastSuccessfulRun is the store's second answer about runs, and the fixture keeps it
@@ -1198,9 +1079,6 @@ type dashStore struct {
 
 func (s *dashStore) Items(context.Context) ([]domain.Item, error)   { return s.items, s.err }
 func (s *dashStore) Builds(context.Context) ([]domain.Build, error) { return s.builds, s.err }
-func (s *dashStore) Metrics(context.Context) ([]domain.Metric, error) {
-	return s.metrics, s.err
-}
 
 func (s *dashStore) SourceStates(context.Context) (map[string]domain.SourceState, error) {
 	return s.states, s.err
@@ -1334,7 +1212,7 @@ func TestTheRunDetailIsRenderedAndScrubbed(t *testing.T) {
 // FR-1.2 AC3 under polling. A poll swaps one tile, and the total count lives in two places outside
 // every tile — the tab title and the summary line. Without them coming back with the fragment the
 // page starts contradicting itself at the first poll: the tile says three new, the tab says none.
-func TestAPolledTileBringsTheTotalCountBackWithIt(t *testing.T) {
+func TestAPolledListBringsTheTotalCountBackWithIt(t *testing.T) {
 	store := &dashStore{
 		lastVisit: testNow.Add(-2 * time.Hour),
 		items: []domain.Item{
@@ -1344,11 +1222,11 @@ func TestAPolledTileBringsTheTotalCountBackWithIt(t *testing.T) {
 		states: healthyStates(testNow),
 	}
 	h := dashHandler(t, store)
-	fragment := getAuthed(t, h, "/tile/github").Body.String()
+	fragment := getAuthed(t, h, "/items").Body.String()
 
 	for _, want := range []string{
 		// htmx lifts a top-level <title> out of the response and writes it into the document's
-		// own, so the title needs no out-of-band marker — see templates/tiles/counts.html.
+		// own, so the title needs no out-of-band marker — see templates/fragments/counts.html.
 		"<title>(2) zorgscope</title>",
 		`id="dash-summary" hx-swap-oob="true"`,
 		"2 new since your last visit",
@@ -1382,13 +1260,13 @@ func TestAnUnknownPathIsNotTheDashboard(t *testing.T) {
 	h := dashHandler(t, &dashStore{states: healthyStates(testNow)})
 	c := signIn(t, h)
 
-	for _, path := range []string{"/admin", "/no-such-page", "/tile/github/extra"} {
+	for _, path := range []string{"/admin", "/no-such-page", "/items/extra"} {
 		rec := getAs(h, path, c)
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("GET %s = %d, want 404: an unknown path must not render the dashboard",
 				path, rec.Code)
 		}
-		if strings.Contains(rec.Body.String(), `class="tiles"`) {
+		if strings.Contains(rec.Body.String(), `id="items"`) {
 			t.Errorf("GET %s answered with the dashboard", path)
 		}
 	}
@@ -1398,7 +1276,7 @@ func TestAnUnknownPathIsNotTheDashboard(t *testing.T) {
 }
 
 // FR-8.2 AC2 is about the credential. Config.Enabled is false both when the secret is missing and
-// when there is nothing configured to watch, and the tile said "no credential is configured" for
+// when there is nothing configured to watch, and the page said "no credential is configured" for
 // both — sending an operator who had commented out the repos: list after a Fly secrets problem
 // that did not exist.
 func TestAConfiguredSourceWithNothingToWatchDoesNotBlameTheCredential(t *testing.T) {
@@ -1413,7 +1291,7 @@ func TestAConfiguredSourceWithNothingToWatchDoesNotBlameTheCredential(t *testing
 		t.Error("an empty repos list is reported as a missing credential (FR-8.2 AC2)")
 	}
 	if n := strings.Count(body, "no repositories are configured to watch"); n != 1 {
-		t.Errorf("the GitHub tile names the empty watch list %d times, want 1", n)
+		t.Errorf("the list names the empty watch list %d times, want 1", n)
 	}
 	// And the build indicator, which is the other half of what a missing repos list turns off,
 	// says the same thing on its own page rather than blaming the credential either.

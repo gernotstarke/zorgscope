@@ -1,8 +1,12 @@
-{{/* The two places the *total* new count appears, and the only two that live outside a tile: the
-     tab title (FR-1.2 AC3) and the summary line. Both are defined here, in the tile set, because
-     both are needed twice — once by the page, once by the fragment GET /tile/{source} returns, so
-     that a poll updates them along with the tile it swapped. One definition, executed twice, so
+{{/* The two places the *total* new count appears, and the only two that live outside the list: the
+     tab title (FR-1.2 AC3) and the summary line. Both are defined here, among the fragments,
+     because both are needed twice — once by the page, once by the fragment GET /items returns, so
+     that a poll updates them along with the list it swapped. One definition, executed twice, so
      the polled copy cannot drift from the drawn one.
+
+     Neither follows the filter, and that is the point of counting them over every item rather than
+     over the ones on show: a search box that quietly changed the tab's badge would make the
+     dashboard lie about what is new (FR-1.2).
 
      The two travel back by different mechanisms, and the difference is htmx's, not a choice:
 

@@ -39,7 +39,7 @@ func TestEveryProtectedRouteRefusesAnonymousAccess(t *testing.T) {
 		wantStatus   int
 	}{
 		{http.MethodGet, "/", http.StatusSeeOther}, // FR-8.3 AC1: redirect, not 401
-		{http.MethodGet, "/tile/github", http.StatusUnauthorized},
+		{http.MethodGet, "/items", http.StatusUnauthorized},
 		{http.MethodPost, "/seen", http.StatusUnauthorized},
 		{http.MethodPost, "/refresh", http.StatusUnauthorized},
 		{http.MethodPost, "/api/refresh", http.StatusUnauthorized},
@@ -325,10 +325,10 @@ func TestRefreshEndpointTakesTheBearerNotTheCookie(t *testing.T) {
 func TestBearerDoesNotGrantDashboardAccess(t *testing.T) {
 	h := newTestServer(t).Handler()
 	// The exact answer matters, not merely "not 200": a navigation is redirected to sign-in
-	// (FR-8.3 AC1) and a fragment is refused (a redirect would paint sign-in inside a tile).
+	// (FR-8.3 AC1) and a fragment is refused (a redirect would paint sign-in into the list).
 	for path, want := range map[string]int{
-		"/":            http.StatusSeeOther,
-		"/tile/github": http.StatusUnauthorized,
+		"/":      http.StatusSeeOther,
+		"/items": http.StatusUnauthorized,
 	} {
 		t.Run(path, func(t *testing.T) {
 			rec := httptest.NewRecorder()
@@ -340,7 +340,7 @@ func TestBearerDoesNotGrantDashboardAccess(t *testing.T) {
 					"grant dashboard access", path, rec.Code, want)
 			}
 			body := rec.Body.String()
-			for _, leak := range []string{`class="tiles"`, `id="tile-github"`, "Mark all seen"} {
+			for _, leak := range []string{`class="filter"`, `id="items"`, "Mark all seen"} {
 				if strings.Contains(body, leak) {
 					t.Errorf("GET %s with the refresh bearer rendered %q", path, leak)
 				}
@@ -424,8 +424,6 @@ func TestNoResponseEverContainsASecret(t *testing.T) {
 	s := newTestServerWith(t, func(o *Options) {
 		o.Config.Secrets = config.Secrets{
 			GitHubToken:    canary + "-github",
-			PlausibleKey:   canary + "-plausible",
-			TodoistToken:   canary + "-todoist",
 			SlackWebhook:   "https://hooks.example/" + canary + "-slack",
 			AppToken:       canary + "-app",
 			RefreshSecret:  canary + "-refresh",
@@ -1087,11 +1085,9 @@ func (f *fakeStore) Migrate(context.Context) error { return f.err }
 func (f *fakeStore) ReplaceItems(context.Context, string, []domain.Item, time.Time) (int, error) {
 	return 0, f.err
 }
-func (f *fakeStore) UpsertBuilds(context.Context, []domain.Build, time.Time) error   { return f.err }
-func (f *fakeStore) UpsertMetrics(context.Context, []domain.Metric, time.Time) error { return f.err }
-func (f *fakeStore) Items(context.Context) ([]domain.Item, error)                    { return nil, f.err }
-func (f *fakeStore) Builds(context.Context) ([]domain.Build, error)                  { return nil, f.err }
-func (f *fakeStore) Metrics(context.Context) ([]domain.Metric, error)                { return nil, f.err }
+func (f *fakeStore) UpsertBuilds(context.Context, []domain.Build, time.Time) error { return f.err }
+func (f *fakeStore) Items(context.Context) ([]domain.Item, error)                  { return nil, f.err }
+func (f *fakeStore) Builds(context.Context) ([]domain.Build, error)                { return nil, f.err }
 func (f *fakeStore) SourceStates(context.Context) (map[string]domain.SourceState, error) {
 	return nil, f.err
 }

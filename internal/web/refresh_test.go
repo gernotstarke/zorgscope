@@ -403,7 +403,7 @@ func TestTheDashboardSaysSoWhenARefreshIsAlreadyRunning(t *testing.T) {
 	}
 	// The page is rendered rather than replaced by the browser's error page, so the visitor can
 	// carry on from it.
-	if body := rec.Body.String(); !strings.Contains(body, `class="tiles"`) {
+	if body := rec.Body.String(); !strings.Contains(body, `id="items"`) {
 		t.Error("the 409 answered with something other than the dashboard")
 	}
 	// QS-4.4: the notice must not need an inline style or handler, which the CSP forbids.

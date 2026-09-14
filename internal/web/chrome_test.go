@@ -103,7 +103,7 @@ func TestTheHeaderSaysWhenTheDashboardWasLastUsed(t *testing.T) {
 // one link to the whole story.
 func TestTheDashboardWarnsWhenAnExternalServiceHasGoneWrong(t *testing.T) {
 	store := representativeStore()
-	store.states = failingStates(testNow, "plausible", "502 Bad Gateway")
+	store.states = failingStates(testNow, "github-builds", "502 Bad Gateway")
 
 	body := getAuthed(t, dashHandler(t, store), "/").Body.String()
 
@@ -117,8 +117,8 @@ func TestTheDashboardWarnsWhenAnExternalServiceHasGoneWrong(t *testing.T) {
 		t.Error("the box offers no way to reach the details")
 	}
 	// The box is a signpost. The upstream text belongs on the details page, where there is room
-	// for it and where it is the subject rather than an interruption — the failing tile shows it
-	// too, which is why this looks at the box's own sentence rather than at the whole page.
+	// for it and where it is the subject rather than an interruption — the failing source's own
+	// line shows it too, which is why this looks at the box's sentence rather than at the page.
 	if sentence := firstLineContaining(body, "alert-text"); strings.Contains(sentence, "502") {
 		t.Errorf("the warning box quotes the upstream error instead of linking to it: %s", sentence)
 	}
@@ -127,9 +127,11 @@ func TestTheDashboardWarnsWhenAnExternalServiceHasGoneWrong(t *testing.T) {
 // Two broken services are counted, and counted in the plural.
 func TestTheWarningBoxCountsInThePlural(t *testing.T) {
 	store := representativeStore()
-	store.states = failingStates(testNow, "plausible", "502")
-	store.states["todoist"] = domain.SourceState{
-		Source: "todoist", LastSuccessAt: testNow.Add(-5 * time.Hour),
+	store.states = failingStates(testNow, "github", "502")
+	// Stale rather than failing, so the two entries are a genuine error and a genuine warning
+	// rather than the same state twice.
+	store.states["github-builds"] = domain.SourceState{
+		Source: "github-builds", LastSuccessAt: testNow.Add(-5 * time.Hour),
 	}
 
 	body := getAuthed(t, dashHandler(t, store), "/").Body.String()
@@ -178,7 +180,7 @@ func TestTheProblemsPageReportsEveryInterface(t *testing.T) {
 	}
 	body := rec.Body.String()
 
-	for _, want := range []string{"GitHub", "Builds", "Sites", "Tasks", "Notifications (Slack)"} {
+	for _, want := range []string{"GitHub", "Builds", "Notifications (Slack)"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the details page does not list %q", want)
 		}
@@ -331,13 +333,13 @@ func TestTheFooterReadsInTheOrderItIsDrawn(t *testing.T) {
 
 // FR-1.4 under polling. This dashboard is meant to be left open, so "the next page load" may be
 // tomorrow: a source that starts failing while the tab sits there has to raise the box then, and
-// a tile that swapped without it would show a failing source under a page claiming all is well.
-func TestAPolledTileBringsTheWarningBoxBackWithIt(t *testing.T) {
+// a list that swapped without it would show a failing source under a page claiming all is well.
+func TestAPolledListBringsTheWarningBoxBackWithIt(t *testing.T) {
 	store := representativeStore()
-	store.states = failingStates(testNow, "plausible", "502 Bad Gateway")
+	store.states = failingStates(testNow, "github-builds", "502 Bad Gateway")
 	h := dashHandler(t, store)
 
-	fragment := getAuthed(t, h, "/tile/github").Body.String()
+	fragment := getAuthed(t, h, "/items").Body.String()
 	if !strings.Contains(fragment, `id="dash-alert" hx-swap-oob="true"`) {
 		t.Fatalf("the polled fragment does not carry the warning box:\n%s", fragment)
 	}
@@ -367,7 +369,7 @@ func TestTheWarningBoxKeepsItsPlaceholderWhileHealthy(t *testing.T) {
 		t.Error("a healthy page draws the box itself, not just its slot")
 	}
 
-	fragment := getAuthed(t, h, "/tile/github").Body.String()
+	fragment := getAuthed(t, h, "/items").Body.String()
 	if !strings.Contains(fragment, `id="dash-alert" hx-swap-oob="true"`) {
 		t.Error("a poll from a healthy page carries no slot, so the box could never be cleared")
 	}
@@ -507,28 +509,45 @@ func TestTheThemeSwitchKeepsAnOrdinaryPath(t *testing.T) {
 	}
 }
 
-// The GitHub tile shows a number, a title and a line of the item's own description, and says how
-// many items it is not showing.
-func TestTheGitHubTileShowsNumbersDescriptionsAndTheRemainder(t *testing.T) {
+// The list shows a number, a title and a line of the item's own description, and each repository
+// says how many items it holds — the unfiltered figure, which is the one a filter must never be
+// able to change (FR-1.2).
+func TestTheListShowsNumbersDescriptionsAndCounts(t *testing.T) {
 	store := representativeStore()
 	store.items[0].Number = 4242
 	store.items[0].Summary = "The container needs a liveness probe so a failing start is visible."
 
-	body := getAuthed(t, dashHandler(t, store), "/").Body.String()
+	h := dashHandler(t, store)
+	body := getAuthed(t, h, "/").Body.String()
 
 	if !strings.Contains(body, "#4242") {
-		t.Error("the tile does not show the item's number")
+		t.Error("the list does not show the item's number")
 	}
 	if !strings.Contains(body, "liveness probe") {
-		t.Error("the tile does not show the item's description")
+		t.Error("the list does not show the item's description")
 	}
 	if !strings.Contains(body, `class="item-summary"`) {
 		t.Error("the description is not set apart from the title")
 	}
-	// representativeStore holds 150 GitHub items, so the tile shows five and names the rest.
-	if !strings.Contains(body, "and 145 more open") {
-		t.Errorf("the tile does not say how many it left out:\n%s",
-			firstLineContaining(body, "item-more"))
+	// representativeStore holds 150 items across 10 repositories of 15.
+	if !strings.Contains(body, "150 open") {
+		t.Errorf("the list does not say how many items are open:\n%s",
+			firstLineContaining(body, "shown-count"))
+	}
+	if !strings.Contains(body, `<span class="repo-count">15</span>`) {
+		t.Errorf("a repository heading does not state how many items it holds:\n%s",
+			firstLineContaining(body, "repo-count"))
+	}
+	// Narrowed, both counts name the total as well: "5 open" and "5 of 150 open" are different
+	// news, and only one of them is true.
+	narrowed := getAuthed(t, h, "/?kind=pr").Body.String()
+	if !strings.Contains(narrowed, "50 of 150 open") {
+		t.Errorf("a filtered list does not state the unfiltered total:\n%s",
+			firstLineContaining(narrowed, "shown-count"))
+	}
+	if !strings.Contains(narrowed, `<span class="repo-count">5 of 15</span>`) {
+		t.Errorf("a filtered repository heading does not state its unfiltered total:\n%s",
+			firstLineContaining(narrowed, "repo-count"))
 	}
 }
 
@@ -727,7 +746,7 @@ func TestTheBuildPagesNeverShowASecret(t *testing.T) {
 
 // FR-2.3 under polling. A build that breaks while the tab sits open has to turn the indicator red
 // then — on a dashboard meant to be left open, the next page load may be tomorrow.
-func TestAPolledTileBringsTheBuildIndicatorBackWithIt(t *testing.T) {
+func TestAPolledListBringsTheBuildIndicatorBackWithIt(t *testing.T) {
 	h := newTestServerWith(t, func(o *Options) {
 		credentialAllSources(o)
 		o.Config.GitHub.Repos = []string{"org/a"}
@@ -737,7 +756,7 @@ func TestAPolledTileBringsTheBuildIndicatorBackWithIt(t *testing.T) {
 		}
 	}).Handler()
 
-	fragment := getAuthed(t, h, "/tile/github").Body.String()
+	fragment := getAuthed(t, h, "/items").Body.String()
 	if !strings.Contains(fragment, `id="build-status" hx-swap-oob="true"`) {
 		t.Fatalf("the polled fragment does not carry the build indicator:\n%s", fragment)
 	}
@@ -749,9 +768,11 @@ func TestAPolledTileBringsTheBuildIndicatorBackWithIt(t *testing.T) {
 	if strings.Contains(firstLineContaining(page, `id="build-status"`), "hx-swap-oob") {
 		t.Error("the page marks its own indicator as an out-of-band swap")
 	}
-	// GET /tile/builds is gone with the tile; the page took its place.
-	if got := getAuthed(t, h, "/tile/builds").Code; got != http.StatusNotFound {
-		t.Errorf("GET /tile/builds = %d, want 404 — builds are no longer a tile", got)
+	// The per-tile fragment routes are gone with the tiles; one list fragment took their place.
+	for _, path := range []string{"/tile/github", "/tile/builds"} {
+		if got := getAuthed(t, h, path).Code; got != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404 — there are no tiles any more", path, got)
+		}
 	}
 }
 

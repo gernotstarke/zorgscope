@@ -126,7 +126,7 @@ func (s *Server) requireSession(next http.Handler, redirect bool) http.Handler {
 		if s.signedIn(r) {
 			// Rotating ZORGSCOPE_TOKEN is the only sign-out this product has (FR-8.3 AC3), and
 			// a rotation cannot reach a page the browser has already stored. Without no-store
-			// the dashboard — names of repositories, issue titles, task content — stays in the
+			// the dashboard — names of repositories, issue titles — stays in the
 			// back-forward cache and in any disk cache after the token is rotated, which is
 			// precisely the state the rotation was performed to end.
 			w.Header().Set("Cache-Control", "no-store")
@@ -146,8 +146,8 @@ func (s *Server) requireSession(next http.Handler, redirect bool) http.Handler {
 
 // unauthorisedPage is the body of a 401 on a session route.
 //
-// The status has to stay 401: QS-4.1's table says so, and /tile/{source} is swapped into the page
-// by htmx, which must not paint a sign-in form inside a tile. But POST /seen is a plain browser
+// The status has to stay 401: QS-4.1's table says so, and /items is swapped into the page by
+// htmx, which must not paint a sign-in form into the list. But POST /seen is a plain browser
 // form (FR-1.3 AC3), so with JavaScript disabled the HX-Redirect above is never read and the
 // visitor is left looking at whatever this body says. A sentence and a link is the difference
 // between an expired session and a dead end.
