@@ -33,12 +33,17 @@ design and it was decided in favour of the simpler option.
 
 ```text
 GET  /login              public   the sign-in page: one button, "Sign in with GitHub"
-POST /auth/github        public   sets a state cookie, redirects to GitHub's authorize URL
+GET  /auth/github        public   sets a state cookie, redirects to GitHub's authorize URL
 GET  /auth/callback      public   verifies state, exchanges the code, checks push access,
                                   sets the session cookie, redirects to /
 ```
 
-* `POST /auth/github` generates 32 random bytes, stores them base64-encoded in a cookie named
+* The button on `/login` is a plain link to `GET /auth/github`, not a form. The CSP's
+  `form-action 'self'` is enforced by Chrome on the redirect that follows a form submission, so a
+  `POST` that answered with a redirect to github.com would be blocked; a link navigation is not
+  subject to `form-action`. The route sets one short-lived cookie and redirects, which is all a
+  `GET` may do.
+* `GET /auth/github` generates 32 random bytes, stores them base64-encoded in a cookie named
   `zorgscope_oauth_state` (HttpOnly, Secure, SameSite=Lax, ten minutes), and redirects to GitHub's
   authorization endpoint with `client_id`, `state` and **no scopes**. zorgscope is a public
   repository, and reading a public repository's metadata — including the authenticated user's own
