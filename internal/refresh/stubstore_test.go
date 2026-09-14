@@ -271,7 +271,7 @@ func TestCleanupWritesOutliveCancellationButKeepADeadline(t *testing.T) {
 const canarySecret = "zs_live_9f3c1a7b2e5d4c8a0b6f2e1d7c3a9b45" //nolint:gosec // a canary, not a credential
 
 // tokenCarryingFetcher is a fetcher that holds a credential, as every real one does — the GitHub
-// and Todoist adapters carry their tokens in a field and send them in a header.
+// adapter carries its token in a field and sends it in a header.
 type tokenCarryingFetcher struct {
 	*ports.FakeFetcher
 	AuthToken string

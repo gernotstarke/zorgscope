@@ -84,7 +84,7 @@ func cleanupCtx(ctx context.Context) (context.Context, context.CancelFunc) {
 
 // SourceReport is what one source contributed to a run.
 type SourceReport struct {
-	// Source is the fetcher's name, e.g. "github" or "todoist".
+	// Source is the fetcher's name, e.g. "github" or "github-builds".
 	Source string
 	// Stored is how many items the source now holds — the count ReplaceItems returned, which is
 	// len(items), not the number that are new. It is zero when the source failed.
@@ -456,9 +456,9 @@ func (r *Runner) notify(ctx context.Context, items []domain.Item) string {
 // first-seen GitHub item", i.e. an issue or a pull request.
 //
 // It is a kind rather than a source name because no source name is hard-coded in this package
-// (see New) — and because the kind is what the requirement is really about. A Todoist task is
-// something the user entered themselves, so announcing it back to them is noise; it is stored and
-// shown on the dashboard like everything else, just not posted.
+// (see New) — and because the kind is what the requirement is really about: a future source that
+// contributes something other than an issue or a pull request is stored and shown on the
+// dashboard like everything else, just not posted, without this function needing to know its name.
 func announceable(it domain.Item) bool {
 	return it.Kind == domain.KindIssue || it.Kind == domain.KindPR
 }
@@ -488,7 +488,7 @@ func leaseHolder(trigger string, started time.Time) string {
 	return fmt.Sprintf("%s-%d-%s", strings.ReplaceAll(trigger, "|", "-"), started.UnixNano(), rand.Text())
 }
 
-// detail renders the per-source outcome for the run record: "github: 12; todoist: fetch: …".
+// detail renders the per-source outcome for the run record: "github: 12; github-builds: fetch: …".
 //
 // A failed announcement is appended to it. The run itself was fine and stays OK (FR-6.1 AC3), but
 // the failure has to be recorded somewhere a person actually looks — the run record is that place,

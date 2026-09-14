@@ -481,15 +481,15 @@ func TestABuildsFetchThatReturnsNoneClearsTheStaleRows(t *testing.T) {
 }
 
 // The other half of the same rule: a source that does not fill the builds table must never clear
-// it. UpsertBuilds is not scoped by source — one empty slice from Todoist would delete every row
-// GitHub just wrote, on every single refresh.
+// it. UpsertBuilds is not scoped by source — one empty slice from a second source would delete
+// every row GitHub just wrote, on every single refresh.
 func TestASourceThatDoesNotOwnBuildsLeavesThemAlone(t *testing.T) {
 	store, ctx := newTestStore(t), context.Background()
 	builds := &ports.FakeFetcher{SourceName: "github-builds", Result: ports.FetchResult{
 		OwnsBuilds: true,
 		Builds:     []domain.Build{{Repo: "org/repo", Workflow: "ci", Conclusion: "success"}},
 	}}
-	// Todoist runs after it and returns items only: no builds, and no claim on them.
+	// A second source runs after it and returns items only: no builds, and no claim on them.
 	tasks := fetcher("todoist", issueOf("todoist", "t1"))
 	r := refresh.New(store, []ports.SourceFetcher{builds, tasks}, &ports.FixedClock{T: now}, nil, discardLogger())
 
@@ -537,9 +537,9 @@ func TestFailedSourceItemsAreNotAnnounced(t *testing.T) {
 		Result:     ports.FetchResult{Items: []domain.Item{item("1"), item("2")}}, // fetched, not stored
 		Err:        errors.New("list org/two: 500"),
 	}
-	// The healthy source is a second issue source rather than Todoist, because only issues and
-	// pull requests are announced at all (see TestOnlyGitHubItemsAreAnnounced) — a task would make
-	// the assertion below pass for the wrong reason.
+	// The healthy source is a second issue source, so it is announceable in its own right — the
+	// assertion below is about the partial source's items never having been stored, not about any
+	// filtering by kind.
 	r := refresh.New(store, []ports.SourceFetcher{partial, fetcher("github-extra", issueOf("github-extra", "3"))},
 		&ports.FixedClock{T: now}, n, discardLogger())
 

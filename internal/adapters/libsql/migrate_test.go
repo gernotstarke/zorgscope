@@ -57,6 +57,8 @@ func TestMigration0005RemovesTodoistAndMetricsAndKeepsGitHub(t *testing.T) {
 	mustExec(t, s, `INSERT INTO items (source, external_id, kind, repo, title, first_seen_at, last_fetched_at) VALUES ('todoist','t1','task','Inbox','a task','2026-09-01T00:00:00Z','2026-09-01T00:00:00Z')`)
 	mustExec(t, s, `INSERT INTO items (source, external_id, kind, repo, title, first_seen_at, last_fetched_at) VALUES ('github','g1','issue','org/repo','an issue','2026-08-01T00:00:00Z','2026-09-01T00:00:00Z')`)
 	mustExec(t, s, `INSERT INTO source_state (source) VALUES ('plausible'), ('todoist'), ('github')`)
+	mustExec(t, s, `INSERT INTO notified (key, sent_at) VALUES ('todoist|t1', '2026-09-01T00:00:00Z')`)
+	mustExec(t, s, `INSERT INTO notified (key, sent_at) VALUES ('github|g1', '2026-09-01T00:00:00Z')`)
 	mustExec(t, s, `DELETE FROM schema_migrations WHERE version = 5`)
 
 	if err := s.Migrate(ctx); err != nil {
@@ -81,5 +83,17 @@ func TestMigration0005RemovesTodoistAndMetricsAndKeepsGitHub(t *testing.T) {
 	}
 	if _, err := s.db.ExecContext(ctx, `SELECT 1 FROM metrics`); err == nil {
 		t.Fatal("metrics table survived")
+	}
+
+	// notified rows are keyed "source|external_id" (see notifyKey in internal/refresh/runner.go).
+	// UnnotifiedKeys reports a key as unnotified when its row is gone, so it doubles as a direct
+	// probe of what survived: github|g1's row must still be there, and todoist|t1's must not.
+	unnotified, err := s.UnnotifiedKeys(ctx, []string{"todoist|t1", "github|g1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unnotified) != 1 || unnotified[0] != "todoist|t1" {
+		t.Fatalf("UnnotifiedKeys(todoist|t1, github|g1) after 0005 = %v, want [todoist|t1]: "+
+			"the todoist notified row must be gone and the github one must survive", unnotified)
 	}
 }
