@@ -30,6 +30,14 @@ type server struct {
 	// ("owner/name") for github, and the empty string for a source-wide failure. A
 	// target-specific entry takes precedence over a source-wide one.
 	fail map[string]map[string]int
+
+	// oauthPermission selects, by key into permissionSets (oauth.go), the permissions block that
+	// GET /repos/{owner}/{repo} answers with. POST /_control/oauth-user sets it.
+	oauthPermission string
+	// oauthCallback is where GET /login/oauth/authorize redirects to when the request itself
+	// carries no redirect_uri — the case the backend's own request is in (spec §2). POST
+	// /_control/oauth-callback sets it.
+	oauthCallback string
 }
 
 // routes is the whole table, so that GET / can list it: the first thing anyone does with a fake
@@ -40,6 +48,11 @@ var routes = []string{
 	"POST /_control/fail",
 	"POST /_control/add-issue",
 	"POST /_control/reset",
+	"GET /login/oauth/authorize",
+	"POST /login/oauth/access_token",
+	"GET /repos/{owner}/{repo}",
+	"POST /_control/oauth-user",
+	"POST /_control/oauth-callback",
 }
 
 // NewServer returns an http.Handler serving a fixture-backed stand-in for GitHub, plus the
@@ -62,6 +75,11 @@ func NewServer() http.Handler {
 	mux.HandleFunc("POST /_control/fail", s.handleControlFail)
 	mux.HandleFunc("POST /_control/add-issue", s.handleControlAddIssue)
 	mux.HandleFunc("POST /_control/reset", s.handleControlReset)
+	mux.HandleFunc("GET /login/oauth/authorize", s.handleAuthorize)
+	mux.HandleFunc("POST /login/oauth/access_token", s.handleAccessToken)
+	mux.HandleFunc("GET /repos/{owner}/{repo}", s.handleRepository)
+	mux.HandleFunc("POST /_control/oauth-user", s.handleControlOAuthUser)
+	mux.HandleFunc("POST /_control/oauth-callback", s.handleControlOAuthCallback)
 	return mux
 }
 
@@ -112,5 +130,7 @@ func (s *server) resetLocked() error {
 	s.githubRepos = fx.repos
 	s.githubRuns = fx.runs
 	s.fail = map[string]map[string]int{}
+	s.oauthPermission = "push"
+	s.oauthCallback = ""
 	return nil
 }

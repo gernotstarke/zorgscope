@@ -85,7 +85,7 @@ func TestActionsRunsFailControlScopedToOneRepo(t *testing.T) {
 	srv := httptest.NewServer(fakesources.NewServer())
 	defer srv.Close()
 
-	post(t, srv.URL+"/_control/fail?source=github&repo=org/repo&status=503")
+	postURL(t, srv.URL+"/_control/fail?source=github&repo=org/repo&status=503")
 
 	resp, err := http.Get(srv.URL + "/repos/org/repo/actions/runs")
 	if err != nil {

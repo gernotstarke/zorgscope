@@ -156,7 +156,7 @@ func TestFailControlWithRepoOnlyFailsThatRepo(t *testing.T) {
 	srv := httptest.NewServer(fakesources.NewServer())
 	defer srv.Close()
 
-	post(t, srv.URL+"/_control/fail?source=github&repo=org/bad&status=500")
+	postURL(t, srv.URL+"/_control/fail?source=github&repo=org/bad&status=500")
 
 	resp, err := http.Post(srv.URL+"/graphql", "application/json",
 		bytes.NewReader(mustJSON(t, map[string]any{"variables": map[string]string{"owner": "org", "name": "bad"}})))
@@ -226,9 +226,9 @@ func TestControlResetRestoresPristineState(t *testing.T) {
 	before := graphqlQuery(t, srv.URL, "org", "repo", "")
 	beforeCount := len(before.Data.Repository.Issues.Nodes)
 
-	post(t, srv.URL+"/_control/add-issue")
-	post(t, srv.URL+"/_control/fail?source=github&status=500")
-	post(t, srv.URL+"/_control/reset")
+	postURL(t, srv.URL+"/_control/add-issue")
+	postURL(t, srv.URL+"/_control/fail?source=github&status=500")
+	postURL(t, srv.URL+"/_control/reset")
 
 	after := graphqlQuery(t, srv.URL, "org", "repo", "")
 	if len(after.Data.Repository.Issues.Nodes) != beforeCount {
