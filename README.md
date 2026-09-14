@@ -27,11 +27,8 @@ make backend                 # terminal 1: the backend and its libSQL database
 make client                  # terminal 2: open the browser at it
 make fakes                   # terminal 3 (optional): fixture upstreams instead of the real ones
 
-make test                    # all tests, race detector, against the local database
-make lint                    # go vet + golangci-lint, including the architecture rules
-make check                   # everything CI runs
-make db-shell                # a SQL shell against the local database
-make fly-deploy              # validate and deploy to Fly
+make check                   # everything CI runs: vet, lint, tests, docs, fly.toml validation
+make clean                   # stop the local backend, drop caches and local data
 make help                    # every target
 ```
 
