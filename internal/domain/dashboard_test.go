@@ -81,6 +81,33 @@ func TestBuildDashboardReportsTheSourcesHealth(t *testing.T) {
 			t.Fatalf("Source = %+v", d.Source)
 		}
 	})
+	// Switching a source off does not delete what it already fetched: the items stay on the page
+	// and are exactly as old as the last success, so the time travels with the disabled state or
+	// the page cannot say how old what it is showing is (FR-1.4 AC1). A state that has one is
+	// stale by any measure, which is the case that proves disabled still wins.
+	t.Run("disabled carries the last success", func(t *testing.T) {
+		ok := now.Add(-5 * time.Hour)
+		d := domain.BuildDashboard(domain.DashboardInput{
+			Now: now, Disabled: []string{"github"}, StaleAfter: time.Hour,
+			States: map[string]domain.SourceState{
+				"github": {Source: "github", LastSuccessAt: ok, LastError: "boom", LastErrorAt: now},
+			},
+		})
+		if !d.Source.Disabled || d.Source.Stale || d.Source.Error != "" {
+			t.Fatalf("a disabled source is reported as stale or failing: %+v", d.Source)
+		}
+		if !d.Source.LastOKAt.Equal(ok) {
+			t.Fatalf("LastOKAt = %v, want %v: a disabled source drops the age of its stored data",
+				d.Source.LastOKAt, ok)
+		}
+	})
+	// And a source that was switched off before it ever succeeded has no such time to carry.
+	t.Run("disabled with no state has no last success", func(t *testing.T) {
+		d := domain.BuildDashboard(domain.DashboardInput{Now: now, Disabled: []string{"github"}, StaleAfter: time.Hour})
+		if !d.Source.LastOKAt.IsZero() {
+			t.Fatalf("LastOKAt = %v, want the zero time", d.Source.LastOKAt)
+		}
+	})
 	t.Run("failing carries the error and the last success", func(t *testing.T) {
 		ok := now.Add(-30 * time.Minute)
 		d := domain.BuildDashboard(domain.DashboardInput{Now: now, StaleAfter: time.Hour, States: map[string]domain.SourceState{

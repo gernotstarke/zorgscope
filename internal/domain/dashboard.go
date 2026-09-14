@@ -211,11 +211,17 @@ func groupByRepo(items []Item, repos []string, f Filter, lastVisit time.Time) []
 
 // sourceHealth reduces the GitHub source's state to what the page says above the list. Disabled
 // is checked first (FR-8.2 AC2): a source that never runs is neither stale nor failing.
+//
+// A disabled source still carries its last success, because switching a source off does not
+// delete what it already fetched: the items stay on the page and are exactly as old as that
+// timestamp, so the page has to be able to say so (FR-1.4 AC1). Reporting the state as disabled
+// while withholding the time left the list showing hour-old data under a sentence that could only
+// claim nothing had ever been fetched.
 func sourceHealth(in DashboardInput, disabled map[string]bool) SourceHealth {
-	if disabled[githubSource] {
-		return SourceHealth{Disabled: true}
-	}
 	state := in.States[githubSource]
+	if disabled[githubSource] {
+		return SourceHealth{Disabled: true, LastOKAt: state.LastSuccessAt}
+	}
 	h := SourceHealth{Stale: state.Stale(in.Now, in.StaleAfter), LastOKAt: state.LastSuccessAt}
 	if state.Failing() {
 		h.Error = state.LastError

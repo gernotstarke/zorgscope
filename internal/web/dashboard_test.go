@@ -270,6 +270,16 @@ func TestTheListPollsItselfAtTheConfiguredInterval(t *testing.T) {
 		t.Errorf("a filtered list polls the unfiltered fragment (FR-1.6 AC1):\n%s",
 			firstLineContaining(filtered, "items-section"))
 	}
+	// Two parameters, so the separator is actually exercised. html/template escapes the "&" of
+	// the query string as "&amp;" inside the attribute, and url.Values.Encode percent-encodes the
+	// "/" of the repository name — which is what a browser hands back to htmx as "&" and "/", so
+	// the URL polled is the one meant. Asserting the escaped form is asserting what is in the
+	// document; asserting the unescaped one would be asserting a page that is invalid HTML.
+	two := getAuthed(t, h, "/?kind=pr&repo=org/repo").Body.String()
+	if !strings.Contains(two, `hx-get="/items?kind=pr&amp;repo=org%2Frepo"`) {
+		t.Errorf("a two-parameter poll URL is not carried correctly (FR-1.6 AC1):\n%s",
+			firstLineContaining(two, "items-section"))
+	}
 	// And the fragment carries it too, or polling stops after the first swap.
 	fragment := getAuthed(t, h, "/items").Body.String()
 	if !strings.Contains(fragment, `hx-swap="outerHTML"`) {
@@ -303,6 +313,49 @@ func TestTheFrontPageFiltersByQueryString(t *testing.T) {
 	}
 }
 
+// A repository that configuration no longer names keeps the items it already had — the domain
+// lists such a group after the configured ones — so a filter naming one selects something real
+// and the control that applied it has to be able to show it. Built from configuration alone the
+// select could not: the page came back with "all" selected, and the next touch of any other
+// control submitted repo="" and threw the filter away without anyone asking it to.
+func TestTheFilterEchoesARepositoryConfigurationNoLongerNames(t *testing.T) {
+	retired := ghItem(1, "Opened before the repository was dropped", testNow.Add(-time.Hour))
+	retired.Repo = "gone/repo"
+	store := &dashStore{
+		items:  []domain.Item{retired, ghItem(2, "Still watched", testNow.Add(-time.Hour))},
+		states: healthyStates(testNow),
+	}
+	// org/repo is configured; gone/repo is not, and dashHandler does not add it.
+	h := newTestServerWith(t, func(o *Options) {
+		credentialAllSources(o)
+		o.Config.GitHub.Repos = []string{"org/repo"}
+		o.Store = store
+	}).Handler()
+
+	body := getAuthed(t, h, "/?repo=gone/repo").Body.String()
+	if !strings.Contains(body, `<option value="gone/repo" selected>gone/repo</option>`) {
+		t.Errorf("the filter cannot echo a repository configuration no longer names:\n%s",
+			firstLineContaining(body, "<option"))
+	}
+	// And it really is filtering by it, rather than merely drawing the option.
+	if !strings.Contains(body, "Opened before the repository was dropped") {
+		t.Error("the filtered page does not show the retired repository's items")
+	}
+	if strings.Contains(body, "Still watched") {
+		t.Error("the filter drew the option but narrowed nothing")
+	}
+	// The configured repository is still offered, and is not the one selected.
+	if !strings.Contains(body, `<option value="org/repo">org/repo</option>`) {
+		t.Error("appending the retired repository dropped a configured one")
+	}
+	// An unfiltered page offers configuration alone: the retired repository is reachable by a URL
+	// that names it, not an entry that grows the control for everyone.
+	plain := getAuthed(t, h, "/").Body.String()
+	if strings.Contains(plain, `value="gone/repo"`) {
+		t.Error("a repository nobody is watching is offered on the unfiltered page")
+	}
+}
+
 // FR-1.6 AC1: the fragment a poll returns carries the four blocks that live outside the list, or
 // each of them would keep the figure the page was loaded with from the first swap on.
 func TestTheItemsFragmentCarriesTheOutOfBandBlocks(t *testing.T) {
@@ -328,11 +381,20 @@ func TestTheFilterFormIsAPlainGetFormWithHtmxOnTop(t *testing.T) {
 	h := dashHandler(t, representativeStore())
 	body := getAs(h, "/", signIn(t, h)).Body.String()
 
+	// The attributes are looked for inside the form's own opening tag, not anywhere in the page:
+	// the list section carries an hx-swap of its own, so a page-wide search would report the
+	// form's swap as present after it had been deleted.
+	form := openingTag(t, body, `<form class="filter"`)
 	for _, want := range []string{
-		`<form class="filter" method="get" action="/"`,
-		`hx-get="/"`, `hx-select="#items"`, `hx-target="#items"`, `hx-push-url=`,
-		`name="repo"`, `name="kind"`, `name="since"`, `name="q"`,
+		`method="get"`, `action="/"`,
+		`hx-get="/"`, `hx-select="#items"`, `hx-target="#items"`,
+		`hx-swap="outerHTML"`, `hx-push-url="true"`,
 	} {
+		if !strings.Contains(form, want) {
+			t.Errorf("the filter form lacks %s:\n%s", want, form)
+		}
+	}
+	for _, want := range []string{`name="repo"`, `name="kind"`, `name="since"`, `name="q"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("form lacks %s", want)
 		}
@@ -374,8 +436,15 @@ func TestRenderingIsNeverAVisit(t *testing.T) {
 		states:    healthyStates(testNow),
 	}
 	h := dashHandler(t, store)
-	getAuthed(t, h, "/")
-	getAuthed(t, h, "/tile/github")
+	// The status is checked, because this test's whole claim is about what a *served* request
+	// did: pointed at a path the mux rejects, it would pass without a handler ever running — as
+	// it silently did when /tile/{source} was replaced by /items.
+	for _, path := range []string{"/", "/items"} {
+		if code := getAuthed(t, h, path).Code; code != http.StatusOK {
+			t.Fatalf("GET %s = %d, want 200: this test proves nothing against a path that is "+
+				"not served (FR-1.6 AC2)", path, code)
+		}
+	}
 
 	if len(store.visits) != 0 {
 		t.Errorf("rendering wrote the last visit %d time(s), want 0 (FR-1.6 AC2)", len(store.visits))
@@ -725,8 +794,17 @@ func TestADisabledSourceHoldingStoredItemsIsHonestAboutTheirAge(t *testing.T) {
 		t.Error("a disabled list above items stamped '1 hour ago' claims the source was never " +
 			"fetched, which is false (FR-1.4 AC1)")
 	}
+	// The age itself, as a machine-readable stamp, not merely the absence of a wrong claim: the
+	// items below were fetched while the credential was there and are exactly this old, and
+	// stating the state without the time is what let the page show hour-old data with no age at
+	// all (FR-1.4 AC1).
+	age := `Last fetched <time datetime="` + testNow.UTC().Format(time.RFC3339) + `">`
+	if !strings.Contains(body, age) {
+		t.Errorf("a disabled list does not state the age of the data it is showing (FR-1.4 AC1)."+
+			"\nwant: %s\ngot:  %s", age, firstLineContaining(body, "notice-disabled"))
+	}
 	if !strings.Contains(body, "Disabled —") {
-		t.Error("a disabled list does not say that nothing is being fetched (FR-8.2 AC2)")
+		t.Error("a disabled list does not say that it is disabled (FR-8.2 AC2)")
 	}
 	if !strings.Contains(body, "no credential is configured") {
 		t.Error("a disabled list no longer says why it is disabled (FR-8.2 AC2)")
@@ -1299,4 +1377,20 @@ func TestAConfiguredSourceWithNothingToWatchDoesNotBlameTheCredential(t *testing
 	if !strings.Contains(builds, "no repositories are configured to watch") {
 		t.Error("the build details page blames something other than the empty watch list")
 	}
+}
+
+// openingTag returns the opening tag that starts with prefix, so an assertion about one element's
+// attributes cannot be satisfied by another element somewhere else on the page.
+func openingTag(t *testing.T, body, prefix string) string {
+	t.Helper()
+	i := strings.Index(body, prefix)
+	if i < 0 {
+		t.Fatalf("no element starting %s on the page", prefix)
+	}
+	rest := body[i:]
+	j := strings.Index(rest, ">")
+	if j < 0 {
+		t.Fatalf("the element starting %s is never closed", prefix)
+	}
+	return rest[:j+1]
 }

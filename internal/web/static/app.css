@@ -405,7 +405,7 @@ button:hover { filter: brightness(1.08); }
   border: 0;
 }
 
-.filter-kind legend { float: left; margin-right: 0.35rem; padding: 0; color: var(--muted); font-size: 0.9rem; }
+.filter-kind legend { margin-right: 0.35rem; padding: 0; color: var(--muted); font-size: 0.9rem; }
 .filter-kind label { display: inline-flex; align-items: baseline; gap: 0.2rem; }
 
 .filter select,

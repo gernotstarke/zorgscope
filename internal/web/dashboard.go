@@ -294,7 +294,8 @@ type dashboardView struct {
 	LastVisit     timeView
 	// Filter is the filter as the visitor left it, echoed back so the form renders in the state
 	// the page was asked for, and Repos is what its repository list offers — configuration order,
-	// because that is the order the groups below it appear in.
+	// because that is the order the groups below it appear in, followed by the applied filter's
+	// own repository when configuration no longer names it. See filterRepos.
 	Filter filterView
 	Repos  []string
 	// Items is the list itself, and is what both this page and GET /items execute the "items"
@@ -510,7 +511,7 @@ func (s *Server) dashboardView(d domain.Dashboard) dashboardView {
 		LastRunDetail: Redact(s.cfg.Secrets, d.LastRunDetail),
 		LastVisit:     newTimeView(d.LastVisitAt, d.GeneratedAt),
 		Filter:        newFilterView(d.Filter),
-		Repos:         s.cfg.GitHub.Repos,
+		Repos:         filterRepos(s.cfg.GitHub.Repos, d.Filter.Repo),
 		Items:         s.itemsView(d),
 		ProblemCount:  d.ProblemCount,
 		Problems:      make([]problemView, 0, len(d.Problems)),
@@ -612,6 +613,33 @@ func countLine(shown, total int, filtered bool) string {
 		return strconv.Itoa(total)
 	}
 	return strconv.Itoa(shown) + " of " + strconv.Itoa(total)
+}
+
+// filterRepos is what the filter's repository list offers: the configured repositories, plus the
+// one the applied filter names when configuration no longer does.
+//
+// A repository dropped from the YAML keeps the items it already had — the domain lists such a
+// group after the configured ones rather than hiding it — so a filter naming one is a filter that
+// selects something real. Built from configuration alone, the control could not show it: the page
+// answered /?repo=org/retired with "all" selected, and then the next touch of any other control
+// submitted the form with repo="" and silently threw the filter away. The option is appended
+// rather than inserted, because it is not part of the configured order and pretending otherwise
+// would move the entries a reader is used to finding in one place.
+func filterRepos(configured []string, applied string) []string {
+	if applied == "" {
+		return configured
+	}
+	for _, r := range configured {
+		if r == applied {
+			return configured
+		}
+	}
+	// A fresh slice: appending to the configured one would write into config's own backing array
+	// whenever it has spare capacity, so one filtered request could change what every later
+	// request is offered.
+	out := make([]string, 0, len(configured)+1)
+	out = append(out, configured...)
+	return append(out, applied)
 }
 
 // newFilterView renders the filter back into the strings its form fields carry. An unset date is
