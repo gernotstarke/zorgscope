@@ -113,3 +113,28 @@ creates all three, and it needs Gernot — the accounts and their credentials ar
 > `superpowers:subagent-driven-development` skill — one fresh subagent per task, review between tasks,
 > `make check` green before each commit. Stop and ask before Task 18, which needs my Fly, Turso and
 > cron-job.org accounts.
+
+## 2026-09-14 — sign in with GitHub, GitHub-only dashboard
+
+Implemented per [the 2026-09-14 design](../specs/2026-09-14-github-signin-and-focus-design.md) and
+[its plan](2026-09-14-github-signin-and-focus.md), on branch `feat/fly-shared-backend-config-api`:
+sign-in through a GitHub OAuth App gated on push access to `gernotstarke/zorgscope`, Plausible and
+Todoist removed, the front page one filtered list grouped by repository, the Makefile down to six
+targets. `make check` is green. Verified against the fake GitHub in tests and by a curl walk-through
+of the whole flow against the containerised backend. **Not yet verified against real GitHub**, which
+needs the two OAuth Apps (design §6). To finish:
+
+1. Register the local App (callback `http://localhost:8080/auth/callback`), put its id and secret in
+   `.env` as `GITHUB_OAUTH_CLIENT_ID` / `GITHUB_OAUTH_CLIENT_SECRET`, leave `GITHUB_OAUTH_BASE_URL`
+   and `GITHUB_BASE_URL` unset, run `make backend` and `make client`, sign in. Expect the dashboard
+   and the log line `sign-in accepted`.
+2. In a private window, sign in as a GitHub account without push access. Expect the
+   "collaborators of …" refusal and the log line `sign-in refused … why=no push access`.
+3. If step 1 is refused with `why=no permissions block`, GitHub answered an unscoped token without
+   the permissions block: request the `read:org` scope in `Server.oauthConfig` (design §8) and
+   record the outcome here.
+4. Register the production App (callback `https://zorgscope.fly.dev/auth/callback`), set the pair as
+   Fly secrets, unset `ZORGSCOPE_TOKEN` there, push to `main`.
+5. Look at the page in a browser once: the groups in configuration order, the filter narrowing
+   without a reload, the address bar following the filter, the form still submitting with
+   JavaScript off. No agent in this work had a browser.
