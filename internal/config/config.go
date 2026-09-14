@@ -20,8 +20,6 @@ type Config struct {
 	Timezone      string
 	Refresh       Refresh
 	GitHub        GitHub
-	Plausible     Plausible
-	Todoist       Todoist
 	Notifications Notifications
 	Secrets       Secrets
 }
@@ -44,18 +42,6 @@ type GitHub struct {
 	BadgeBaseURL string // "" means img.shields.io; set via GITHUB_BADGE_BASE_URL.
 }
 
-// Plausible is the non-secret Plausible configuration.
-type Plausible struct {
-	Sites   []string
-	BaseURL string
-}
-
-// Todoist is the non-secret Todoist configuration.
-type Todoist struct {
-	Filter  string
-	BaseURL string
-}
-
 // Notifications holds outbound notification settings.
 type Notifications struct {
 	Slack struct{ Enabled bool }
@@ -64,9 +50,9 @@ type Notifications struct {
 // Secrets holds every value read from the environment. None of these are ever logged, rendered,
 // or included in an error message (QS-4.3).
 type Secrets struct {
-	GitHubToken, PlausibleKey, TodoistToken, SlackWebhook string
-	AppToken, RefreshSecret                               string
-	TursoURL, TursoAuthToken                              string
+	GitHubToken, SlackWebhook string
+	AppToken, RefreshSecret   string
+	TursoURL, TursoAuthToken  string
 }
 
 // fileConfig mirrors the shape of the YAML file. Durations are strings here so that a malformed
@@ -81,12 +67,6 @@ type fileConfig struct {
 		Login string   `yaml:"login"`
 		Repos []string `yaml:"repos"`
 	} `yaml:"github"`
-	Plausible struct {
-		Sites []string `yaml:"sites"`
-	} `yaml:"plausible"`
-	Todoist struct {
-		Filter string `yaml:"filter"`
-	} `yaml:"todoist"`
 	Notifications struct {
 		Slack struct {
 			Enabled bool `yaml:"enabled"`
@@ -148,18 +128,8 @@ func Load(path string, env func(string) string) (Config, error) {
 			BaseURL:      env("GITHUB_BASE_URL"),
 			BadgeBaseURL: env("GITHUB_BADGE_BASE_URL"),
 		},
-		Plausible: Plausible{
-			Sites:   fc.Plausible.Sites,
-			BaseURL: env("PLAUSIBLE_BASE_URL"),
-		},
-		Todoist: Todoist{
-			Filter:  fc.Todoist.Filter,
-			BaseURL: env("TODOIST_BASE_URL"),
-		},
 		Secrets: Secrets{
 			GitHubToken:    env("GITHUB_TOKEN"),
-			PlausibleKey:   env("PLAUSIBLE_API_KEY"),
-			TodoistToken:   env("TODOIST_TOKEN"),
 			SlackWebhook:   env("SLACK_WEBHOOK_URL"),
 			AppToken:       env("ZORGSCOPE_TOKEN"),
 			RefreshSecret:  env("REFRESH_SECRET"),
@@ -180,16 +150,12 @@ func Load(path string, env func(string) string) (Config, error) {
 }
 
 // Enabled reports whether the named source has its credential (FR-8.2 AC2). An unknown source
-// name reports false. A source with a credential but nothing configured to watch (no repos, no
-// sites, no filter) also reports false: there would be nothing for it to do.
+// name reports false. A source with a credential but nothing configured to watch (no repos) also
+// reports false: there would be nothing for it to do.
 func (c Config) Enabled(source string) bool {
 	switch source {
 	case "github":
 		return c.Secrets.GitHubToken != "" && len(c.GitHub.Repos) > 0
-	case "plausible":
-		return c.Secrets.PlausibleKey != "" && len(c.Plausible.Sites) > 0
-	case "todoist":
-		return c.Secrets.TodoistToken != "" && c.Todoist.Filter != ""
 	default:
 		return false
 	}

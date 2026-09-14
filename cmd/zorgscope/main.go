@@ -21,9 +21,7 @@ import (
 
 	"github.com/gernotstarke/zorgscope/internal/adapters/github"
 	"github.com/gernotstarke/zorgscope/internal/adapters/libsql"
-	"github.com/gernotstarke/zorgscope/internal/adapters/plausible"
 	"github.com/gernotstarke/zorgscope/internal/adapters/slack"
-	"github.com/gernotstarke/zorgscope/internal/adapters/todoist"
 	"github.com/gernotstarke/zorgscope/internal/config"
 	"github.com/gernotstarke/zorgscope/internal/ports"
 	"github.com/gernotstarke/zorgscope/internal/refresh"
@@ -64,16 +62,9 @@ func run(ctx context.Context, stop func(), log *slog.Logger) error {
 	}
 	defer func() { _ = store.Close() }()
 
-	// config.Load has already validated the zone, and internal/config blank-imports time/tzdata
-	// so the lookup works in the distroless image.
-	loc, err := time.LoadLocation(cfg.Timezone)
-	if err != nil {
-		return fmt.Errorf("timezone: %w", err)
-	}
-
 	clock := ports.SystemClock{}
 	hc := &http.Client{Timeout: upstreamTimeout}
-	fetchers := buildFetchers(cfg, hc, clock, loc)
+	fetchers := buildFetchers(cfg, hc)
 	for _, f := range fetchers {
 		log.Info("source enabled", "source", f.Name())
 	}
@@ -120,28 +111,13 @@ func openStore(ctx context.Context, cfg config.Config) (*libsql.Store, error) {
 // buildFetchers builds one fetcher per enabled source (FR-8.2 AC2). A source whose credential is
 // missing — or that has nothing configured to watch — is simply absent from the refresh, rather
 // than present and failing every run.
-func buildFetchers(cfg config.Config, hc *http.Client, clock ports.Clock, loc *time.Location) []ports.SourceFetcher {
+func buildFetchers(cfg config.Config, hc *http.Client) []ports.SourceFetcher {
 	var fetchers []ports.SourceFetcher
 	if cfg.Enabled("github") {
 		gh := githubConfig(cfg)
 		// Issues and builds are two fetchers over one credential: they use different GitHub APIs
 		// and one failing must not hide the other's result.
 		fetchers = append(fetchers, github.NewIssueFetcher(gh, hc), github.NewBuildFetcher(gh, hc))
-	}
-	if cfg.Enabled("plausible") {
-		fetchers = append(fetchers, plausible.New(plausible.Config{
-			APIKey:  cfg.Secrets.PlausibleKey,
-			BaseURL: cfg.Plausible.BaseURL,
-			Sites:   cfg.Plausible.Sites,
-		}, hc))
-	}
-	if cfg.Enabled("todoist") {
-		fetchers = append(fetchers, todoist.New(todoist.Config{
-			Token:    cfg.Secrets.TodoistToken,
-			BaseURL:  cfg.Todoist.BaseURL,
-			Filter:   cfg.Todoist.Filter,
-			Location: loc,
-		}, hc, clock))
 	}
 	return fetchers
 }

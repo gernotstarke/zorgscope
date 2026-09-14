@@ -248,8 +248,6 @@ func label(k domain.Kind) string {
 		return "issue"
 	case domain.KindPR:
 		return "pull request"
-	case domain.KindTask:
-		return "task"
 	default:
 		return "item"
 	}
@@ -268,10 +266,9 @@ func escape(s string) string {
 // linkTarget escapes a URL for the target half of Slack's <url|label> link syntax.
 //
 // On top of the three mrkdwn characters, the pipe has to go: Slack splits the link at the *first*
-// one, so a URL carrying a pipe — a Todoist filter link, a query parameter with a list in it —
-// would have its target truncated at the pipe and the rest folded into the label, producing a
-// link that goes somewhere else. Percent-encoding it is lossless: the server decodes %7C back to
-// a pipe.
+// one, so a URL carrying a pipe — a search query parameter with a list in it — would have its
+// target truncated at the pipe and the rest folded into the label, producing a link that goes
+// somewhere else. Percent-encoding it is lossless: the server decodes %7C back to a pipe.
 func linkTarget(u string) string {
 	return strings.ReplaceAll(escape(u), "|", "%7C")
 }

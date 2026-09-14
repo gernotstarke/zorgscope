@@ -1,8 +1,8 @@
-// Package fakesources implements fixture-backed stand-ins for the three upstream services
-// zorgscope reads from — GitHub (GraphQL and REST), Plausible and Todoist — plus a set of control
-// routes an adapter's tests use to inject failures and added items. It exists so that Tasks 7–10
-// can develop and test their adapters against a real HTTP server instead of a live network
-// dependency and a real credential (FR-9.2).
+// Package fakesources implements a fixture-backed stand-in for the upstream service zorgscope
+// reads from — GitHub (GraphQL and REST) — plus a set of control routes an adapter's tests use to
+// inject failures and added items. It exists so that Tasks 7-10 can develop and test their
+// adapters against a real HTTP server instead of a live network dependency and a real credential
+// (FR-9.2).
 //
 // This package imitates upstream services; it deliberately does not know the shapes zorgscope
 // maps them to. It imports only the standard library, and never internal/domain or
@@ -11,33 +11,41 @@
 package fakesources
 
 import (
+	"io"
 	"net/http"
 	"sync"
 )
 
 // server holds every fixture and every piece of state the control routes mutate: injected
-// repositories, injected run histories, injected tasks, and per-source (optionally
-// per-repository) failure injection. Every field is guarded by mu — adapter tests run under
-// -race, several fetch concurrently, and the control routes mutate state while requests read it.
+// repositories, injected run histories, and per-source (optionally per-repository) failure
+// injection. Every field is guarded by mu — adapter tests run under -race, several fetch
+// concurrently, and the control routes mutate state while requests read it.
 type server struct {
 	mu sync.Mutex
 
-	githubRepos     map[string]*ghRepoFixture
-	githubRuns      map[string]*runsFixture
-	todoist         []todoistTask
-	todoistProjects []todoistProject
+	githubRepos map[string]*ghRepoFixture
+	githubRuns  map[string]*runsFixture
 
 	// fail maps source -> target -> HTTP status to return. target is a repository
-	// ("owner/name") for github, and the empty string for a source-wide failure (also used by
-	// plausible and todoist, which have no per-repository concept). A target-specific entry
-	// takes precedence over a source-wide one.
+	// ("owner/name") for github, and the empty string for a source-wide failure. A
+	// target-specific entry takes precedence over a source-wide one.
 	fail map[string]map[string]int
 }
 
-// NewServer returns an http.Handler serving fixture-backed stand-ins for GitHub, Plausible and
-// Todoist, plus the /_control/* routes used to steer them from a test. Fixtures are embedded
-// (fixtures.go), so the server behaves identically whether run under `go test` or
-// `go run ./cmd/fakesources` — their working directories differ, but go:embed does not care.
+// routes is the whole table, so that GET / can list it: the first thing anyone does with a fake
+// server is open it in a browser, and a 404 there says nothing.
+var routes = []string{
+	"POST /graphql",
+	"GET /repos/{owner}/{repo}/actions/runs",
+	"POST /_control/fail",
+	"POST /_control/add-issue",
+	"POST /_control/reset",
+}
+
+// NewServer returns an http.Handler serving a fixture-backed stand-in for GitHub, plus the
+// /_control/* routes used to steer it from a test. Fixtures are embedded (fixtures.go), so the
+// server behaves identically whether run under `go test` or `go run ./cmd/fakesources` — their
+// working directories differ, but go:embed does not care.
 func NewServer() http.Handler {
 	s := &server{fail: map[string]map[string]int{}}
 	if err := s.resetLocked(); err != nil {
@@ -48,20 +56,28 @@ func NewServer() http.Handler {
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{$}", s.handleIndex)
 	mux.HandleFunc("POST /graphql", s.handleGraphQL)
 	mux.HandleFunc("GET /repos/{owner}/{repo}/actions/runs", s.handleActionsRuns)
-	mux.HandleFunc("GET /api/v1/stats/aggregate", s.handlePlausibleAggregate)
-	mux.HandleFunc("GET /rest/v2/tasks", s.handleTodoistTasks)
-	mux.HandleFunc("GET /rest/v2/projects", s.handleTodoistProjects)
 	mux.HandleFunc("POST /_control/fail", s.handleControlFail)
 	mux.HandleFunc("POST /_control/add-issue", s.handleControlAddIssue)
 	mux.HandleFunc("POST /_control/reset", s.handleControlReset)
 	return mux
 }
 
+// handleIndex serves GET / with a plain-text list of every route the fake serves, so that opening
+// the fake in a browser says something useful instead of a bare 404.
+func (s *server) handleIndex(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = io.WriteString(w, "zorgscope fake sources — a fixture-backed GitHub.\n\nServes:\n")
+	for _, r := range routes {
+		_, _ = io.WriteString(w, "  "+r+"\n")
+	}
+	_, _ = io.WriteString(w, "\nPoint the backend here with GITHUB_BASE_URL and GITHUB_OAUTH_BASE_URL in .env.\n")
+}
+
 // shouldFailLocked reports whether requests to source, for the given target, are currently
-// failing, and with which status. target is a repository for github; callers pass "" for
-// plausible and todoist. Caller must hold mu.
+// failing, and with which status. target is a repository for github. Caller must hold mu.
 func (s *server) shouldFailLocked(source, target string) (status int, fail bool) {
 	byTarget, ok := s.fail[source]
 	if !ok {
@@ -95,8 +111,6 @@ func (s *server) resetLocked() error {
 	}
 	s.githubRepos = fx.repos
 	s.githubRuns = fx.runs
-	s.todoist = fx.tasks
-	s.todoistProjects = fx.projects
 	s.fail = map[string]map[string]int{}
 	return nil
 }

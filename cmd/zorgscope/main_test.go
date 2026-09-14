@@ -5,10 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/gernotstarke/zorgscope/internal/config"
-	"github.com/gernotstarke/zorgscope/internal/ports"
 )
 
 func TestLogLevelFallsBackToInfo(t *testing.T) {
@@ -48,14 +46,8 @@ func TestGitHubConfigDerivesBothBaseURLs(t *testing.T) {
 // FR-8.2 AC2: a source without its credential is absent from the refresh, not present and failing.
 func TestBuildFetchersOnlyBuildsEnabledSources(t *testing.T) {
 	full := config.Config{
-		GitHub:    config.GitHub{Repos: []string{"org/repo"}},
-		Plausible: config.Plausible{Sites: []string{"example.org"}},
-		Todoist:   config.Todoist{Filter: "overdue | today"},
-		Secrets: config.Secrets{
-			GitHubToken:  "gh",
-			PlausibleKey: "pl",
-			TodoistToken: "td",
-		},
+		GitHub:  config.GitHub{Repos: []string{"org/repo"}},
+		Secrets: config.Secrets{GitHubToken: "gh"},
 	}
 
 	tests := []struct {
@@ -66,7 +58,7 @@ func TestBuildFetchersOnlyBuildsEnabledSources(t *testing.T) {
 		{
 			"everything configured",
 			func(c config.Config) config.Config { return c },
-			[]string{"github", "github-builds", "plausible", "todoist"},
+			[]string{"github", "github-builds"},
 		},
 		{
 			"no credentials at all",
@@ -76,22 +68,17 @@ func TestBuildFetchersOnlyBuildsEnabledSources(t *testing.T) {
 		{
 			"github without a token",
 			func(c config.Config) config.Config { c.Secrets.GitHubToken = ""; return c },
-			[]string{"plausible", "todoist"},
+			nil,
 		},
 		{
 			"github without repositories",
 			func(c config.Config) config.Config { c.GitHub.Repos = nil; return c },
-			[]string{"plausible", "todoist"},
-		},
-		{
-			"todoist without a filter",
-			func(c config.Config) config.Config { c.Todoist.Filter = ""; return c },
-			[]string{"github", "github-builds", "plausible"},
+			nil,
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			fetchers := buildFetchers(tc.cfg(full), &http.Client{}, ports.SystemClock{}, time.UTC)
+			fetchers := buildFetchers(tc.cfg(full), &http.Client{})
 			var got []string
 			for _, f := range fetchers {
 				got = append(got, f.Name())

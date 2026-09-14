@@ -30,14 +30,6 @@ github:
     - arc42/examples.arc42.org-site
     - gernotstarke/zorgscope
 
-plausible:
-  sites:
-    - arc42.org
-    - quality.arc42.org
-
-todoist:
-  filter: "overdue | today"
-
 notifications:
   slack:
     enabled: false

@@ -310,7 +310,7 @@ func TestItemWithoutURLIsStillAnnounced(t *testing.T) {
 	n := New(rec.webhook(), rec.srv.Client())
 
 	if err := n.Notify(context.Background(), []domain.Item{
-		{Source: "todoist", ExternalID: "todoist:9", Kind: domain.KindTask, Title: "call the plumber"},
+		{Source: "github", ExternalID: "9", Kind: domain.KindIssue, Title: "call the plumber"},
 	}); err != nil {
 		t.Fatalf("Notify: %v", err)
 	}
@@ -424,7 +424,7 @@ func TestAPipeInTheItemURLDoesNotTruncateTheLink(t *testing.T) {
 	rec := newRecorder(t)
 	n := New(rec.webhook(), rec.srv.Client())
 
-	itemURL := "https://todoist.test/app?filter=today%20|%20overdue"
+	itemURL := "https://example.test/search?q=today%20|%20overdue"
 	if err := n.Notify(context.Background(), []domain.Item{issue("1", "piped", itemURL)}); err != nil {
 		t.Fatalf("Notify: %v", err)
 	}

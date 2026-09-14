@@ -5,10 +5,6 @@ refresh:
 github:
   login: someone
   repos: [org/one, org/two]
-plausible:
-  sites: [example.org]
-todoist:
-  filter: "overdue | today"
 notifications:
   slack:
     enabled: false

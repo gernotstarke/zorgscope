@@ -1,7 +1,6 @@
-// Command fakesources serves fixture-backed stand-ins for GitHub, Plausible and Todoist, so that
-// each adapter (Tasks 7-10) can be developed and tested against a real HTTP server instead of a
-// live network dependency and a real credential (FR-9.2). `make fakes` runs this on
-// http://localhost:9090.
+// Command fakesources serves a fixture-backed stand-in for GitHub, so that each adapter (Tasks
+// 7-10) can be developed and tested against a real HTTP server instead of a live network
+// dependency and a real credential (FR-9.2). `make fakes` runs this on http://localhost:9090.
 package main
 
 import (

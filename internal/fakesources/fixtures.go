@@ -10,7 +10,7 @@ import (
 // (working directory: the package) and `go run ./cmd/fakesources` (working directory: the module
 // root) — a relative path would only work for one of the two.
 //
-//go:embed testdata/github/repos/*.json testdata/github/runs/*.json testdata/todoist/*.json
+//go:embed testdata/github/repos/*.json testdata/github/runs/*.json
 var fixturesFS embed.FS
 
 // ghIssue is a single GitHub issue or pull request, shaped exactly as shurcooL/githubv4
@@ -75,31 +75,6 @@ type runsFixture struct {
 	WorkflowRuns []workflowRun `json:"workflow_runs"`
 }
 
-// todoistDue is Todoist's "due" sub-object. A task with no due date omits it entirely, which
-// unmarshals to a nil pointer — that is how the fixture represents "no due date".
-type todoistDue struct {
-	Date     string `json:"date"`
-	Datetime string `json:"datetime,omitempty"`
-}
-
-// todoistProject is a single project, shaped as Todoist's REST v2 GET /rest/v2/projects returns
-// it. Only the two fields an adapter needs to resolve a task's project_id to a name are declared;
-// the real response carries colour, order, view style and more.
-type todoistProject struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-}
-
-// todoistTask is a single task, shaped as Todoist's REST v2 API returns it.
-type todoistTask struct {
-	ID        string      `json:"id"`
-	Content   string      `json:"content"`
-	ProjectID string      `json:"project_id"`
-	Priority  int         `json:"priority"`
-	URL       string      `json:"url"`
-	Due       *todoistDue `json:"due"`
-}
-
 // githubRepoFiles maps a "owner/name" repository to the fixture file holding its issues and pull
 // requests. A repository requested via GraphQL but absent here is served as empty — no issues, no
 // pull requests — rather than an error, so an adapter test that misspells a repo name gets an
@@ -120,16 +95,6 @@ var githubRunsFiles = map[string]string{
 	"org/build-running": "testdata/github/runs/org-build-running.json",
 	"org/build-none":    "testdata/github/runs/org-build-none.json",
 }
-
-// todoistTasksFile holds the four fixture tasks: one overdue, one due today, one due next week,
-// and one with no due date, dated against the fixed clock (2026-08-17T12:00:00Z) Task 10's tests
-// use.
-const todoistTasksFile = "testdata/todoist/tasks.json"
-
-// todoistProjectsFile holds the two projects the fixture tasks belong to (5001 and 5002), so that
-// an adapter resolving project_id to a project name has both a hit for every fixture task and two
-// distinguishable names to assert on (FR-4.1 AC1).
-const todoistProjectsFile = "testdata/todoist/projects.json"
 
 // loadFixtures reads every embedded fixture document fresh and returns a new, independent copy of
 // the pristine state. It is used both to build the server's initial state and to implement
@@ -156,13 +121,6 @@ func loadFixtures() (fixtures, error) {
 		fx.runs[name] = &runs
 	}
 
-	if err := readFixture(todoistTasksFile, &fx.tasks); err != nil {
-		return fixtures{}, fmt.Errorf("loading todoist tasks fixture: %w", err)
-	}
-	if err := readFixture(todoistProjectsFile, &fx.projects); err != nil {
-		return fixtures{}, fmt.Errorf("loading todoist projects fixture: %w", err)
-	}
-
 	return fx, nil
 }
 
@@ -170,10 +128,8 @@ func loadFixtures() (fixtures, error) {
 // fixture kind does not add another positional return value to loadFixtures and another silent
 // opportunity to swap two of them at the call site.
 type fixtures struct {
-	repos    map[string]*ghRepoFixture
-	runs     map[string]*runsFixture
-	tasks    []todoistTask
-	projects []todoistProject
+	repos map[string]*ghRepoFixture
+	runs  map[string]*runsFixture
 }
 
 // readFixture reads the embedded file at path and decodes it into v.
