@@ -92,6 +92,9 @@ func Load(path string, env func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("timezone: %w", err)
 	}
 
+	if len(fc.GitHub.Repos) == 0 {
+		return Config{}, errors.New("github.repos: at least one repository is required")
+	}
 	for i, repo := range fc.GitHub.Repos {
 		if !repoPattern.MatchString(repo) {
 			return Config{}, fmt.Errorf("github.repos[%d]: %q is not in owner/name form", i, repo)

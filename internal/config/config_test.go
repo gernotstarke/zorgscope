@@ -147,6 +147,25 @@ func TestLoadRejectsAnOAuthBaseURLThatIsNeitherHTTPSNorLoopback(t *testing.T) {
 	}
 }
 
+// FR-8.1 Step 1: "at least one repo, every one in owner/name form" — an empty or omitted
+// github.repos must fail at start-up, not load into an app with nothing to fetch.
+func TestLoadRejectsNoRepos(t *testing.T) {
+	for name, path := range map[string]string{
+		"empty":   "testdata/no-repos.yaml",
+		"omitted": "testdata/omitted-repos.yaml",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := config.Load(path, env(fullEnv()))
+			if err == nil {
+				t.Fatal("want an error for github.repos with no entries")
+			}
+			if !strings.Contains(err.Error(), "github.repos") {
+				t.Errorf("error %q must name the offending field", err)
+			}
+		})
+	}
+}
+
 // TestLoadRejectsUnknownField guards against a misspelled top-level key (e.g. "githbu" instead of
 // "github") being silently dropped, which would leave that source unconfigured with no error.
 func TestLoadRejectsUnknownField(t *testing.T) {
