@@ -26,6 +26,10 @@ github:
 
 `github.auth_repo` is the one field that is not about what is watched: it names the repository whose
 push access admits a visitor (FR‑8.3 AC3, [ADR‑0009](../decisions/0009-github-sign-in-push-access.md)).
+Sign-in requests no OAuth scopes, so `auth_repo` must be a repository GitHub will describe to a
+visitor's scope-less token: a public one, or one they can see without scopes. A private repository
+would need the `repo` scope, and an organisation repository behind OAuth App access restrictions may
+need `read:org` as well.
 `github.cache_ttl` is how old the in-memory snapshot may be before a page view triggers a fetch
 instead of reusing it (design §5); it defaults to 5 minutes when the field is left out. Both sit in
 the YAML file rather than the environment because neither is a secret, and both are exactly the kind
@@ -47,12 +51,12 @@ The last row is not a secret at all: `Load` reads those two from the environment
 a YAML field that would tempt someone into committing a real one. There are two of them because what
 looks like one upstream is served from two hosts: the API and GraphQL endpoint at `api.github.com`
 (`GITHUB_BASE_URL`) and the OAuth authorize and token endpoints at `github.com`
-(`GITHUB_OAUTH_BASE_URL`). Left unset, each means its real host. `GITHUB_OAUTH_BASE_URL` is the one
-of the two that is validated: set to anything but `https`, or to a host that is not this machine
-(`localhost`, `127.0.0.1`, `::1`, `host.docker.internal`), `Load` refuses to start and names the
-variable. It decides where the visitor's browser is sent and where this process posts the client
-secret, so an unvalidated one would be a redirect to somebody else's host wearing a debugging
-switch's clothes.
+(`GITHUB_OAUTH_BASE_URL`). Left unset, each means its real host. Both are validated the same way: set
+to anything but `https`, unless the host is this machine (`localhost`, `127.0.0.1`, `::1`,
+`host.docker.internal`), `Load` refuses to start and names the variable. `GITHUB_BASE_URL` decides
+where this process sends `GITHUB_TOKEN` and every visitor's token; `GITHUB_OAUTH_BASE_URL` decides
+where the visitor's browser is sent and where this process posts the client secret. An unvalidated
+one would be a redirect to somebody else's host wearing a debugging switch's clothes.
 
 ## `.env` for local development
 

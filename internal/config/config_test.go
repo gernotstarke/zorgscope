@@ -101,49 +101,53 @@ func TestLoadRequiresTheOAuthPairAuthRepoAndToken(t *testing.T) {
 	}
 }
 
-// GITHUB_OAUTH_BASE_URL exists so that `make fakes` and the tests can point the sign-in flow at a
-// local fixture server. A value that is not a loopback address is therefore either a mistake or an
-// attempt to send the visitor's authorisation — and this deployment's client secret with it — to
-// somebody else's host, and either way it must not start (QS-4.3).
-func TestLoadRejectsAnOAuthBaseURLThatIsNeitherHTTPSNorLoopback(t *testing.T) {
-	base := fullEnv()
-	load := func(value string) error {
-		m := maps.Clone(base)
-		if value != "" {
-			m["GITHUB_OAUTH_BASE_URL"] = value
-		}
-		_, err := config.Load("testdata/valid.yaml", env(m))
-		return err
-	}
+// GITHUB_BASE_URL and GITHUB_OAUTH_BASE_URL exist so that `make fakes` and the tests can point
+// fetching and the sign-in flow at a local fixture server. A value that is neither https nor a
+// loopback address is therefore either a mistake or an attempt to send this deployment's token, the
+// visitor's authorisation or the client secret to somebody else's host in plaintext, and either way
+// it must not start (QS-4.3, design §8).
+func TestLoadRejectsABaseURLThatIsNeitherHTTPSNorLoopback(t *testing.T) {
+	for _, variable := range []string{"GITHUB_BASE_URL", "GITHUB_OAUTH_BASE_URL"} {
+		t.Run(variable, func(t *testing.T) {
+			load := func(value string) error {
+				m := fullEnv()
+				if value != "" {
+					m[variable] = value
+				}
+				_, err := config.Load("testdata/valid.yaml", env(m))
+				return err
+			}
 
-	for _, ok := range []string{
-		"",                                 // unset: the real github.com
-		"https://github.example",           // an enterprise host, over TLS
-		"http://localhost:9090",            // make fakes, from the host
-		"http://127.0.0.1:9090",            // the same, by address
-		"http://[::1]:9090",                // and over IPv6
-		"http://host.docker.internal:9090", // make fakes, from inside the Compose network
-	} {
-		if err := load(ok); err != nil {
-			t.Errorf("GITHUB_OAUTH_BASE_URL=%q: %v", ok, err)
-		}
-	}
+			for _, ok := range []string{
+				"",                                 // unset: the real GitHub
+				"https://github.example",           // an enterprise host, over TLS
+				"http://localhost:9090",            // make fakes, from the host
+				"http://127.0.0.1:9090",            // the same, by address
+				"http://[::1]:9090",                // and over IPv6
+				"http://host.docker.internal:9090", // make fakes, from inside the Compose network
+			} {
+				if err := load(ok); err != nil {
+					t.Errorf("%s=%q: %v", variable, ok, err)
+				}
+			}
 
-	for _, bad := range []string{
-		"http://github.com",    // plaintext to a host that is not this machine
-		"http://evil.example",  // the attack this check exists for
-		"ftp://localhost:9090", // loopback, but not a scheme an OAuth endpoint speaks
-		"not a url",            // no scheme and no host at all
-		"https://",             // a scheme and nothing to talk to
-	} {
-		err := load(bad)
-		if err == nil {
-			t.Errorf("GITHUB_OAUTH_BASE_URL=%q was accepted", bad)
-			continue
-		}
-		if !strings.Contains(err.Error(), "GITHUB_OAUTH_BASE_URL") {
-			t.Errorf("GITHUB_OAUTH_BASE_URL=%q: error %q must name the variable (FR-8.1 AC3)", bad, err)
-		}
+			for _, bad := range []string{
+				"http://github.com",    // plaintext to a host that is not this machine
+				"http://evil.example",  // the attack this check exists for
+				"ftp://localhost:9090", // loopback, but not a scheme GitHub speaks
+				"not a url",            // no scheme and no host at all
+				"https://",             // a scheme and nothing to talk to
+			} {
+				err := load(bad)
+				if err == nil {
+					t.Errorf("%s=%q was accepted", variable, bad)
+					continue
+				}
+				if !strings.Contains(err.Error(), variable) {
+					t.Errorf("%s=%q: error %q must name the variable (FR-8.1 AC3)", variable, bad, err)
+				}
+			}
+		})
 	}
 }
 

@@ -8,8 +8,10 @@
 // something a handler can forget to call — a route that names no credential is registered as
 // public, and the tests fail unless that route is on their explicit list of public routes.
 //
-// The second is that no secret ever reaches a response or a log (QS-4.3). Handlers never render an
-// error's text; they log it, scrubbed through Redact, and show the visitor a fixed message.
+// The second is that no secret ever reaches a response or a log (QS-4.3). The one error text a
+// visitor ever sees is an upstream fetch failure, shown in the dashboard's single notice and always
+// passed through Redact first (see errorNotice). Every other error is logged, scrubbed through
+// Redact, and the visitor is shown a fixed message.
 package web
 
 import (

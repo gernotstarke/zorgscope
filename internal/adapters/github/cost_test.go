@@ -12,7 +12,7 @@ import (
 	"github.com/gernotstarke/zorgscope/internal/fakesources"
 )
 
-// graphQLBudget is QS-3.5's ceiling: ≤ 20 GraphQL point-equivalents per refresh run, so that a
+// graphQLBudget is QS-3.5's ceiling: ≤ 20 GraphQL point-equivalents per fetch, so that a
 // 15-minute interval stays under 2 % of GitHub's hourly limit.
 const graphQLBudget = 20
 
@@ -72,7 +72,7 @@ func TestGraphQLRequestBudget(t *testing.T) {
 	mu.Unlock()
 
 	if got > graphQLBudget {
-		t.Errorf("one refresh run made %d GraphQL requests over %d repositories, which exceeds "+
+		t.Errorf("one fetch made %d GraphQL requests over %d repositories, which exceeds "+
 			"QS-3.5's budget of %d point-equivalents per run", got, len(repos), graphQLBudget)
 	}
 	if want := 2 * len(repos); got != want {

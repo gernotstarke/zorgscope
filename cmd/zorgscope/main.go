@@ -22,6 +22,7 @@ import (
 
 	"github.com/gernotstarke/zorgscope/internal/adapters/github"
 	"github.com/gernotstarke/zorgscope/internal/config"
+	"github.com/gernotstarke/zorgscope/internal/domain"
 	"github.com/gernotstarke/zorgscope/internal/ports"
 	"github.com/gernotstarke/zorgscope/internal/snapshot"
 	"github.com/gernotstarke/zorgscope/internal/web"
@@ -55,7 +56,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	hc := &http.Client{Timeout: upstreamTimeout}
 	fetcher := github.NewIssueFetcher(githubConfig(cfg), hc)
 
-	cache := snapshot.New(fetcher, cfg.GitHub.CacheTTL, ports.SystemClock{})
+	cache := snapshot.New(loggingSource(fetcher, log, cfg.Secrets), cfg.GitHub.CacheTTL, ports.SystemClock{})
 
 	srv, err := web.New(web.Options{
 		Config: cfg,
@@ -72,6 +73,23 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 
 	return serve(ctx, log, srv.Handler())
+}
+
+// loggingSource wraps src so that every failed fetch is logged once, at Warn, with how many items
+// came back alongside the error — a partial failure and a total one read differently.
+//
+// The page shows a failure only to whoever is looking at the time, and the cache keeps the previous
+// list, so without this line an upstream that fails for hours leaves no trace for an operator. It
+// lives here rather than in internal/snapshot because only main holds both the logger and the
+// secrets, and the error text is scrubbed of the latter before it is written (QS-4.3).
+func loggingSource(src ports.Source, log *slog.Logger, secrets config.Secrets) ports.Source {
+	return ports.SourceFunc(func(ctx context.Context) ([]domain.Item, error) {
+		items, err := src.Fetch(ctx)
+		if err != nil {
+			log.Warn("fetch failed", "err", web.Redact(secrets, err.Error()), "items", len(items))
+		}
+		return items, err
+	})
 }
 
 // githubConfig derives the GitHub adapter's configuration from one setting, GITHUB_BASE_URL, which

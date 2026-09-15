@@ -145,22 +145,28 @@ func Load(path string, env func(string) string) (Config, error) {
 	if cfg.Secrets.GitHubToken == "" {
 		return Config{}, errors.New("GITHUB_TOKEN is not set")
 	}
-	if err := checkOAuthBaseURL(cfg.GitHub.OAuthBaseURL); err != nil {
+	if err := checkBaseURL("GITHUB_BASE_URL", cfg.GitHub.BaseURL); err != nil {
+		return Config{}, err
+	}
+	if err := checkBaseURL("GITHUB_OAUTH_BASE_URL", cfg.GitHub.OAuthBaseURL); err != nil {
 		return Config{}, err
 	}
 
 	return cfg, nil
 }
 
-// checkOAuthBaseURL validates GITHUB_OAUTH_BASE_URL, which is empty in every real deployment.
+// checkBaseURL validates GITHUB_BASE_URL or GITHUB_OAUTH_BASE_URL, named by name, both of which
+// are empty in every real deployment (design §8).
 //
-// The variable exists so that `make fakes` and the tests can point the sign-in flow at a fixture
-// server on this machine; it is not a general redirect. Left unvalidated it would be one: the value
-// becomes the authorize URL the visitor's browser is sent to and the token URL this process posts
-// the client secret to, so a typo — or an environment somebody else can write — would hand both to
-// a host of their choosing. Anything but https is therefore refused unless it is talking to this
-// machine, where there is no network to intercept and no TLS certificate to have.
-func checkOAuthBaseURL(raw string) error {
+// The variables exist so that `make fakes` and the tests can point fetching and the sign-in flow
+// at a fixture server on this machine; they are not general redirects. Left unvalidated they would
+// be: GITHUB_BASE_URL is where this process sends GITHUB_TOKEN and every visitor's access token,
+// and GITHUB_OAUTH_BASE_URL becomes the authorize URL the visitor's browser is sent to and the
+// token URL this process posts the client secret to, so a typo — or an environment somebody else
+// can write — would hand those to a host of their choosing. Anything but https is therefore refused
+// unless it is talking to this machine, where there is no network to intercept and no TLS
+// certificate to have.
+func checkBaseURL(name, raw string) error {
 	if raw == "" {
 		return nil
 	}
@@ -168,7 +174,7 @@ func checkOAuthBaseURL(raw string) error {
 	// The error is never included: the value is not a secret, but it is attacker-influenceable
 	// text, and the name of the variable is what the operator needs (FR-8.1 AC3, QS-4.3).
 	if err != nil || u.Host == "" {
-		return errors.New("GITHUB_OAUTH_BASE_URL is not a URL")
+		return errors.New(name + " is not a URL")
 	}
 	if u.Scheme == "https" {
 		return nil
@@ -176,7 +182,7 @@ func checkOAuthBaseURL(raw string) error {
 	if u.Scheme == "http" && isLoopbackHost(u.Hostname()) {
 		return nil
 	}
-	return errors.New("GITHUB_OAUTH_BASE_URL must be https, unless it points at this machine")
+	return errors.New(name + " must be https, unless it points at this machine")
 }
 
 // isLoopbackHost reports whether host is this machine. host.docker.internal is included because
