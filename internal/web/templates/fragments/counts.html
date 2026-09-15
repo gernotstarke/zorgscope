@@ -1,0 +1,26 @@
+{{/* The two places the *total* new count appears, and the only two that live outside the list: the
+     tab title (FR-1.2 AC3) and the summary line. Both are defined here, among the fragments,
+     because both are needed twice — once by the page, once by the fragment GET /items returns, so
+     that a poll updates them along with the list it swapped. One definition, executed twice, so
+     the polled copy cannot drift from the drawn one.
+
+     Neither follows the filter, and that is the point of counting them over every item rather than
+     over the ones on show: a search box that quietly changed the tab's badge would make the
+     dashboard lie about what is new (FR-1.2).
+
+     The two travel back by different mechanisms, and the difference is htmx's, not a choice:
+
+       - The title needs no marker. htmx lifts a top-level <title> out of any response, removes it
+         from the fragment and writes its text into the document's own title element. Marking it
+         hx-swap-oob would be inert — the element is gone before out-of-band swaps are considered.
+       - The summary is an ordinary element, so it comes back as an out-of-band swap addressed by
+         id. The id is on both copies: htmx replaces the element in the document whose id matches,
+         and it can only find one that has kept its id through the previous swap.
+
+     Neither is script, which is what makes them possible at all: the CSP carries no
+     'unsafe-inline' (QS-4.4). The page draws both plainly, so a visitor with JavaScript switched
+     off gets a correct page from the load alone and nothing here ever runs (FR-1.3 AC3). */}}
+
+{{define "tab-title"}}<title>{{if gt .NewCount 0}}({{.NewCount}}) {{end}}{{with .Title}}{{.}} · {{end}}zorgscope</title>{{end}}
+
+{{define "dash-summary"}}<p class="dash-summary" id="dash-summary"{{if .OOB}} hx-swap-oob="true"{{end}}>{{if gt .NewTotal 0}}{{.NewTotal}} new since your last visit{{else}}Nothing new since your last visit{{end}}{{if .LastVisit.Known}} <time datetime="{{.LastVisit.Absolute}}">{{.LastVisit.Relative}}</time>{{end}}</p>{{end}}

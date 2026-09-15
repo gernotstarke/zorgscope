@@ -1,9 +1,0 @@
-server:
-  base_url: http://localhost:8080
-github:
-  enabled: true
-  me: gernotstarke
-  repos:
-    - arc42/arc42-template
-    - name: gernotstarke/esabuch.de-site
-      poll_interval: 5m

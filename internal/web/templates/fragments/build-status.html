@@ -1,0 +1,8 @@
+{{/* The front page's build indicator (FR-2.3). One line: a coloured dot, the state in a word, the
+     counts in a sentence, and a link to the page that lists the repositories.
+
+     It lives among the fragments, like the counts and the warning box, because it sits outside the
+     list and is decided by data a poll refreshes — a build that breaks while the tab is open has
+     to turn this red then, not at the next page load. The slot keeps its id whatever the state,
+     so an out-of-band swap always has an element to address. */}}
+{{define "build-status"}}<div id="build-status"{{if .OOB}} hx-swap-oob="true"{{end}}><p class="buildbar buildbar-{{.Health}}"><span class="dot" aria-hidden="true"></span><span class="buildbar-label">Build status: {{.Label}}</span><span class="buildbar-summary">{{.Summary}}{{if .Running}} · {{.Running}} running{{end}}</span><a class="buildbar-link" href="/builds">Build details</a></p></div>{{end}}

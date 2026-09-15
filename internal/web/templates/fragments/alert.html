@@ -1,0 +1,11 @@
+{{/* The warning box (FR-1.4). It lives here, among the fragments, for the same reason the counts
+     do: it is outside the list but is decided by what the list reports, so a poll that swapped the
+     list without it would leave a page showing a failing source and no warning — the page
+     contradicting itself from the first poll on.
+
+     The slot element is always rendered, even when there is nothing wrong. An out-of-band swap
+     addresses an element by id, so a box that disappeared entirely when the trouble cleared could
+     never be brought back by a later poll: there would be no id left to swap into. The slot keeps
+     the id; the box inside it comes and goes. An empty <div> with no styling of its own occupies
+     nothing, so a healthy page looks exactly as it did before this existed. */}}
+{{define "dash-alert"}}<div id="dash-alert"{{if .OOB}} hx-swap-oob="true"{{end}}>{{if .Count}}<div class="alert alert-{{.Severity}}" role="alert"><p class="alert-text">Something went wrong talking to an external service. {{.Summary}}.</p><a class="alert-action" href="/problems">Warning and error details</a></div>{{end}}</div>{{end}}

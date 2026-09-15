@@ -1,0 +1,31 @@
+# Scale to zero (C-3, ADR-0003). Nothing runs between requests: the machine is started by a visitor
+# or by the cron-job.org ping to POST /api/refresh, and stopped again when idle. The ping doubles as
+# the warmer that keeps an ordinary visit off the cold-start path (QS-2.4).
+app = "zorgscope"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  CONFIG_PATH = "/config/zorgscope.yaml"
+  LOG_LEVEL = "info"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    grace_period = "5s"
+    interval = "30s"
+    method = "GET"
+    path = "/healthz"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

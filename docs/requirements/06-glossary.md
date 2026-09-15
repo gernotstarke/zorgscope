@@ -1,0 +1,12 @@
+# 6. Glossary
+
+| Term | Meaning |
+|------|---------|
+| **Item** | One thing shown on the dashboard that came from an upstream service: a GitHub issue or pull request. Identified by its source and its upstream id. |
+| **Source** | One upstream service zorgscope reads. GitHub is the one source; the builds fetcher is a second fetcher over the same credential. A source is enabled when its credential is present. |
+| **First seen** | The time of the refresh run that stored an item for the first time. Never changed afterwards while the item stays present. |
+| **Last visit** | The time the user last declared the dashboard seen, either by "mark all seen" or by signing in for the first time. |
+| **New** | An item whose first-seen time is later than the last-visit time. |
+| **Refresh run** | One execution of "fetch all enabled sources and store the result", triggered by cron-job.org or by the user. Recorded with its outcome per source. |
+| **Cold start** | The first request after the Fly Machine has been stopped; it includes starting the machine and the process. |
+| **Fake sources** | A local HTTP server that answers like GitHub — issues, pull requests, workflow runs and the OAuth endpoints a sign-in needs — from fixture files, used for development and tests. |

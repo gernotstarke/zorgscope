@@ -1,0 +1,880 @@
+/* Hand-written CSS, no build step (ADR-0002). Light and dark come from one set of custom
+   properties resolved by the document's colour scheme, which the server sets from a cookie — so
+   there is no theme script and therefore no theme flash, and no inline style, so the
+   Content-Security-Policy needs no 'unsafe-inline' (QS-4.4). */
+
+:root {
+  /* One palette, not two. light-dark() takes the light value when the document's colour scheme
+     resolves to light and the dark one when it resolves to dark, so the whole theme is decided by
+     `color-scheme` alone — which is the only thing the appearance switch sets. This file used to
+     carry the dark palette a second time inside a prefers-color-scheme media query, and every
+     colour had to be changed in two places or the two appearances quietly drifted apart. */
+  color-scheme: light dark;
+
+  --bg: light-dark(#fbfbfc, #16181c);
+  --surface: light-dark(#ffffff, #1e2126);
+  --border: light-dark(#dcdfe4, #31353c);
+  --text: light-dark(#1c1e21, #e7e9ec);
+  --muted: light-dark(#5b6169, #9aa1ab);
+  --accent: light-dark(#2f5bd7, #7fa2ff);
+  --danger: light-dark(#b3261e, #f2836f);
+  --warn: light-dark(#8a5300, #e0a03c);
+  --ok: light-dark(#1f7a3d, #6bc98a);
+
+  /* The header mark's scanning orbit (docs/logo/scanning-orbit-animation.md). Three colours,
+     because the ring says three different things: --scan is the quiet ambient sweep, --scan-hot
+     is the same sweep while a refresh is actually running, and --pulse is the ring that beats out
+     of the mark's centre underneath it. They are their own tokens rather than reuses of --accent
+     and --danger because they are read against the mark rather than against the page, and a
+     brand colour that works for a link at 16 px is not automatically the right one for a 2 px arc
+     in motion. */
+  --scan: light-dark(#98a0ac, #4c545f);
+  --scan-hot: light-dark(#3f8f16, #9fe04a);
+  --pulse: light-dark(#c0392b, #f2836f);
+
+  --radius: 10px;
+  --gap: 1rem;
+}
+
+/* A browser without light-dark() gets the light palette and stays there.
+
+   The guard has to be @supports, and cannot be the usual trick of declaring each token twice and
+   letting the cascade drop the value it cannot parse. A custom property that has not been
+   registered accepts any token sequence at all, so light-dark(...) is a *valid* declaration
+   everywhere — it fails later, when it is substituted into the property that uses it, and by then
+   the earlier declaration is long gone. The page would lose every colour rather than fall back to
+   one. Only the light values are repeated here: an old browser gets a readable page in one
+   appearance, which is a better answer than a second copy of a palette to keep in step. */
+@supports not (color: light-dark(#000000, #ffffff)) {
+  :root {
+    --bg: #fbfbfc;
+    --surface: #ffffff;
+    --border: #dcdfe4;
+    --text: #1c1e21;
+    --muted: #5b6169;
+    --accent: #2f5bd7;
+    --danger: #b3261e;
+    --warn: #8a5300;
+    --ok: #1f7a3d;
+    --scan: #98a0ac;
+    --scan-hot: #3f8f16;
+    --pulse: #c0392b;
+  }
+}
+
+/* The appearance switch (FR-1.5). The server writes data-theme on <html> from a cookie, so the
+   document is in the right theme from its first byte — there is no class to add after load and
+   therefore no flash of the wrong colours. Following the system is the absence of the attribute,
+   which is also the absence of the cookie: one state, expressed once. */
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap);
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.brand {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-decoration: none;
+  color: var(--text);
+}
+
+.topbar nav a { color: var(--muted); text-decoration: none; }
+.topbar nav a:hover { color: var(--accent); }
+
+main { max-width: 72rem; margin: 0 auto; padding: 1.5rem 1.25rem; }
+
+h1 { font-size: 1.4rem; margin: 0 0 1rem; }
+
+.signin {
+  max-width: 26rem;
+  margin: 3rem auto;
+  padding: 1.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+label { color: var(--muted); font-size: 0.9rem; }
+
+/* .button is the link that starts the sign-in flow. It is a link rather than a form control
+   because the CSP's form-action would let the browser block the redirect to GitHub that follows a
+   form submission, so it has to look like a button without being one. */
+button,
+.button {
+  display: inline-block;
+  margin-top: 0.5rem;
+  padding: 0.6rem 1rem;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: #ffffff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.button { text-decoration: none; }
+
+button:hover,
+.button:hover { filter: brightness(1.08); }
+
+.error {
+  margin: 0 0 0.5rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+}
+
+/* ---------------------------------------------------------------- the dashboard */
+
+.brand { display: inline-flex; align-items: center; gap: 0.5rem; }
+/* The mark is a raster file with its intrinsic size declared in the markup, so the box is
+   reserved before it loads and the header does not jump. */
+/* ---------------------------------------------------------------- the scanning orbit
+
+   The header mark, and the only moving thing on this site. The concept is in
+   docs/logo/scanning-orbit-animation.md: a quiet ring circling the logo says "this is being
+   watched", and the same ring at speed, in another colour, with the mark's centre beating, says
+   "it is being fetched right now".
+
+   The whole thing is CSS driven by one attribute, data-state, and the attribute is written by the
+   server from the state of the last refresh run — so a page loaded while cron is mid-run shows the
+   run, with no script involved at all (FR-1.3 AC3). static/orbit.js only brings the same state
+   forward to the moment the button is pressed, which the server cannot see until its request
+   arrives.
+
+   Only transform and opacity are animated, so the sweep stays off the layout and paint path. */
+
+.orbit {
+  position: relative;
+  flex: none;
+  display: block;
+  width: 48px;
+  height: 48px;
+}
+
+/* The mark sits inside the ring rather than beside it, so the orbit reads as belonging to the
+   logo and the header grows by the ring's width rather than by a whole second element. */
+.logo {
+  position: absolute;
+  inset: 13%;
+  width: 74%;
+  height: 74%;
+  display: block;
+  border-radius: 50%;
+}
+
+.orbit-ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* The beam's drop-shadow while refreshing reaches past the viewBox; without this it is clipped
+     into a visible square. */
+  overflow: visible;
+}
+
+.orbit-track,
+.orbit-beam {
+  fill: none;
+  /* The stroke widths below are in viewBox units on a 48 px box, which would render at about half
+     their nominal thickness. non-scaling-stroke makes them the pixel values they read as. */
+  vector-effect: non-scaling-stroke;
+}
+
+.orbit-track {
+  stroke: var(--scan);
+  stroke-width: 1;
+  opacity: 0.35;
+}
+
+/* pathLength="100" in the markup makes the dash array a percentage of the circumference, so the
+   arc is the same fraction of the ring whatever radius it is given. */
+.orbit-beam {
+  stroke: var(--scan);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-dasharray: 14 86;
+  transform-box: view-box;
+  transform-origin: 50px 50px;
+  opacity: 0.75;
+  animation: orbit-scan 8s linear infinite;
+  transition:
+    stroke 220ms ease-out,
+    stroke-width 220ms ease-out,
+    opacity 180ms ease-out;
+}
+
+@keyframes orbit-scan {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Refreshing: eight seconds becomes one, grey becomes lime, and the mark's centre beats. This is
+   the state the concept calls for while the application is genuinely fetching — never on a
+   decorative timer, because a dashboard that always looks busy has stopped saying anything. */
+.orbit[data-state="refreshing"] .orbit-beam {
+  stroke: var(--scan-hot);
+  stroke-width: 2.6;
+  stroke-dasharray: 30 70;
+  opacity: 1;
+  animation-duration: 1.05s;
+  filter: drop-shadow(0 0 3px var(--scan-hot));
+}
+
+.orbit[data-state="refreshing"] .orbit-track {
+  stroke: var(--scan-hot);
+  opacity: 0.28;
+}
+
+/* A refresh that failed (FR-1.4): the sweep stops and turns amber, so the mark holds the last
+   thing that happened instead of pretending to watch. The header says so in words beside it —
+   colour is never the only carrier of the meaning (FR-1.5 AC2). */
+.orbit[data-state="stale"] .orbit-beam {
+  stroke: var(--warn);
+  stroke-dasharray: 8 92;
+  opacity: 0.95;
+  animation: none;
+  transform: rotate(-90deg);
+}
+
+.orbit-pulse {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 30%;
+  aspect-ratio: 1;
+  border: 1.5px solid var(--pulse);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--pulse) 22%, transparent);
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.86);
+  pointer-events: none;
+}
+
+.orbit[data-state="refreshing"] .orbit-pulse {
+  animation: orbit-heartbeat 1.05s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
+@keyframes orbit-heartbeat {
+  0% {
+    opacity: 0.2;
+    transform: translate(-50%, -50%) scale(0.86);
+  }
+  36% {
+    opacity: 0.8;
+    transform: translate(-50%, -50%) scale(1.35);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.86);
+  }
+}
+
+/* Someone who has asked their system for less motion gets none of it. Every state stays legible:
+   refreshing is a thicker lime arc held still with the centre ring steady rather than beating,
+   which is the same information without anything moving. */
+@media (prefers-reduced-motion: reduce) {
+  .orbit-beam {
+    animation: none;
+    transform: rotate(-90deg);
+  }
+
+  .orbit[data-state="refreshing"] .orbit-beam {
+    stroke-dasharray: 45 55;
+  }
+
+  .orbit[data-state="refreshing"] .orbit-pulse {
+    animation: none;
+    opacity: 0.75;
+    transform: translate(-50%, -50%) scale(1.2);
+  }
+}
+.brand-name { font-weight: 600; }
+
+/* The two header dates stack, so the header stays one line tall on a wide screen and folds
+   without overlapping on a narrow one. */
+.topbar-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.topbar-status,
+.topbar-visit { margin: 0; color: var(--muted); font-size: 0.85rem; }
+/* The header states the outcome in words as well, so colour only reinforces it (FR-1.5 AC2). */
+.status-failed { color: var(--danger); }
+
+/* The run record's per-source detail. Present on every dashboard, because the failures it is the
+   only signal for do not announce themselves — and quiet, because most days it says four sources
+   and their counts. */
+.run-detail {
+  margin: -0.75rem 0 1.25rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+/* One line: made-in on the left, the version in the middle, the documentation on the right.
+
+   The middle column is centred on the *page*, not between its neighbours, which is what a grid of
+   1fr auto 1fr gives and what flexbox with space-between does not — with space-between the version
+   drifts left or right as the two texts around it change length, and the one thing in this footer
+   that should sit still is the one that identifies the build. */
+.footer {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: baseline;
+  gap: 0.75rem;
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 1rem 1.25rem 2rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+
+.footer a { color: var(--muted); }
+
+.dash-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 1.25rem;
+}
+
+.dash-summary { margin: 0; margin-right: auto; color: var(--muted); }
+
+.dash-actions form { margin: 0; }
+.dash-actions button { margin-top: 0; }
+
+.action button {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  font-weight: 500;
+}
+
+/* ---------------------------------------------------------------- the filter
+
+   One row of controls above the list (FR-1.2). It wraps rather than scrolls, so a phone stacks it
+   instead of hiding half of it, and every control sits on one baseline so the row reads as one
+   thing rather than as four. It is deliberately plain: the filter is a tool for narrowing a list,
+   and a toolbar that drew attention to itself would compete with the one thing on this page that
+   should — what is new. */
+.filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin: 0 0 1.25rem;
+}
+
+.filter-field { display: inline-flex; align-items: baseline; gap: 0.35rem; }
+
+/* A fieldset is a block with a border and its own padding by default, none of which belongs in a
+   row of controls; the legend stays because it is what names the group to a screen reader. */
+.filter-kind {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.filter-kind legend { margin-right: 0.35rem; padding: 0; color: var(--muted); font-size: 0.9rem; }
+.filter-kind label { display: inline-flex; align-items: baseline; gap: 0.2rem; }
+
+.filter select,
+.filter input[type="date"],
+.filter input[type="search"] {
+  padding: 0.3rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.filter input[type="search"] { min-width: 12rem; }
+
+/* ---------------------------------------------------------------- the list */
+
+/* The source's health and the count, on one quiet line above the groups. The count is pushed to
+   the far end rather than following the health text, so it sits in the same place whatever the
+   sentence beside it says. */
+.source-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0 0 0.75rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.source-line .notice { margin: 0; }
+.shown-count { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+/* The list section is the whole of the page below the controls, and carries no chrome of its own:
+   it is what htmx swaps, not something to look at. The first group sits closer to the source line
+   above it than the groups do to each other — it has nothing to be separated from. */
+.items-section > .repo-group:first-of-type { margin-top: 0.75rem; }
+
+/* One repository, one block. No card: the groups are read in sequence down a single column, and
+   a border around each would turn a list into a stack of boxes to look past. The space above is
+   what separates them. */
+.repo-group { margin-top: 1.5rem; }
+
+.repo-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0 0 0.35rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.repo-title a { color: var(--text); text-decoration: none; }
+.repo-title a:hover { color: var(--accent); text-decoration: underline; }
+
+/* The lime focus point, spent on the one thing this dashboard exists to say: something here is
+   new. The rest of the heading is the page's ordinary colours. */
+.new-count { color: var(--accent); font-size: 0.85rem; font-weight: 600; }
+.repo-count { margin-left: auto; color: var(--muted); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+
+/* Every state says what it is in words as well as in colour (FR-1.5 AC2). */
+.notice {
+  margin: 0 0 0.75rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.notice-error { border-color: var(--danger); color: var(--danger); }
+.notice-stale { border-color: var(--warn); color: var(--warn); }
+.notice-disabled { color: var(--muted); }
+
+.items { list-style: none; margin: 0; padding: 0; }
+
+.item {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.item:last-child { border-bottom: 0; }
+
+.item-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0;
+}
+
+.item-title { color: var(--text); overflow-wrap: anywhere; }
+.item-meta { margin: 0.15rem 0 0; color: var(--muted); font-size: 0.8rem; overflow-wrap: anywhere; }
+
+.is-new .item-title { font-weight: 600; }
+
+.badge {
+  flex: none;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.badge-new { border-color: var(--accent); color: var(--accent); }
+/* The three build states, and the one the problems page adds. They share a vocabulary on purpose:
+   "broken", "warning" and "ok" mean the same thing wherever they appear. */
+.badge-ok { border-color: var(--ok); color: var(--ok); }
+.badge-broken { border-color: var(--danger); color: var(--danger); }
+.badge-warning { border-color: var(--warn); color: var(--warn); }
+.badge-unknown { border-color: var(--muted); color: var(--muted); }
+
+.empty { margin: 0; color: var(--muted); }
+
+/* Documentation pages (FR-7.1). Nothing here is inline: the Markdown is rendered by goldmark with
+   raw HTML disabled, so a document cannot bring a style of its own, and every rule it needs has to
+   live in this file (QS-4.4). */
+.docs-index { max-width: 48rem; }
+.docs-lead { color: var(--muted); margin: 0 0 1.5rem; }
+.docs-group { margin: 0 0 1.5rem; }
+.docs-group h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
+.docs-list { list-style: none; margin: 0; padding: 0; }
+.docs-list li { padding: 0.3rem 0; border-bottom: 1px solid var(--border); }
+.docs-list li:last-child { border-bottom: 0; }
+.docs-list a, .doc-nav a { color: var(--accent); text-decoration: none; }
+.docs-list a:hover, .doc-nav a:hover { text-decoration: underline; }
+
+.doc-nav { margin: 0 0 1rem; font-size: 0.85rem; }
+.doc { max-width: 52rem; overflow-wrap: break-word; }
+.doc h1 { font-size: 1.5rem; margin: 0 0 1rem; }
+.doc h2 { font-size: 1.2rem; margin: 2rem 0 0.75rem; }
+.doc h3 { font-size: 1.02rem; margin: 1.5rem 0 0.5rem; }
+.doc p, .doc li { color: var(--text); }
+.doc a { color: var(--accent); }
+.doc code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.05rem 0.28rem;
+}
+.doc pre {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+}
+.doc pre code { background: none; border: 0; padding: 0; font-size: 0.85rem; }
+.doc blockquote {
+  margin: 1rem 0;
+  padding: 0.1rem 1rem;
+  border-left: 3px solid var(--border);
+  color: var(--muted);
+}
+.doc table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  font-size: 0.9rem;
+}
+.doc th, .doc td {
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.55rem;
+  vertical-align: top;
+}
+.doc th { background: var(--surface); font-weight: 600; text-align: left; }
+/* goldmark renders a column's alignment as an align attribute rather than the inline style it
+   would otherwise emit, because style-src carries no 'unsafe-inline' (see newDocMarkdown). These
+   two rules are what honour it, and they outrank the th rule above. */
+.doc [align="center"] { text-align: center; }
+.doc [align="right"] { text-align: right; }
+.doc hr { border: 0; border-top: 1px solid var(--border); margin: 2rem 0; }
+.doc img { max-width: 100%; height: auto; }
+
+/* ---------------------------------------------------------------- header controls */
+
+.topbar-nav { display: inline-flex; align-items: center; gap: 0.6rem; }
+
+/* The stop control turns red on approach. It is the one control in this header that ends
+   something, and it sits next to two that do not, so it says which it is before it is pressed
+   rather than after (FR-1.7). */
+.stop-button:hover,
+.stop-button:focus-visible { color: var(--danger); }
+
+/* The switch is a form, which is a block by default and would break the nav's row. */
+.theme-form { display: inline-flex; margin: 0; }
+
+/* An icon-only control. The disabled state is what the settings cog is in for the whole of v1,
+   so it is styled as the ordinary case rather than as an exception: dimmed, no pointer, and no
+   hover response, which together say "not now" without a tooltip having to be discovered. */
+.icon-button {
+  margin: 0;
+  padding: 0.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.icon-button:hover:not(:disabled) { color: var(--accent); filter: none; }
+
+/* Dimmed rather than nearly invisible: the cog has to be legible enough to be recognised as a
+   settings control that is unavailable, otherwise it reads as a rendering fault. */
+.icon-button:disabled {
+  color: var(--muted);
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.cog { display: block; }
+
+/* ---------------------------------------------------------------- the warning box */
+
+/* FR-1.4. It sits above the dashboard's own controls, states the count in words, and carries one
+   link to the details. Colour is the last thing it uses, never the first: the sentence says what
+   happened on its own (FR-1.5 AC2). */
+.alert {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--warn);
+  border-left-width: 4px;
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.alert-error { border-color: var(--danger); }
+.alert-warning { border-color: var(--warn); }
+
+.alert-text { margin: 0; }
+.alert-error .alert-text { color: var(--danger); }
+.alert-warning .alert-text { color: var(--warn); }
+
+/* A link that reads as the button the box needs, without being a form or a script. */
+.alert-action {
+  flex: none;
+  padding: 0.45rem 0.9rem;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: #ffffff;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.alert-action:hover { filter: brightness(1.08); }
+
+/* ---------------------------------------------------------------- the details page */
+
+.page-lead { margin: 0 0 1.5rem; color: var(--muted); max-width: 46rem; }
+
+.problems { list-style: none; margin: 0 0 2rem; padding: 0; display: grid; gap: 0.75rem; }
+
+.problem {
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.problem-error { border-left-color: var(--danger); }
+.problem-warning { border-left-color: var(--warn); }
+.problem-ok { border-left-color: var(--ok); }
+.problem-off { border-left-color: var(--border); }
+
+.problem-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0 0 0.35rem;
+}
+
+.problem-title { font-weight: 600; }
+
+.badge {
+  padding: 0.1rem 0.5rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.badge-error { color: var(--danger); }
+.badge-warning { color: var(--warn); }
+.badge-ok { color: var(--ok); }
+.badge-off { color: var(--muted); }
+
+.problem-summary { margin: 0 0 0.35rem; }
+
+/* Upstream text. It can be a single unbroken line of hundreds of characters, so it wraps
+   anywhere rather than pushing the page sideways. */
+.problem-detail { margin: 0 0 0.35rem; }
+.problem-detail code {
+  display: block;
+  padding: 0.5rem 0.6rem;
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.problem-times {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.run-detail-page { margin: 0 0 1.5rem; }
+
+.back { margin: 0; }
+
+/* ---------------------------------------------------------------- the footer */
+
+.footer-made { color: var(--muted); justify-self: start; }
+.heart { color: var(--danger); }
+.version { color: var(--muted); font-variant-numeric: tabular-nums; }
+.footer-docs { justify-self: end; text-align: right; }
+
+/* Three columns need more width than a phone has. Below that the three stack and centre, which
+   keeps the same reading order rather than dropping anything. */
+@media (max-width: 34rem) {
+  .footer {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    gap: 0.35rem;
+    text-align: center;
+  }
+
+  .footer-made { justify-self: center; }
+  .footer-docs { justify-self: center; text-align: center; }
+}
+
+/* ---------------------------------------------------------------- item rows */
+
+/* The number, ahead of the title, so a list of five is scannable by the thing people actually
+   quote to each other. */
+.item-number {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+/* The item's own description. Small and quiet: it is context under a title, not a second title,
+   and it is clamped to one line so five rows stay a list rather than becoming prose. */
+.item-summary {
+  margin: 0.15rem 0 0.2rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+/* ---------------------------------------------------------------- the build indicator */
+
+/* Builds are one line on the front page (FR-2.3). The dot is the fast read; the label and the
+   sentence beside it are what makes the line readable without it, which is the whole of
+   FR-1.5 AC2 — a red dot alone is invisible to a reader who cannot see red. */
+.buildbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0 0 1rem;
+  padding: 0.55rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: 0.9rem;
+}
+
+.dot {
+  flex: none;
+  align-self: center;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.buildbar-label { font-weight: 600; }
+.buildbar-summary { color: var(--muted); }
+.buildbar-link { margin-left: auto; color: var(--accent); }
+
+.buildbar-broken { color: var(--danger); border-color: var(--danger); }
+.buildbar-warning { color: var(--warn); border-color: var(--warn); }
+.buildbar-ok { color: var(--ok); }
+.buildbar-unknown { color: var(--muted); }
+
+/* ---------------------------------------------------------------- the build details table */
+
+/* A table is wider than a phone. It scrolls inside its own box rather than making the page
+   scroll sideways. */
+.table-scroll { overflow-x: auto; margin: 0 0 1.5rem; }
+
+.builds-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.builds-table th,
+.builds-table td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  vertical-align: baseline;
+}
+
+.builds-table thead th {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.build-repo { font-weight: 600; white-space: nowrap; }
+.build-workflow,
+.build-finished { color: var(--muted); white-space: nowrap; }
+.build-running { margin-left: 0.4rem; color: var(--muted); font-size: 0.8rem; }
+
+/* The state colours the row's left edge as well as its badge, so a broken repository is findable
+   by scanning down the table rather than reading every badge. */
+.build-row-broken { box-shadow: inset 3px 0 0 var(--danger); }
+.build-row-warning { box-shadow: inset 3px 0 0 var(--warn); }
+.build-row-ok { box-shadow: inset 3px 0 0 var(--ok); }
+
+/* The badge column. The image arrives with the page rather than over the network, so there is no
+   layout shift to guard against — only the height, and vertical-align against the cell's baseline
+   rule above, which would otherwise hang a 20 px image off the text baseline of its neighbours. */
+.build-badge {
+  width: 1%;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.build-badge img {
+  display: block;
+  height: 20px;
+}
+
+.build-nobadge { color: var(--muted); font-size: 0.8rem; }
+
+/* The note under the table: what on this page came from this dashboard and what came from
+   somewhere else. */
+.page-note {
+  margin: 0 0 1.5rem;
+  max-width: 46rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}

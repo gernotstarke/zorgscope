@@ -1,41 +1,64 @@
+# The depguard rules below are the architecture of ADR-0001 in executable form: the domain knows
+# nothing but the standard library (QS-5.1), and an upstream client library lives in exactly one
+# adapter (QS-5.2). Breaking either is a lint failure, not a review comment.
 version: "2"
+
 run:
-  timeout: 5m
+  timeout: 3m
+
 linters:
-  default: standard
   enable:
     - depguard
+    - errcheck
     - gosec
+    - govet
+    - ineffassign
     - misspell
     - revive
-    - gocritic
+    - staticcheck
+    - unused
+
   settings:
     depguard:
       rules:
         domain:
-          files: ["**/internal/domain/**", "!**/*_test.go"]
-          allow: ["$gostd", "github.com/gernotstarke/zorgscope/internal/domain"]
+          files:
+            - "**/internal/domain/**"
+          allow:
+            - "$gostd"
+            - "github.com/gernotstarke/zorgscope/internal/domain"
         ports:
-          files: ["**/internal/ports/**", "!**/*_test.go"]
-          allow: ["$gostd", "github.com/gernotstarke/zorgscope/internal/domain", "github.com/gernotstarke/zorgscope/internal/ports"]
-        app:
-          files: ["**/internal/app/**", "!**/*_test.go"]
-          allow: ["$gostd", "github.com/gernotstarke/zorgscope/internal/domain", "github.com/gernotstarke/zorgscope/internal/ports", "github.com/gernotstarke/zorgscope/internal/config"]
-        adapters:
-          files: ["**/internal/adapters/**", "!**/*_test.go"]
-          allow: ["$gostd", "github.com/gernotstarke/zorgscope/internal/domain", "github.com/gernotstarke/zorgscope/internal/ports", "modernc.org/sqlite"]
-        server:
-          files: ["**/internal/server/**", "!**/*_test.go"]
-          allow: ["$gostd", "github.com/gernotstarke/zorgscope/internal/domain", "github.com/gernotstarke/zorgscope/internal/ports", "github.com/gernotstarke/zorgscope/internal/app", "github.com/gernotstarke/zorgscope/internal/config", "github.com/gernotstarke/zorgscope/internal/server", "github.com/gernotstarke/zorgscope/web"]
-    revive:
-      rules:
-        - name: exported
-          disabled: false
-    gosec:
-      excludes: ["G101", "G404"] # G101 misfires on constant *names*; math/rand is fine for jitter
+          files:
+            - "**/internal/ports/**"
+          allow:
+            - "$gostd"
+            - "github.com/gernotstarke/zorgscope/internal/domain"
+            - "github.com/gernotstarke/zorgscope/internal/ports"
+        github-client:
+          files:
+            - "!**/internal/adapters/github/**"
+          deny:
+            - pkg: "github.com/shurcooL/githubv4"
+              desc: "the GitHub client belongs in internal/adapters/github (QS-5.2)"
+        db-driver:
+          files:
+            - "!**/internal/adapters/libsql/**"
+          deny:
+            - pkg: "github.com/tursodatabase/libsql-client-go"
+              desc: "the libSQL driver belongs in internal/adapters/libsql (QS-5.2)"
+
+    misspell:
+      locale: UK
+
   exclusions:
     rules:
-      - path: _test\.go
-        linters: [gosec]
-formatters:
-  enable: [gofmt, goimports]
+      # Tests may hard-code weak values and read fixture paths; that is what they are for.
+      - path: "_test\\.go"
+        linters:
+          - gosec
+      # Test helpers read best as must<Thing>(t, subject, ctx, …): the thing under test comes
+      # first and the context after it. That is a test-readability choice, not an API.
+      - path: "_test\\.go"
+        text: "context-as-argument"
+        linters:
+          - revive

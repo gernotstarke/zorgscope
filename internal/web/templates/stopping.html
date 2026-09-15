@@ -1,0 +1,25 @@
+{{define "content"}}
+{{/* The page a stop request answers with, in all three of its outcomes: the process is going, the
+     process will not go yet, or this process cannot go at all. They share a template because they
+     are the same sentence with a different verb, and because a visitor who pressed stop needs the
+     same thing in every case — to know whether it worked and what to do next. */}}
+{{if .Error}}
+<h1>{{.Title}}</h1>
+<p class="notice notice-error" role="alert">{{.Error}}</p>
+<p class="back"><a href="/">Back to the dashboard</a></p>
+{{else}}
+<h1>zorgscope is stopping</h1>
+<p class="page-lead">
+  The process is shutting down. Nothing is lost: everything this dashboard shows lives in the
+  database, and stopping only ends the thing that draws it.
+</p>
+{{/* Deliberately not a link back to the dashboard: following it would start the process again
+     immediately, which is the opposite of what was just asked for. The address is written out so
+     it is there to return to whenever that is actually wanted. */}}
+<p class="page-note">
+  Opening this dashboard again starts it back up — on Fly the Machine wakes on the first request,
+  which is the same thing that happens after it has been idle for a while. Running locally, it is
+  <code>make backend</code> again.
+</p>
+{{end}}
+{{end}}

@@ -1,60 +1,73 @@
 # zorgscope
 
-**zorgscope** is Gernot Starke's ("zorg") personal dashboard: a single web page — meant to be the
-new‑tab page of the browser — that condenses everything worth a glance into a grid of tiles:
+One page that answers *does anything need me right now?*
 
-* **GitHub attention** – new and unanswered issues / PRs across the arc42 and personal site repositories, plus mentions and review requests, so no contributor waits for an answer.
-* **Repository health** – open counts and GitHub‑Actions build status per monitored repo.
-* **Site statistics** – Plausible visitor numbers and trends for the arc42 and personal sites.
-* **Todoist** – overdue tasks and everything due within the next seven days.
-* **News** – configurable RSS/Atom feeds (AI/LLM, agentic engineering, …).
-* **Watch** – expiry countdown for registered credentials/certificates (incl. zorgscope's own GitHub token, detected automatically), auth failures of any source, and simple health checks of your own apps (e.g. status.arc42.org).
+**zorgscope** is Gernot Starke's ("zorg") personal status dashboard. It collects the open issues and
+pull requests of the arc42 sites' repositories on GitHub, marks what arrived since the last look, and
+costs almost nothing to run:
 
-Single Go binary, server‑rendered UI (html/template + htmx + hand‑written CSS), SQLite for cache and
-daily snapshots, passkey login, hosted on one small fly.io machine. Locally everything runs under
-Docker: `make app`.
+* **GitHub** — open issues and pull requests of the configured repositories, with their age and last
+  activity, plus the GitHub Actions build state per repository.
+* **Filters** — by repository, kind, creation date and text; every filtered view is a URL.
+* **New** — anything first seen after your last visit carries a `NEW` badge until you mark it seen.
+
+One Go binary runs on a Fly.io Machine that is **stopped whenever nothing is happening**. There is no
+background scheduler: [cron-job.org](https://cron-job.org) calls `POST /api/refresh` on a schedule,
+which fetches every source, writes the result to [Turso](https://turso.tech) — and, incidentally,
+keeps the machine warm so that opening the page is fast. All state lives in the database; the
+container itself is disposable.
 
 ## Quick start
 
-```sh
-make app        # build + run in Docker, then open http://localhost:8080
-make test       # unit + integration tests (in Docker)
-make lint       # go vet + golangci-lint (in Docker)
-make e2e        # Playwright end-to-end tests against fake sources (Docker Compose)
-make deploy     # deploy to fly.io (flyctl in Docker)
-make help       # all targets
-```
+Only Docker and GNU make are needed. Nothing is installed on the host.
 
-Only Docker and GNU make are required locally (and a browser).
+```sh
+cp deploy/env.example .env   # then fill in the GitHub OAuth pair, REFRESH_SECRET and GITHUB_TOKEN
+make backend                 # terminal 1: the backend and its libSQL database
+make client                  # terminal 2: open the browser at it
+make fakes                   # terminal 3 (optional): fixture upstreams instead of the real ones
+
+make check                   # everything CI runs: vet, lint, tests, docs, fly.toml validation
+make clean                   # stop the local backend, drop caches and local data
+make help                    # every target
+```
 
 ## Repository layout
 
 | Path | Purpose |
 |------|---------|
-| `docs/requirements/` | Requirements (req42 style): goals, stakeholders, scope, functional & quality requirements, constraints |
-| `docs/architecture/` | Architecture documentation (arc42) incl. `decisions/` (ADRs, MADR format) |
-| `docs/plans/` | Implementation plans (task lists executable by agents) |
-| `docs/guides/` | How‑tos: browser new‑tab setup, secrets, deployment |
-| `cmd/` | Go entry points (`zorgscope`, `fakesources`) |
-| `internal/` | Go source: `domain`, `ports`, `config`, `app`, `adapters/*`, `server`, `logging` |
-| `web/` | Templates and static assets (CSS, vendored htmx) |
-| `config/` | Non‑secret runtime configuration (`zorgscope.yaml`) |
-| `deploy/` | Dockerfiles, Compose files, `fly.toml` |
-| `test/` | Cross‑cutting tests: e2e (Playwright), fake upstream servers, recorded fixtures |
-| `.github/workflows/` | CI: lint → test → build → e2e → deploy |
+| `docs/requirements/` | Requirements in [req42](https://req42.de) form: goals, stakeholders, constraints, functional and quality requirements |
+| `docs/decisions/` | Architecture decisions (MADR) |
+| `docs/concepts/` | Security and token handling, data storage, configuration |
+| `docs/superpowers/` | The design specs and their implementation plans |
+| `cmd/zorgscope/` | The binary |
+| `cmd/fakesources/` | Fixture-backed GitHub, including the OAuth endpoints |
+| `internal/domain/` | The rules — items, new-detection, dashboard assembly. Standard library only |
+| `internal/ports/` | `SourceFetcher`, `Store`, `Notifier`, `Clock` |
+| `internal/adapters/` | GitHub, Slack, libSQL |
+| `internal/config/` | YAML configuration plus environment secrets |
+| `internal/refresh/` | One refresh run over all sources |
+| `internal/web/` | Router, handlers, templates, static assets, rendered documentation |
+| `config/` | The non-secret configuration file |
+| `deploy/` | Dockerfile, Compose, `fly.toml` |
 
-Go unit tests live next to the code they test (`*_test.go`), as is idiomatic in Go.
+Go tests live next to the code they test. The running system serves its own documentation at `/docs`.
 
-## Documentation entry points
+## Documentation
 
 * [Requirements](docs/requirements/README.md)
-* [Architecture (arc42)](docs/architecture/README.md)
-* [Architecture decisions](docs/architecture/decisions/README.md)
-* [Guides](docs/guides/)
+* [Decisions](docs/decisions/README.md)
+* [Design: the reset](docs/superpowers/specs/2026-08-17-zorgscope-reset-design.md)
+  and [its implementation plan](docs/superpowers/plans/2026-08-17-zorgscope-v1.md)
+* [Design: GitHub sign-in and focus](docs/superpowers/specs/2026-09-14-github-signin-and-focus-design.md)
+  and [its implementation plan](docs/superpowers/plans/2026-09-14-github-signin-and-focus.md)
 
 ## Status
 
-M1 (walking skeleton) implemented: GitHub attention + repositories, snapshots, dismiss, refresh, dev auth, SQLite, Docker, CI. Next: M2 (all sources) — see `docs/plans/README.md`.
+Reset on 2026-08-17 to a much smaller scope than the previous iteration. The requirements, the design
+and the implementation plan are written; the infrastructure — module, container, Compose, Fly
+configuration and the make targets — is in place and `make check` passes. The application itself is
+being built task by task from the plan.
 
 ## Licence
 

@@ -1,8 +1,14 @@
-# zorgscope — everything runs inside Docker; only `docker` and `make` are required locally.
+# zorgscope — everything runs inside Docker; only `docker` and `make` are required locally (C-2).
 #
-# Conventions:
-#   * Go toolchain, linters, Playwright and flyctl are used through official images, never installed locally.
-#   * `make app` is the one command to bring the dashboard up on http://localhost:8080.
+# Local development mirrors production: the same backend image Fly runs, in a local container,
+# against a libSQL server that speaks the same protocol as Turso. That is two processes, so two
+# terminals:
+#
+#     terminal 1:  make backend    the backend image and its database on http://localhost:8080
+#     terminal 2:  make client     the browser, pointed at that backend
+#
+# Add `make fakes` in a third terminal to develop against a fixture GitHub instead of the real
+# one (FR-9.2). `make check` runs what CI runs; `make clean` resets.
 
 SHELL          := /bin/sh
 APP            := zorgscope
@@ -10,91 +16,91 @@ PORT           ?= 8080
 GO_IMAGE       ?= golang:1.26
 LINT_IMAGE     ?= golangci/golangci-lint:v2.12.0
 FLY_IMAGE      ?= flyio/flyctl:latest
+FLY_PLATFORM   ?= linux/amd64
+FLY_APP        ?= zorgscope
+FLY_CONFIG     ?= deploy/fly.toml
+FLY_CONFIG_DIR ?= $(HOME)/.fly
 COMPOSE        := docker compose -f deploy/compose.yml
-COMPOSE_E2E    := docker compose -f deploy/compose.e2e.yml
 GOCACHE_VOL    := $(APP)-gocache
 GOMOD_VOL      := $(APP)-gomod
-CGO_ENABLED    ?= 0
-# Run a command inside the Go image with module & build caches persisted in named volumes.
-GO_RUN          = docker run --rm -t \
-                    -v "$(CURDIR)":/src -w /src \
-                    -v $(GOMOD_VOL):/go/pkg/mod -v $(GOCACHE_VOL):/root/.cache/go-build \
-                    -e CGO_ENABLED=$(CGO_ENABLED) $(GO_IMAGE)
+
+# Run a command inside the Go image with module and build caches persisted in named volumes.
+GO_RUN    = docker run --rm -t \
+              -v "$(CURDIR)":/src -w /src \
+              -v $(GOMOD_VOL):/go/pkg/mod -v $(GOCACHE_VOL):/root/.cache/go-build \
+              $(GO_IMAGE)
+
+# The same, but sharing the database container's network namespace so that the store tests reach
+# libsql-server at localhost:8080 without publishing a port or guessing a Compose network name.
+GO_RUN_DB = docker run --rm -t \
+              --network=container:$$($(COMPOSE) ps -q db) \
+              -v "$(CURDIR)":/src -w /src \
+              -v $(GOMOD_VOL):/go/pkg/mod -v $(GOCACHE_VOL):/root/.cache/go-build \
+              $(GO_IMAGE)
+
+# The scratch-based flyctl image has no HOME, so point it at the mounted host config explicitly.
+FLY_RUN   = docker run --rm -i --platform "$(FLY_PLATFORM)" \
+              -v "$(CURDIR)":/src -w /src \
+              -e FLY_API_TOKEN -e FLY_CONFIG_DIR=/fly-config \
+              -v "$(FLY_CONFIG_DIR)":/fly-config $(FLY_IMAGE)
 
 .DEFAULT_GOAL := help
+.PHONY: help backend client fakes check clean
 
-.PHONY: help
 help: ## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
 
-# ---------------------------------------------------------------- run
-.PHONY: app zorgscope
-app: ## Build and run the dashboard locally in Docker (http://localhost:$(PORT))
-	@test -f .env || { cp deploy/env.example .env; echo ">> created .env from deploy/env.example — fill in your tokens"; }
-	$(COMPOSE) up --build -d
-	@echo ">> zorgscope running at http://localhost:$(PORT)"
-zorgscope: app ## Alias for `make app`
+backend: ## Run the backend image and its database locally; Ctrl-C stops it (terminal 1)
+	@# Refuse to start on an incomplete .env instead of letting the container exit and retry.
+	@# Tests only that a value is present — never what it is — and echoes no values (QS-4.3).
+	@test -f .env || { cp deploy/env.example .env; \
+	  printf '\n  Created .env from deploy/env.example.\n\n'; \
+	  printf '  Fill in GITHUB_OAUTH_CLIENT_ID, GITHUB_OAUTH_CLIENT_SECRET and REFRESH_SECRET (openssl rand -base64 32),\n'; \
+	  printf '  then the tokens of the sources you want, and run make backend again.\n\n'; exit 1; }
+	@ok=1; \
+	need() { grep -Eq "^$$1=[^[:space:]#]" .env || { printf '  missing in .env: %s\n' "$$1"; ok=0; }; }; \
+	need GITHUB_OAUTH_CLIENT_ID; \
+	need GITHUB_OAUTH_CLIENT_SECRET; \
+	need REFRESH_SECRET; \
+	test $$ok -eq 1 || { \
+	  printf '\n  The backend exits on a bad configuration rather than starting half-ready.\n'; \
+	  printf '  The OAuth pair comes from the GitHub OAuth App; REFRESH_SECRET needs at least 32 characters\n\n'; exit 1; }
+	@echo ">> backend on http://localhost:$(PORT) — Ctrl-C to stop"
+	$(COMPOSE) up --build
 
-.PHONY: stop logs
-stop: ## Stop the local dashboard
-	$(COMPOSE) down
-logs: ## Tail local dashboard logs
-	$(COMPOSE) logs -f
+client: ## Open the browser at the local backend (terminal 2)
+	@printf '==> checking backend on http://localhost:%s ...\n' "$(PORT)"
+	@if command -v curl >/dev/null 2>&1; then \
+	  curl -fsS --max-time 3 "http://localhost:$(PORT)/healthz" >/dev/null 2>&1 || { \
+	    printf '==> nothing answering there — run "make backend" in another terminal first\n'; exit 1; }; \
+	  printf '==> backend answering (/healthz)\n'; \
+	fi
+	@printf '==> sign in with GitHub\n'
+	@open "http://localhost:$(PORT)" 2>/dev/null || printf '==> open http://localhost:%s in your browser\n' "$(PORT)"
 
-# ---------------------------------------------------------------- quality
-.PHONY: test test-domain lint fmt tidy
-test: ## Unit + integration tests with race detector and coverage
-	$(GO_RUN) sh -c 'CGO_ENABLED=1 go test -race -coverprofile=coverage.out ./... && go tool cover -func=coverage.out | tail -1'
-test-domain: ## Domain tests only, enforce ≥90% coverage
-	$(GO_RUN) sh -c 'go test -coverprofile=domain.out ./internal/domain/... && go tool cover -func=domain.out | tail -1 | awk "{ if (\$$3+0 < 90) { print \"domain coverage below 90%\"; exit 1 } }"'
-lint: ## go vet + golangci-lint
+fakes: ## Serve fixture GitHub responses, OAuth endpoints included, on http://localhost:9090 (terminal 3)
+	docker run --rm -t -p 9090:9090 \
+	  -v "$(CURDIR)":/src -w /src \
+	  -v $(GOMOD_VOL):/go/pkg/mod -v $(GOCACHE_VOL):/root/.cache/go-build \
+	  $(GO_IMAGE) go run ./cmd/fakesources
+
+check: ## Everything CI runs: vet, lint, tests, domain coverage gate, docs, fly.toml validation
 	$(GO_RUN) go vet ./...
 	docker run --rm -t -v "$(CURDIR)":/src -w /src -v $(GOMOD_VOL):/go/pkg/mod $(LINT_IMAGE) golangci-lint run ./...
-fmt: ## gofmt all Go files
-	$(GO_RUN) gofmt -l -w cmd internal
-tidy: ## go mod tidy
-	$(GO_RUN) go mod tidy
-
-.PHONY: go
-go: ## Run any go command in the Go container: make go ARGS="test ./... -run TestX -v"
-	$(GO_RUN) go $(ARGS)
-
-.PHONY: e2e
-e2e: ## End-to-end tests: app + fake sources + Playwright (Docker Compose)
-	$(COMPOSE_E2E) up --build --abort-on-container-exit --exit-code-from playwright
-	$(COMPOSE_E2E) down -v
-
-.PHONY: demo
-demo: ## Run the dashboard against fake sources on http://localhost:$(PORT) (no tokens needed)
-	$(COMPOSE_E2E) up --build -d fakesources zorgscope
-	@echo ">> demo running at http://localhost:$(PORT) (stop with: make demo-stop)"
-.PHONY: demo-stop
-demo-stop: ## Stop the demo
-	$(COMPOSE_E2E) down -v
-
-.PHONY: docs-check
-docs-check: ## Lint Markdown and check links in docs/
+	@# -p 1 runs one package at a time: more than one package tests against the single local
+	@# libsql-server and truncates it between tests. Run in parallel they delete each other's
+	@# rows and deadlock on writes; run sequentially they are deterministic.
+	$(COMPOSE) up -d db
+	$(GO_RUN_DB) sh -c 'CGO_ENABLED=1 TEST_TURSO_URL=http://localhost:8080 \
+	  go test -race -p 1 -coverprofile=coverage.out ./... && go tool cover -func=coverage.out | tail -1'
+	$(GO_RUN) sh -c 'go test -coverprofile=domain.out ./internal/domain/... && \
+	  go tool cover -func=domain.out | tail -1 | \
+	  awk "{ if (\$$3+0 < 90) { print \"domain coverage below 90%\"; exit 1 } }"'
 	docker run --rm -v "$(CURDIR)":/work -w /work davidanson/markdownlint-cli2:latest "docs/**/*.md" "README.md"
 	docker run --rm -v "$(CURDIR)":/work -w /work lycheeverse/lychee:latest --offline --no-progress "docs/**/*.md" "README.md"
+	$(FLY_RUN) config validate --strict --app "$(FLY_APP)" --config "$(FLY_CONFIG)"
 
-.PHONY: check
-check: lint test docs-check ## Everything CI runs except e2e and deploy
-
-# ---------------------------------------------------------------- build & deploy
-.PHONY: build image
-build: ## Build static binaries into ./bin
-	$(GO_RUN) sh -c 'go build -trimpath -ldflags="-s -w" -o bin/ ./cmd/...'
-image: ## Build the production container image
-	docker build -f deploy/Dockerfile -t $(APP):local .
-
-.PHONY: deploy fly
-deploy: ## Deploy to fly.io (uses FLY_API_TOKEN from env or ~/.fly)
-	docker run --rm -it -v "$(CURDIR)":/src -w /src -e FLY_API_TOKEN -v "$(HOME)/.fly":/root/.fly $(FLY_IMAGE) deploy --config deploy/fly.toml
-fly: ## Run an arbitrary flyctl command: make fly ARGS="status"
-	docker run --rm -it -v "$(CURDIR)":/src -w /src -e FLY_API_TOKEN -v "$(HOME)/.fly":/root/.fly $(FLY_IMAGE) $(ARGS)
-
-.PHONY: clean
-clean: ## Remove build output, caches and local data
+clean: ## Stop the local backend; remove build output, caches and local data
 	rm -rf bin coverage.out domain.out
 	-$(COMPOSE) down -v
 	-docker volume rm $(GOMOD_VOL) $(GOCACHE_VOL)

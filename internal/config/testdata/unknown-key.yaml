@@ -1,3 +1,10 @@
-server:
-  base_url: http://localhost:8080
-  prot: 8080
+timezone: Europe/Berlin
+refresh:
+  interval: 15m
+  stale_after: 45m
+githbu:
+  login: someone
+  repos: [org/one, org/two]
+notifications:
+  slack:
+    enabled: false

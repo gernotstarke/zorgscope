@@ -1,93 +1,68 @@
 # 5. Quality requirements
 
-Structured after [quality.arc42.org](https://quality.arc42.org) (Q42): a quality tree naming the relevant
-qualities, then concrete scenarios. A scenario is **Context → Stimulus → Response → Measure**; the measure is
-what a test or review checks. Ids `QS‑<goal>.<n>` map to the quality goals of [chapter 1](01-goals.md).
+Written as [Q42](https://quality.arc42.org) scenarios: **Context → Stimulus → Response → Measure**.
+The measure is a number or a named check, never an adjective. Ids `QS‑<quality goal>.<n>` refer to the
+quality goals in [chapter 1](01-goals.md).
 
 ## 5.1 Quality tree
 
 ```text
-zorgscope quality
-├── Reliability            (QG‑1)  correctness of detection, completeness, fault tolerance, visible failure
-├── Performance efficiency (QG‑2)  time to first meaningful paint, resource frugality
-├── Security & operability (QG‑3)  confidentiality of secrets, authentication, low ops effort, low cost
-├── Flexibility            (QG‑4)  configurability, extensibility of source kinds
-├── Compatibility          (QG‑5)  browsers, devices, screen sizes, no extensions
-├── Usability & aesthetics (QG‑6)  scanability, clarity of highlights, calm visual design
-└── Maintainability        (cross‑cutting, G‑4)  testability, agent‑friendliness, analysability
+zorgscope
+├── QG‑1 Correctness of "new"   first-seen semantics, completeness, honest freshness
+├── QG‑2 Speed                  cold start, warm render, payload size
+├── QG‑3 Frugality              hosting cost, storage volume, request budget
+├── QG‑4 Confidentiality        secret handling, authentication, transport
+└── QG‑5 Maintainability        testability, isolation of the domain, analysability
 ```
 
-## 5.2 Scenarios
-
-### QG‑1 Reliability of detection
+## 5.2 QG‑1 Correctness of "new"
 
 | Id | Context | Stimulus | Response | Measure |
 |----|---------|----------|----------|---------|
-| QS‑1.1 | Normal operation, daily snapshot exists | A contributor opens an issue in any monitored repo at time *t* | The item appears in the Attention tile with `NEW` badge at the latest after the next successful GitHub poll | ≤ poll interval + 30 s after *t*; verified by an e2e test with the fake GitHub server injecting a new issue. |
-| QS‑1.2 | Any set of items and any sequence of snapshots | Items are added, removed, updated in arbitrary order between snapshots | The `new` predicate returns true exactly for items absent from the last completed earlier snapshot | Property‑based test over random sequences; 100 % of cases; domain coverage ≥ 90 %. |
-| QS‑1.3 | The app was down over the snapshot time | App restarts | A catch‑up snapshot is taken once, "new" continues to be computed against the last snapshot before downtime | Unit test with fake clock; no item is ever wrongly marked seen. |
-| QS‑1.4 | GitHub API returns an error / rate limit / timeout for one repo | Poll runs | Other repos are still refreshed; the failing repo keeps its last data, tile shows a warning badge with the error age; a retry with exponential backoff (max 30 min) is scheduled | Integration test with fake server returning 5xx/403; UI shows badge; log contains structured error. |
-| QS‑1.5 | Repo has > 100 open issues | Poll runs | All open items are fetched (pagination) | Contract test with paginated fixture; count matches. |
-| QS‑1.6 | Item was dismissed | Someone comments on it | The item's `updated_at` changes → dismissal expires → item reappears as `UNANSWERED` if applicable | Unit + e2e test. |
-| QS‑1.7 | Two polls overlap (slow upstream) | Scheduler ticks | No concurrent fetch of the same source; no lost updates | Unit test with blocking fake fetcher; `-race` clean. |
-| QS‑1.9 | A registered credential expires in 14 days | Daily evaluation | `EXPIRING` attention item appears with remaining days; disappears only when the config date is renewed or dismissed for that date | Unit test with fake clock; e2e with fake config. |
-| QS‑1.10 | A source token is revoked | Next poll returns 401 | Within one poll interval the source shows `AUTH FAILED` and an attention item exists; other sources unaffected | Integration test with fake server switching to 401. |
-| QS‑1.8 | Any upstream failure | — | The dashboard never shows an empty tile without saying why and how old the data is | UI review + e2e assertion on staleness badge text. |
+| QS‑1.1 | Steady state, refresh interval *i* configured | Someone opens an issue in a configured repository at time *t* | The item appears with `NEW` on the dashboard | Visible at the latest at *t + i +* 60 s; measured by a test that injects an issue into the fake GitHub source and runs one refresh. |
+| QS‑1.2 | Arbitrary sequences of refresh runs, with items appearing, changing and disappearing | The new-detection rule is evaluated | Exactly the items whose first-seen time is later than the last-visit time are new | Table-driven and property-style tests over generated sequences; the rule lives in one function in `internal/domain` with ≥ 95 % statement coverage. |
+| QS‑1.3 | An item has been marked new and the user presses "mark all seen" | The dashboard is reloaded | No item is new; an item first seen after the click is new again | Store-level integration test against the libsql container. |
+| QS‑1.4 | GitHub returns 500, a rate-limit response or times out for one repository | A refresh runs | The other repositories and the other sources are stored; the failing repository keeps its previous items and shows the error and its last success | Integration test against a fake server returning 500/403/timeouts; asserts stored item count is unchanged and the run record names the failure. |
+| QS‑1.5 | A repository has more than 100 open issues and PRs | A refresh runs | Every open item is stored | Contract test against a paginated fixture; stored count equals fixture count. |
+| QS‑1.6 | The Fly machine is stopped while a refresh is running | The next refresh runs | Data is consistent: sources fetched before the stop keep their items, the rest are refetched | Test that aborts the run context between sources and asserts per-source transactional commit. |
+| QS‑1.7 | Two refreshes are triggered at once (cron and user) | Both arrive | Only one runs; the second is rejected with 409 | Handler test with a blocking fake fetcher; `go test -race` clean. |
 
-### QG‑2 Performance efficiency
+## 5.3 QG‑2 Speed
 
 | Id | Context | Stimulus | Response | Measure |
 |----|---------|----------|----------|---------|
-| QS‑2.1 | Warm cache, hosted on fly.io (fra region), desktop browser | User opens a new tab | HTML for the full dashboard is delivered and painted | Server response time (TTFB) p95 ≤ 150 ms; first contentful paint ≤ 1 s on a normal home connection; measured by Playwright trace in CI (fake sources) and documented Lighthouse run. |
-| QS‑2.2 | Same | Page renders | No render‑blocking external resources; total transfer of `/` incl. CSS/JS/fonts ≤ 150 kB (uncompressed) | Playwright network assertion. |
-| QS‑2.3 | Steady state | Background polling for ~15 sources | Memory RSS ≤ 128 MB, CPU idle ≤ 5 % on shared‑cpu‑1x | fly metrics after 24 h; unit tests use bounded caches. |
-| QS‑2.4 | Tile poll every 60 s | Tile content unchanged | Response is `304 Not Modified` or ≤ 5 kB fragment | Handler test with ETag. |
+| QS‑2.1 | The Fly machine is stopped (scaled to zero) | The user opens the dashboard | The complete page is delivered | ≤ 2.5 s to last byte at the 95th percentile, measured over 20 cold opens with `curl -w` against the deployed app. |
+| QS‑2.2 | The machine is running, data is in Turso | The user opens the dashboard | The complete page is delivered | ≤ 200 ms server time at the 95th percentile over 100 requests; asserted in a benchmark test against the local libsql container with a representative fixture. |
+| QS‑2.3 | A representative configuration (10 repositories, 40 open items between them) | The dashboard is rendered, unfiltered | The response is small enough for a slow connection | ≤ 150 kB uncompressed HTML plus ≤ 50 kB of static assets, including the vendored htmx; asserted by a test on the rendered fixture. |
+| QS‑2.4 | cron-job.org pings at the configured interval | The user opens the dashboard between two pings | The machine is already awake, so QS‑2.2 applies rather than QS‑2.1 | Manual verification after deployment; the refresh interval is chosen so that the machine's idle-stop timeout is exceeded no more than once per interval. |
+| QS‑2.5 | A refresh run with the representative configuration | `POST /api/refresh` | The run completes inside the cron trigger's timeout | ≤ 30 s wall clock, measured in the run record; the record's duration is asserted in an integration test against the fake sources. |
 
-### QG‑3 Security and low operating cost
-
-| Id | Context | Stimulus | Response | Measure |
-|----|---------|----------|----------|---------|
-| QS‑3.1 | Production | Anonymous request to `/`, `/tiles/*`, `/status`, `/dismiss`, `/refresh` | Redirect to login / 401, no data leaked | Handler tests for every route; e2e. |
-| QS‑3.2 | Production, no credential enrolled | `GET /enroll` with wrong or missing token | 404 (not 403 — do not reveal endpoint), rate limited 5/min/IP | Handler test. |
-| QS‑3.3 | Any | Logs, HTML, DB, error pages | Contain no token, key, session secret or cookie value | Redaction unit tests; a "secret canary" test starts the app with known dummy secrets and greps all outputs. |
-| QS‑3.4 | Any response | — | Security headers: CSP `default-src 'self'` (no inline scripts; htmx via self‑hosted file and nonce for its inline attributes if needed), `X-Content-Type-Options`, `Referrer-Policy`, `Strict-Transport-Security` (prod), cookies `Secure` `HttpOnly` `SameSite=Lax` | Handler tests. |
-| QS‑3.5 | State‑changing routes | Cross‑site POST | Rejected (CSRF token / origin check) | Handler test. |
-| QS‑3.6 | Dependencies | New Go module vulnerability published | CI fails on `govulncheck` findings; Dependabot opens PR | CI config review. |
-| QS‑3.7 | Operations | A month passes | Zero manual interventions required; hosting cost ≤ 5 €/month | fly invoice; runbook contains no periodic tasks. |
-| QS‑3.8 | Container | Image built | Runs as non‑root, distroless/scratch base, no shell, ≤ 30 MB | Dockerfile review; `docker inspect`. |
-
-### QG‑4 Flexibility of sources
+## 5.4 QG‑3 Frugality
 
 | Id | Context | Stimulus | Response | Measure |
 |----|---------|----------|----------|---------|
-| QS‑4.1 | Running system | Operator adds a repo/site/feed line to `config/zorgscope.yaml` and pushes | It is monitored and shown after CI deploy | ≤ 10 min wall clock, zero code changes; e2e test adds a repo to the fake config and asserts a new card. |
-| QS‑4.2 | Codebase | Developer adds a new source *kind* (e.g. Mastodon) | Requires exactly: one adapter package implementing `SourceFetcher`, one tile template, one fake, one config section, registration in one place | Guide `adding-a-source.md`; reviewed by adding the `feed` kind last in the plan following the guide. |
-| QS‑4.3 | Config | Invalid entry (typo in key, bad URL, negative interval) | Startup fails fast naming the key and line | Unit tests per validation rule. |
+| QS‑3.1 | Production, one month of operation | The bill arrives | Hosting, database and cron cost stay inside the free or near-free tiers | ≤ 1 €/month across Fly and Turso, read from the invoices. |
+| QS‑3.2 | The representative configuration, refreshed every 15 minutes for a month | Storage grows | The database stays far inside the Turso free tier | ≤ 50 MB total and ≤ 1 million row reads per month; read from the Turso dashboard's usage figures for the production database. |
+| QS‑3.3 | Steady state | The machine runs a refresh | Resource use fits the smallest Fly Machine | Peak RSS ≤ 128 MB on `shared-cpu-1x` with 256 MB; read from Fly metrics after 24 h. |
+| QS‑3.4 | The image is built | It is pushed and started | The image is small enough to start quickly from cold | ≤ 25 MB, scratch base, non-root; asserted by `docker image inspect` in CI. |
+| QS‑3.5 | A refresh run | GitHub is queried | The GitHub rate limit is never a constraint | ≤ 20 GraphQL point-equivalents per run, so that a 15-minute interval uses under 2 % of the hourly limit; asserted by counting requests against the fake server. |
 
-### QG‑5 Compatibility
-
-| Id | Context | Stimulus | Response | Measure |
-|----|---------|----------|----------|---------|
-| QS‑5.1 | Arc, Vivaldi, Firefox, Safari (current versions) | Open dashboard, log in with passkey, dismiss an item | Works identically without extensions | Manual matrix once per release; Playwright runs Chromium, Firefox, WebKit in CI. |
-| QS‑5.2 | Phone (375 px), tablet (768 px), desktop (1440 px), ultrawide (2560 px) | Open dashboard | Single column → 4 columns; no horizontal scroll; tap targets ≥ 44 px | Playwright viewport tests + screenshots. |
-| QS‑5.3 | Browser configured with the dashboard as new‑tab/homepage | New tab | Loads without extension in Vivaldi/Firefox/Safari; Arc via pinned tab or "open on start" — documented | `docs/guides/browser-new-tab.md`. |
-| QS‑5.4 | Reduced motion / high contrast OS settings | Open dashboard | Animations off, contrast ≥ WCAG AA | axe check in e2e, `prefers-reduced-motion` respected. |
-
-### QG‑6 Usability and aesthetics
+## 5.5 QG‑4 Confidentiality
 
 | Id | Context | Stimulus | Response | Measure |
 |----|---------|----------|----------|---------|
-| QS‑6.1 | First‑time look at the page | User glances for 3 s | Can tell how many items need attention and whether any build is broken | Attention count in tile title & browser tab title (`(3) zorgscope`); UI review by owner. |
-| QS‑6.2 | Any tile | — | Colour is never the only carrier of meaning (badges have text; icons have labels) | axe + review. |
-| QS‑6.3 | Any state | Empty, loading, error, stale | Each state has a designed representation, no raw errors, no layout jumps | Golden template tests for each state. |
-| QS‑6.4 | Typography & layout | — | Consistent spacing scale, ≤ 2 type families, ≤ 6 semantic colours (+ age scale) defined as CSS custom properties | Stylelint/ review; design tokens file exists. |
+| QS‑4.1 | Production | An anonymous request to the dashboard, the list fragment `GET /items` or `/api/refresh` | No data is returned: a browser navigation is redirected to sign-in, anything else gets 401 | Handler test asserting the behaviour for every route in the router's route table, so a new route cannot be forgotten. |
+| QS‑4.2 | Production | Repeated refused sign-in callbacks — a mismatched state, a failed code exchange, a visitor without push access — and repeated wrong bearer secrets at the refresh endpoint | The OAuth state and the bearer are compared in constant time, refused callbacks are rate-limited, and neither the authorization code, the state nor the visitor's GitHub token ever reaches a log | `subtle.ConstantTimeCompare` in both code paths; log-capture test covering all three refusal reasons; rate-limit test asserting rejection after the configured count and acceptance of an admissible sign-in afterwards. |
+| QS‑4.3 | Any operating state | Logs, HTTP responses, error pages and the rendered configuration page are inspected | No upstream token, session key or webhook URL appears | Canary test: fake secrets with recognisable values are configured, the whole surface is exercised, and the output is searched for them. |
+| QS‑4.4 | Production responses | Any request | Transport and browser hardening are explicit | HTTPS enforced by Fly; responses carry `Content-Security-Policy` without `unsafe-inline`, `Strict-Transport-Security`, `X-Content-Type-Options: nosniff` and `Referrer-Policy: strict-origin-when-cross-origin`; asserted by a handler test. No directive names an external host: every page's images come from this origin or a `data:` URI, badges included (FR‑2.3 AC5). |
+| QS‑4.5 | The dependency set | A new Go vulnerability is published | CI fails until it is resolved | `govulncheck` runs in CI and is a required check. |
 
-### Maintainability (cross‑cutting)
+## 5.6 QG‑5 Maintainability
 
 | Id | Context | Stimulus | Response | Measure |
 |----|---------|----------|----------|---------|
-| QS‑7.1 | Repository | An unfamiliar agent picks a plan task | Task lists files, tests to write first, acceptance command; no task > ~2 h for a competent developer | Plan review. |
-| QS‑7.2 | Codebase | `make check` | Passes: gofmt, vet, golangci‑lint (errcheck, staticcheck, gosec, revive), tests, docs lint | CI green. |
-| QS‑7.3 | Domain package | — | Zero imports outside std lib; ≥ 90 % coverage | `depguard` rule + coverage gate. |
-| QS‑7.4 | Any adapter | Upstream API change | Only that adapter and its fixtures change | Architecture rule: adapters are the only packages importing API clients (`depguard`). |
-| QS‑7.5 | Any change | PR opened | CI runs lint, unit, integration, e2e in ≤ 10 min | Workflow timing. |
+| QS‑5.1 | `internal/domain` | The package is compiled | It depends on nothing but the standard library | `depguard` rule in `.golangci.yml`; statement coverage ≥ 90 %. |
+| QS‑5.2 | An upstream API changes its response shape | The change is implemented | Only that adapter package and its fixtures change | `depguard` confines upstream client libraries to `internal/adapters/*`; verified by review of the resulting diff. |
+| QS‑5.3 | Any change | A pull request is opened | Lint, unit tests, integration tests and documentation lint run | CI completes in ≤ 3 minutes; `make check` reproduces it locally. |
+| QS‑5.4 | An unfamiliar agent picks a task from the implementation plan | It reads the task | The task names its files, its tests and the command that proves it done, and takes under about two hours | Plan review before execution. |
+| QS‑5.5 | A new kind of source is added | The developer implements it | One adapter satisfying `ports.SourceFetcher`, one configuration fragment, one fixture set and one registry line suffice | Verified when FR‑2.4 (mentions) is implemented in v2. |

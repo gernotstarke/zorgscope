@@ -1,0 +1,44 @@
+{{define "content"}}
+{{/* The details page behind the dashboard's warning box (FR-1.4). It lists every external
+     interface, healthy ones included: a page that showed only failures would answer "is anything
+     wrong?" with an empty list, and an empty list is equally what a dashboard with nothing
+     configured, or one whose health was never recorded, would produce. */}}
+<h1>Warnings and errors</h1>
+<p class="page-lead">
+  Every service zorgscope talks to, worst first, as of the last refresh. Nothing on this page
+  contacts an upstream service — it is the health each one recorded when it was last called.
+</p>
+<ul class="problems">
+{{range .Dashboard.Problems}}
+  <li class="problem problem-{{.Severity}}">
+    <p class="problem-head">
+      <span class="problem-title">{{.Title}}</span>
+      {{/* The state is a word as well as a colour, so the page is readable without it
+           (FR-1.5 AC2). */}}
+      <span class="badge badge-{{.Severity}}">{{.Label}}</span>
+    </p>
+    <p class="problem-summary">{{.Summary}}</p>
+    {{/* Borrowed text: whatever the upstream library said, already scrubbed of every configured
+         secret (QS-4.3), and never a template.HTML — html/template's contextual escaping is what
+         stands between an upstream error message and this page. */}}
+    {{with .Detail}}<p class="problem-detail"><code>{{.}}</code></p>{{end}}
+    <p class="problem-times">
+      {{if .At.Known}}<span>Last seen <time datetime="{{.At.Absolute}}">{{.At.Relative}}</time></span>{{end}}
+      {{if .LastOK.Known -}}
+        <span>Last success <time datetime="{{.LastOK.Absolute}}">{{.LastOK.Relative}}</time></span>
+      {{- else -}}
+        <span>No successful exchange on record</span>
+      {{- end}}
+    </p>
+  </li>
+{{end}}
+</ul>
+{{/* The refresh run's own record, verbatim. It is the only place a rejected announcement is
+     written down — a failed notification never fails a run (FR-6.1 AC3) — so the page that exists
+     to explain what went wrong reproduces it rather than summarising it away. */}}
+{{with .Dashboard.LastRunDetail}}
+<h2>What the last refresh run recorded</h2>
+<p class="run-detail run-detail-page">{{.}}</p>
+{{end}}
+<p class="back"><a href="/">Back to the dashboard</a></p>
+{{end}}

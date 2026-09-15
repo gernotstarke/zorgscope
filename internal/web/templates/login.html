@@ -1,0 +1,8 @@
+{{define "content"}}
+<section class="signin">
+  <h1>Sign in</h1>
+  {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+  <p>zorgscope is for the people who can push to its repository.</p>
+  <a class="button" href="/auth/github">Sign in with GitHub</a>
+</section>
+{{end}}

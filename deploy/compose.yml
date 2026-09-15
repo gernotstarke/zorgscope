@@ -1,16 +1,31 @@
+# Local development mirrors production: the same image Fly runs, against a libSQL server that speaks
+# the same protocol as Turso (C-4). Nothing is installed on the host.
 services:
-  zorgscope:
+  db:
+    image: ghcr.io/tursodatabase/libsql-server:latest
+    environment:
+      SQLD_NODE: primary
+    ports:
+      - "8081:8080"
+    volumes:
+      - zorgscope-db:/var/lib/sqld
+
+  app:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-    ports: ["${PORT:-8080}:8080"]
-    env_file: [../.env]
+    env_file:
+      - ../.env
     environment:
-      ZORGSCOPE_CONFIG: /app/config/zorgscope.yaml
-      ZORGSCOPE_DATA: /data/zorgscope.db
-    volumes:
-      - zorgscope-data:/data
-      - ../config:/app/config:ro
-    restart: unless-stopped
+      # Inside the Compose network the database is reachable by service name; whatever TURSO_URL
+      # says in .env is overridden here so a production URL cannot be hit from a local run.
+      TURSO_URL: http://db:8080
+      TURSO_AUTH_TOKEN: ""
+      PORT: "8080"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+
 volumes:
-  zorgscope-data:
+  zorgscope-db:

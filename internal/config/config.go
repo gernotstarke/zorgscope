@@ -1,222 +1,234 @@
-// Package config loads and validates config/zorgscope.yaml plus secrets from the environment
-// (arc42 §8.3, ADR-0007).
+// Package config loads zorgscope's non-secret YAML configuration (FR-8.1) and overlays it with
+// secrets read from the environment (FR-8.2). Config values, once loaded, are validated so that a
+// bad configuration fails at start-up rather than mid-refresh.
 package config
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"net"
+	"net/url"
+	"os"
+	"regexp"
 	"time"
+	_ "time/tzdata" // the distroless runtime image (deploy/Dockerfile) ships no /usr/share/zoneinfo
 
 	"gopkg.in/yaml.v3"
-
-	"github.com/gernotstarke/zorgscope/internal/domain"
 )
 
-// Config is the fully resolved runtime configuration.
+// Config is the fully validated, ready-to-use application configuration.
 type Config struct {
-	Server    ServerConfig    `yaml:"server"`
-	UI        UIConfig        `yaml:"ui"`
-	Snapshot  SnapshotConfig  `yaml:"snapshot"`
-	GitHub    GitHubConfig    `yaml:"github"`
-	Plausible PlausibleConfig `yaml:"plausible"`
-	Todoist   TodoistConfig   `yaml:"todoist"`
-	Feeds     FeedsConfig     `yaml:"feeds"`
-	Watch     WatchConfig     `yaml:"watch"`
-
-	// From environment (never from YAML):
-	Secrets  Secrets `yaml:"-"`
-	AuthMode string  `yaml:"-"` // "passkey" | "dev"
-	LogLevel string  `yaml:"-"`
-	DataPath string  `yaml:"-"`
+	Timezone      string
+	Refresh       Refresh
+	GitHub        GitHub
+	Notifications Notifications
+	Secrets       Secrets
 }
 
-// ServerConfig holds the `server` section: the base URL used for cookies, WebAuthn RP ID/origin
-// and absolute links, the listen port, and the timezone used for snapshot time and day grouping.
-type ServerConfig struct {
-	BaseURL  string         `yaml:"base_url"`
-	Port     int            `yaml:"port"`
-	Timezone string         `yaml:"timezone"`
-	Location *time.Location `yaml:"-"`
+// Refresh controls the freshness display; it does not itself schedule anything (ADR-0003).
+type Refresh struct {
+	Interval   time.Duration
+	StaleAfter time.Duration
 }
 
-// UIConfig holds the `ui` section: tile polling and refresh cadence, the attention badge cap,
-// and the ordered list of visible tiles.
-type UIConfig struct {
-	TilePollSeconds      int      `yaml:"tile_poll_seconds"`
-	AttentionCap         int      `yaml:"attention_cap"`
-	RefreshMinGapSeconds int      `yaml:"refresh_min_gap_seconds"`
-	Tiles                []string `yaml:"tiles"`
+// GitHub is the non-secret GitHub configuration.
+type GitHub struct {
+	Login string
+	// AuthRepo is the repository whose push access admits a visitor to the dashboard (FR-8.3), in
+	// owner/name form. It is required, and it is deliberately not derived from Repos: the list of
+	// repositories being watched is a product decision that changes often, while who may read the
+	// dashboard is a security decision that should change only when someone means it to.
+	AuthRepo string
+	Repos    []string
+	BaseURL  string // "" means api.github.com; make fakes sets this via GITHUB_BASE_URL.
+	// BadgeBaseURL is where a workflow's badge image comes from; "" means shields.io. It is its
+	// own setting rather than derived from BaseURL because badges are a different service
+	// entirely — a deployment against real GitHub still wants real badges, and one against the
+	// fixture server wants neither.
+	BadgeBaseURL string // "" means img.shields.io; set via GITHUB_BADGE_BASE_URL.
+	// OAuthBaseURL is where the OAuth App's authorize and token endpoints live; "" means
+	// github.com. It is separate from BaseURL because those two endpoints are not on the API host
+	// even at the real GitHub: the API answers at api.github.com and sign-in at github.com.
+	OAuthBaseURL string // "" means github.com; set via GITHUB_OAUTH_BASE_URL.
 }
 
-// KnownTiles are the tile names accepted in ui.tiles.
-var KnownTiles = []string{"attention", "repos", "sites", "todoist", "news", "watch"}
-
-// SnapshotConfig holds the `snapshot` section: the daily snapshot time (HH:MM, resolved into
-// Hour/Minute by Validate) and how many days of snapshots to retain.
-type SnapshotConfig struct {
-	Time          string `yaml:"time"` // HH:MM
-	RetentionDays int    `yaml:"retention_days"`
-	Hour, Minute  int    `yaml:"-"`
+// Notifications holds outbound notification settings.
+type Notifications struct {
+	Slack struct{ Enabled bool }
 }
 
-// GitHubConfig holds the `github` section: whether the source is enabled, the owner's login,
-// polling and staleness thresholds, bot substrings, mention handling, monitored repos and the
-// (overridable) API base URL.
-type GitHubConfig struct {
-	Enabled      bool          `yaml:"enabled"`
-	Me           string        `yaml:"me"`
-	PollInterval time.Duration `yaml:"poll_interval"`
-	GracePeriod  time.Duration `yaml:"grace_period"`
-	StaleAfter   time.Duration `yaml:"stale_after"`
-	Bots         []string      `yaml:"bots"`
-	Mentions     bool          `yaml:"mentions"`
-	Repos        []RepoConfig  `yaml:"repos"`
-	BaseURL      string        `yaml:"base_url"` // overridable by GITHUB_BASE_URL (fakes)
+// Secrets holds every value read from the environment. None of these is ever logged or included
+// in an error message, and none but OAuthClientID is ever rendered (QS-4.3) — the client id has to
+// reach the browser, because it is half of the authorize URL a sign-in is redirected to.
+type Secrets struct {
+	GitHubToken, SlackWebhook string
+	// OAuthClientID and OAuthClientSecret are the GitHub OAuth App this deployment signs people in
+	// as (FR-8.3). The id is not really a secret — it travels in the browser's address bar — but it
+	// is read from the environment beside its secret and redacted with it, because a value that is
+	// only sometimes worth hiding is a value someone eventually forgets to hide.
+	OAuthClientID, OAuthClientSecret string
+	RefreshSecret                    string
+	TursoURL, TursoAuthToken         string
 }
 
-// RepoConfig accepts either a plain "owner/name" string or a mapping with overrides.
-type RepoConfig struct {
-	Name         string        `yaml:"name"`
-	PollInterval time.Duration `yaml:"poll_interval"`
+// fileConfig mirrors the shape of the YAML file. Durations are strings here so that a malformed
+// value can be rejected with a field-naming error rather than failing YAML decoding generically.
+type fileConfig struct {
+	Timezone string `yaml:"timezone"`
+	Refresh  struct {
+		Interval   string `yaml:"interval"`
+		StaleAfter string `yaml:"stale_after"`
+	} `yaml:"refresh"`
+	GitHub struct {
+		Login    string   `yaml:"login"`
+		AuthRepo string   `yaml:"auth_repo"`
+		Repos    []string `yaml:"repos"`
+	} `yaml:"github"`
+	Notifications struct {
+		Slack struct {
+			Enabled bool `yaml:"enabled"`
+		} `yaml:"slack"`
+	} `yaml:"notifications"`
 }
 
-// repoConfigKeys are the only keys accepted in a repos: mapping entry. Node.Decode does not
-// inherit the parent decoder's KnownFields(true) setting (yaml.v3 always decodes nested nodes
-// loosely), so unknown keys are checked by hand here to preserve the "unknown keys are errors"
-// guarantee for this sub-schema (§8.3).
-var repoConfigKeys = map[string]bool{"name": true, "poll_interval": true}
+// repoPattern matches a GitHub "owner/name" repository reference.
+var repoPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
-// UnmarshalYAML implements the scalar-or-mapping form: a bare "owner/name" string, or a mapping
-// with a `name` key plus per-repo overrides such as `poll_interval`. Unknown keys in the mapping
-// form are rejected with a *ValidationError naming the offending key.
-func (r *RepoConfig) UnmarshalYAML(n *yaml.Node) error {
-	if n.Kind == yaml.ScalarNode {
-		r.Name = n.Value
+// minSecretLen is the minimum length required of REFRESH_SECRET. The OAuth pair has no such
+// minimum: GitHub chooses both values, so a length check here would only reject what GitHub issued.
+const minSecretLen = 32
+
+// Load reads the YAML file at path, overlays secrets from env, and validates the result.
+//
+// env is injected rather than reading os.Getenv directly so tests need no process environment.
+func Load(path string, env func(string) string) (Config, error) {
+	// #nosec G304 -- path is supplied by the caller (CONFIG_PATH / a flag), not by an end user.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Config{}, fmt.Errorf("reading %s: %w", path, err)
+	}
+
+	var fc fileConfig
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&fc); err != nil {
+		return Config{}, fmt.Errorf("parsing %s: %w", path, err)
+	}
+
+	interval, err := time.ParseDuration(fc.Refresh.Interval)
+	if err != nil {
+		return Config{}, fmt.Errorf("refresh.interval: %w", err)
+	}
+	staleAfter, err := time.ParseDuration(fc.Refresh.StaleAfter)
+	if err != nil {
+		return Config{}, fmt.Errorf("refresh.stale_after: %w", err)
+	}
+
+	if _, err := time.LoadLocation(fc.Timezone); err != nil {
+		return Config{}, fmt.Errorf("timezone: %w", err)
+	}
+
+	for i, repo := range fc.GitHub.Repos {
+		if !repoPattern.MatchString(repo) {
+			return Config{}, fmt.Errorf("github.repos[%d]: %q is not in owner/name form", i, repo)
+		}
+	}
+
+	cfg := Config{
+		Timezone: fc.Timezone,
+		Refresh: Refresh{
+			Interval:   interval,
+			StaleAfter: staleAfter,
+		},
+		GitHub: GitHub{
+			Login:        fc.GitHub.Login,
+			AuthRepo:     fc.GitHub.AuthRepo,
+			Repos:        fc.GitHub.Repos,
+			BaseURL:      env("GITHUB_BASE_URL"),
+			BadgeBaseURL: env("GITHUB_BADGE_BASE_URL"),
+			OAuthBaseURL: env("GITHUB_OAUTH_BASE_URL"),
+		},
+		Secrets: Secrets{
+			GitHubToken:       env("GITHUB_TOKEN"),
+			SlackWebhook:      env("SLACK_WEBHOOK_URL"),
+			OAuthClientID:     env("GITHUB_OAUTH_CLIENT_ID"),
+			OAuthClientSecret: env("GITHUB_OAUTH_CLIENT_SECRET"),
+			RefreshSecret:     env("REFRESH_SECRET"),
+			TursoURL:          env("TURSO_URL"),
+			TursoAuthToken:    env("TURSO_AUTH_TOKEN"),
+		},
+	}
+	cfg.Notifications.Slack.Enabled = fc.Notifications.Slack.Enabled
+
+	// The three values sign-in is made of. A deployment missing any of them would start, serve the
+	// sign-in page and refuse everybody at the callback, which looks like an outage rather than a
+	// misconfiguration; it fails here instead, where a deployment notices (FR-8.3).
+	if !repoPattern.MatchString(fc.GitHub.AuthRepo) {
+		return Config{}, fmt.Errorf("github.auth_repo: %q is not in owner/name form", fc.GitHub.AuthRepo)
+	}
+	if cfg.Secrets.OAuthClientID == "" {
+		return Config{}, errors.New("GITHUB_OAUTH_CLIENT_ID is not set")
+	}
+	if cfg.Secrets.OAuthClientSecret == "" {
+		return Config{}, errors.New("GITHUB_OAUTH_CLIENT_SECRET is not set")
+	}
+	if err := checkOAuthBaseURL(cfg.GitHub.OAuthBaseURL); err != nil {
+		return Config{}, err
+	}
+	if len(cfg.Secrets.RefreshSecret) < minSecretLen {
+		return Config{}, errors.New("REFRESH_SECRET must be at least 32 characters")
+	}
+
+	return cfg, nil
+}
+
+// checkOAuthBaseURL validates GITHUB_OAUTH_BASE_URL, which is empty in every real deployment.
+//
+// The variable exists so that `make fakes` and the tests can point the sign-in flow at a fixture
+// server on this machine; it is not a general redirect. Left unvalidated it would be one: the value
+// becomes the authorize URL the visitor's browser is sent to and the token URL this process posts
+// the client secret to, so a typo — or an environment somebody else can write — would hand both to
+// a host of their choosing. Anything but https is therefore refused unless it is talking to this
+// machine, where there is no network to intercept and no TLS certificate to have.
+func checkOAuthBaseURL(raw string) error {
+	if raw == "" {
 		return nil
 	}
-	if n.Kind == yaml.MappingNode {
-		for i := 0; i+1 < len(n.Content); i += 2 {
-			key := n.Content[i].Value
-			if !repoConfigKeys[key] {
-				return &ValidationError{Key: fmt.Sprintf("github.repos[].%s", key), Msg: fmt.Sprintf("unknown key %q in repo config", key)}
-			}
-		}
+	u, err := url.Parse(raw)
+	// The error is never included: the value is not a secret, but it is attacker-influenceable
+	// text, and the name of the variable is what the operator needs (FR-8.1 AC3, QS-4.3).
+	if err != nil || u.Host == "" {
+		return errors.New("GITHUB_OAUTH_BASE_URL is not a URL")
 	}
-	type plain RepoConfig
-	var p plain
-	if err := n.Decode(&p); err != nil {
-		return err
+	if u.Scheme == "https" {
+		return nil
 	}
-	*r = RepoConfig(p)
-	return nil
-}
-
-// RepoInterval returns the effective poll interval for a repo: its own override if set,
-// otherwise the GitHub source's default poll interval.
-func (g GitHubConfig) RepoInterval(name string) time.Duration {
-	for _, r := range g.Repos {
-		if r.Name == name && r.PollInterval > 0 {
-			return r.PollInterval
-		}
+	if u.Scheme == "http" && isLoopbackHost(u.Hostname()) {
+		return nil
 	}
-	return g.PollInterval
+	return errors.New("GITHUB_OAUTH_BASE_URL must be https, unless it points at this machine")
 }
 
-// PlausibleConfig holds the `plausible` section: whether the source is enabled, polling
-// interval, site ordering, monitored site hostnames and the (overridable) API base URL.
-type PlausibleConfig struct {
-	Enabled      bool          `yaml:"enabled"`
-	PollInterval time.Duration `yaml:"poll_interval"`
-	Order        string        `yaml:"order"` // visitors | config
-	Sites        []string      `yaml:"sites"`
-	BaseURL      string        `yaml:"base_url"`
-}
-
-// TodoistConfig holds the `todoist` section: whether the source is enabled, polling interval,
-// the task-due horizon in days and the (overridable) API base URL.
-type TodoistConfig struct {
-	Enabled      bool          `yaml:"enabled"`
-	PollInterval time.Duration `yaml:"poll_interval"`
-	HorizonDays  int           `yaml:"horizon_days"`
-	BaseURL      string        `yaml:"base_url"`
-}
-
-// FeedsConfig holds the `feeds` section: whether the source is enabled, polling interval,
-// per-tile item cap, topic grouping and the configured feed sources.
-type FeedsConfig struct {
-	Enabled      bool          `yaml:"enabled"`
-	PollInterval time.Duration `yaml:"poll_interval"`
-	MaxItems     int           `yaml:"max_items"`
-	GroupByTopic bool          `yaml:"group_by_topic"`
-	Sources      []FeedSource  `yaml:"sources"`
-}
-
-// FeedSource is one feed.
-type FeedSource struct {
-	Name     string `yaml:"name"`
-	URL      string `yaml:"url"`
-	Topic    string `yaml:"topic"`
-	MaxItems int    `yaml:"max_items"`
-}
-
-// WatchConfig holds the `watch` section (FR-11.x): whether credential/URL watching is enabled,
-// the default warning horizon in days, manually registered credentials and health-checked URLs.
-type WatchConfig struct {
-	Enabled     bool               `yaml:"enabled"`
-	WarnDays    int                `yaml:"warn_days"`
-	Credentials []CredentialConfig `yaml:"credentials"`
-	URLs        []URLCheckConfig   `yaml:"urls"`
-}
-
-// CredentialConfig is a manually registered expiring credential.
-type CredentialConfig struct {
-	Name      string    `yaml:"name"`
-	Expires   string    `yaml:"expires"` // YYYY-MM-DD
-	WarnDays  int       `yaml:"warn_days"`
-	UsedBy    string    `yaml:"used_by"`
-	URL       string    `yaml:"url"`
-	ExpiresAt time.Time `yaml:"-"`
-}
-
-// URLCheckConfig is a health-checked URL.
-type URLCheckConfig struct {
-	Name               string        `yaml:"name"`
-	URL                string        `yaml:"url"`
-	ExpectStatus       int           `yaml:"expect_status"`
-	ExpectBodyContains string        `yaml:"expect_body_contains"`
-	PollInterval       time.Duration `yaml:"poll_interval"`
-}
-
-// Secrets come from the environment only. Never log a Secrets value or any of its fields
-// (FR-8.2, QS-3.3); no String()/GoString() is defined on this type or its fields for that reason.
-type Secrets struct {
-	GitHubToken     string
-	PlausibleAPIKey string
-	TodoistToken    string
-	SessionSecret   string
-	EnrollToken     string
-}
-
-// Default returns the documented defaults; YAML overrides them.
-func Default() Config {
-	return Config{
-		Server:   ServerConfig{Port: 8080, Timezone: "Europe/Berlin"},
-		UI:       UIConfig{TilePollSeconds: 60, AttentionCap: 30, RefreshMinGapSeconds: 30, Tiles: append([]string(nil), KnownTiles...)},
-		Snapshot: SnapshotConfig{Time: "03:00", RetentionDays: 30},
-		GitHub: GitHubConfig{PollInterval: 10 * time.Minute, GracePeriod: 4 * time.Hour, StaleAfter: 30 * 24 * time.Hour,
-			Bots: []string{"[bot]", "dependabot", "renovate"}, Mentions: true, BaseURL: "https://api.github.com"},
-		Plausible: PlausibleConfig{PollInterval: 30 * time.Minute, Order: "visitors", BaseURL: "https://plausible.io"},
-		Todoist:   TodoistConfig{PollInterval: 5 * time.Minute, HorizonDays: 7, BaseURL: "https://api.todoist.com"},
-		Feeds:     FeedsConfig{PollInterval: 30 * time.Minute, MaxItems: 20},
-		Watch:     WatchConfig{Enabled: true, WarnDays: 14},
-		AuthMode:  "passkey",
-		LogLevel:  "info",
-		DataPath:  "/data/zorgscope.db",
+// isLoopbackHost reports whether host is this machine. host.docker.internal is included because
+// that is how a container reaches `make fakes` running on the host, which is the whole reason the
+// variable exists.
+func isLoopbackHost(host string) bool {
+	if host == "localhost" || host == "host.docker.internal" {
+		return true
 	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
-// Rules derives the domain rules from the configuration. Me is load-bearing: IsUnanswered treats
-// activity by Me on an item Me authored as an answer.
-func (c *Config) Rules() domain.Rules {
-	return domain.Rules{Grace: c.GitHub.GracePeriod, StaleAfter: c.GitHub.StaleAfter, Me: c.GitHub.Me,
-		Bots: c.GitHub.Bots, WarnDays: c.Watch.WarnDays}
+// Enabled reports whether the named source has its credential (FR-8.2 AC2). An unknown source
+// name reports false. A source with a credential but nothing configured to watch (no repos) also
+// reports false: there would be nothing for it to do.
+func (c Config) Enabled(source string) bool {
+	switch source {
+	case "github":
+		return c.Secrets.GitHubToken != "" && len(c.GitHub.Repos) > 0
+	default:
+		return false
+	}
 }

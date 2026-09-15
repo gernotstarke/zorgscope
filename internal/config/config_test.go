@@ -1,133 +1,216 @@
-package config
+package config_test
 
 import (
-	"errors"
-	"os"
+	"maps"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gernotstarke/zorgscope/internal/config"
 )
 
-func env(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+func env(pairs map[string]string) func(string) string {
+	return func(k string) string { return pairs[k] }
+}
 
-func TestLoadRepoConfigDefaultsAndOverrides(t *testing.T) {
-	cfg, err := Load("testdata/minimal.yaml", env(map[string]string{"GITHUB_TOKEN": "t", "AUTH_MODE": "dev"}))
+func TestLoadValid(t *testing.T) {
+	cfg, err := config.Load("testdata/valid.yaml", env(map[string]string{
+		"GITHUB_OAUTH_CLIENT_ID":     "id",
+		"GITHUB_OAUTH_CLIENT_SECRET": "secret",
+		"REFRESH_SECRET":             strings.Repeat("r", 32),
+		"GITHUB_TOKEN":               "ghp_x",
+	}))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Server.Port != 8080 || cfg.Server.Timezone != "Europe/Berlin" || cfg.Server.Location == nil {
-		t.Fatalf("server defaults: %+v", cfg.Server)
+	if cfg.Refresh.Interval != 15*time.Minute {
+		t.Errorf("interval = %v, want 15m", cfg.Refresh.Interval)
 	}
-	if cfg.GitHub.PollInterval != 10*time.Minute || cfg.GitHub.GracePeriod != 4*time.Hour || len(cfg.GitHub.Bots) != 3 {
-		t.Fatalf("github defaults: %+v", cfg.GitHub)
+	if len(cfg.GitHub.Repos) != 2 {
+		t.Errorf("repos = %d, want 2", len(cfg.GitHub.Repos))
 	}
-	if len(cfg.GitHub.Repos) != 2 || cfg.GitHub.Repos[0].Name != "arc42/arc42-template" || cfg.GitHub.Repos[1].PollInterval != 5*time.Minute {
-		t.Fatalf("repos: %+v", cfg.GitHub.Repos)
+	if !cfg.Enabled("github") {
+		t.Error("github should be enabled: its token is present")
 	}
-	if cfg.GitHub.RepoInterval("arc42/arc42-template") != 10*time.Minute || cfg.GitHub.RepoInterval("gernotstarke/esabuch.de-site") != 5*time.Minute {
-		t.Fatal("RepoInterval")
-	}
-	if cfg.Secrets.GitHubToken != "t" || cfg.AuthMode != "dev" || cfg.DataPath != "/data/zorgscope.db" {
-		t.Fatalf("env: %+v %s %s", cfg.Secrets, cfg.AuthMode, cfg.DataPath)
-	}
-	if cfg.Snapshot.Time != "03:00" || cfg.Snapshot.Hour != 3 || cfg.Snapshot.Minute != 0 || cfg.Snapshot.RetentionDays != 30 {
-		t.Fatalf("snapshot defaults: %+v", cfg.Snapshot)
-	}
-	if cfg.UI.TilePollSeconds != 60 || cfg.UI.AttentionCap != 30 || cfg.UI.RefreshMinGapSeconds != 30 || len(cfg.UI.Tiles) != 6 {
-		t.Fatalf("ui defaults: %+v", cfg.UI)
-	}
-	if !cfg.Watch.Enabled || cfg.Watch.WarnDays != 14 || cfg.Rules().WarnDays != 14 || cfg.Rules().Me != "gernotstarke" {
-		t.Fatalf("watch/rules: %+v", cfg.Watch)
-	}
-	if cfg.GitHub.BaseURL != "https://api.github.com" {
-		t.Fatalf("github base url default: %s", cfg.GitHub.BaseURL)
+	if cfg.Enabled("todoist") {
+		t.Error("an unknown source is never enabled: there is nothing to fetch for it")
 	}
 }
 
-func TestLoadRealConfig(t *testing.T) {
-	cfg, err := Load("../../config/zorgscope.yaml", env(map[string]string{"GITHUB_TOKEN": "t", "PLAUSIBLE_API_KEY": "p", "TODOIST_TOKEN": "d", "SESSION_SECRET": strings.Repeat("x", 32), "ENROLL_TOKEN": "e"}))
-	if err != nil {
-		t.Fatalf("the shipped config must load: %v", err)
+func TestLoadRejectsBadDuration(t *testing.T) {
+	_, err := config.Load("testdata/bad-interval.yaml", env(map[string]string{
+		"GITHUB_OAUTH_CLIENT_ID":     "id",
+		"GITHUB_OAUTH_CLIENT_SECRET": "secret",
+		"REFRESH_SECRET":             strings.Repeat("r", 32),
+	}))
+	if err == nil {
+		t.Fatal("want an error for an unparsable interval (FR-8.1 AC3)")
 	}
-	if len(cfg.GitHub.Repos) != 8 || len(cfg.Plausible.Sites) != 7 || len(cfg.Watch.URLs) != 1 {
-		t.Fatalf("shipped config content changed unexpectedly: %d repos, %d sites, %d urls", len(cfg.GitHub.Repos), len(cfg.Plausible.Sites), len(cfg.Watch.URLs))
+	if !strings.Contains(err.Error(), "refresh.interval") {
+		t.Errorf("error %q must name the offending field (FR-8.1 AC3)", err)
 	}
 }
 
-func TestValidationErrors(t *testing.T) {
-	cases := []struct {
-		name string
-		yaml string
+func TestLoadRequiresALongEnoughRefreshSecret(t *testing.T) {
+	_, err := config.Load("testdata/valid.yaml", env(map[string]string{
+		"GITHUB_OAUTH_CLIENT_ID":     "id",
+		"GITHUB_OAUTH_CLIENT_SECRET": "secret",
+		"REFRESH_SECRET":             "short",
+	}))
+	if err == nil {
+		t.Fatal("want an error: REFRESH_SECRET below 32 characters")
+	}
+}
+
+// FR-8.3: sign-in needs the OAuth App's pair and the repository whose push access admits a
+// visitor, so a deployment missing any of the three fails at start-up rather than at the callback.
+func TestLoadRequiresTheOAuthPairAndTheAuthRepo(t *testing.T) {
+	base := map[string]string{"REFRESH_SECRET": strings.Repeat("r", 32), "GITHUB_OAUTH_CLIENT_ID": "id", "GITHUB_OAUTH_CLIENT_SECRET": "secret"}
+
+	if _, err := config.Load("testdata/valid.yaml", env(base)); err != nil {
+		t.Fatalf("valid: %v", err)
+	}
+	for _, missing := range []string{"GITHUB_OAUTH_CLIENT_ID", "GITHUB_OAUTH_CLIENT_SECRET"} {
+		m := maps.Clone(base)
+		delete(m, missing)
+		if _, err := config.Load("testdata/valid.yaml", env(m)); err == nil || !strings.Contains(err.Error(), missing) {
+			t.Errorf("without %s: err = %v", missing, err)
+		}
+	}
+	if _, err := config.Load("testdata/no-auth-repo.yaml", env(base)); err == nil || !strings.Contains(err.Error(), "github.auth_repo") {
+		t.Errorf("without auth_repo: err = %v", err)
+	}
+}
+
+// GITHUB_OAUTH_BASE_URL exists so that `make fakes` and the tests can point the sign-in flow at a
+// local fixture server. A value that is not a loopback address is therefore either a mistake or an
+// attempt to send the visitor's authorisation — and this deployment's client secret with it — to
+// somebody else's host, and either way it must not start (QS-4.3).
+func TestLoadRejectsAnOAuthBaseURLThatIsNeitherHTTPSNorLoopback(t *testing.T) {
+	base := map[string]string{
+		"GITHUB_OAUTH_CLIENT_ID":     "id",
+		"GITHUB_OAUTH_CLIENT_SECRET": "secret",
+		"REFRESH_SECRET":             strings.Repeat("r", 32),
+	}
+	load := func(value string) error {
+		m := maps.Clone(base)
+		if value != "" {
+			m["GITHUB_OAUTH_BASE_URL"] = value
+		}
+		_, err := config.Load("testdata/valid.yaml", env(m))
+		return err
+	}
+
+	for _, ok := range []string{
+		"",                                 // unset: the real github.com
+		"https://github.example",           // an enterprise host, over TLS
+		"http://localhost:9090",            // make fakes, from the host
+		"http://127.0.0.1:9090",            // the same, by address
+		"http://[::1]:9090",                // and over IPv6
+		"http://host.docker.internal:9090", // make fakes, from inside the Compose network
+	} {
+		if err := load(ok); err != nil {
+			t.Errorf("GITHUB_OAUTH_BASE_URL=%q: %v", ok, err)
+		}
+	}
+
+	for _, bad := range []string{
+		"http://github.com",    // plaintext to a host that is not this machine
+		"http://evil.example",  // the attack this check exists for
+		"ftp://localhost:9090", // loopback, but not a scheme an OAuth endpoint speaks
+		"not a url",            // no scheme and no host at all
+		"https://",             // a scheme and nothing to talk to
+	} {
+		err := load(bad)
+		if err == nil {
+			t.Errorf("GITHUB_OAUTH_BASE_URL=%q was accepted", bad)
+			continue
+		}
+		if !strings.Contains(err.Error(), "GITHUB_OAUTH_BASE_URL") {
+			t.Errorf("GITHUB_OAUTH_BASE_URL=%q: error %q must name the variable (FR-8.1 AC3)", bad, err)
+		}
+	}
+}
+
+// TestLoadRejectsUnknownField guards against a misspelled top-level key (e.g. "githbu" instead of
+// "github") being silently dropped, which would leave that source unconfigured with no error.
+func TestLoadRejectsUnknownField(t *testing.T) {
+	_, err := config.Load("testdata/unknown-key.yaml", env(map[string]string{
+		"GITHUB_OAUTH_CLIENT_ID":     "id",
+		"GITHUB_OAUTH_CLIENT_SECRET": "secret",
+		"REFRESH_SECRET":             strings.Repeat("r", 32),
+	}))
+	if err == nil {
+		t.Fatal("want an error for an unknown top-level key")
+	}
+	if !strings.Contains(err.Error(), "githbu") {
+		t.Errorf("error %q must name the offending field", err)
+	}
+}
+
+// TestLoadRealConfigFile guards against the loader rejecting the config the app actually ships
+// with — config/zorgscope.yaml is baked into the production image, so a mismatch here would only
+// surface as a start-up failure in production.
+func TestLoadRealConfigFile(t *testing.T) {
+	_, err := config.Load("../../config/zorgscope.yaml", env(map[string]string{
+		"GITHUB_OAUTH_CLIENT_ID":     "id",
+		"GITHUB_OAUTH_CLIENT_SECRET": "secret",
+		"REFRESH_SECRET":             strings.Repeat("r", 32),
+	}))
+	if err != nil {
+		t.Fatalf("Load(config/zorgscope.yaml): %v", err)
+	}
+}
+
+// QS-4.3: no secret value may reach an error message. The canary only proves that where it has
+// actually travelled through a branch capable of printing it, so every validation that runs after
+// the secrets are read gets its own case here — an unparsable duration fails before `Load` has so
+// much as looked at the environment, and on its own would prove nothing at all.
+func TestErrorNeverContainsSecretValues(t *testing.T) {
+	const canary = "canary-secret-value-canary"
+	full := map[string]string{
+		"GITHUB_OAUTH_CLIENT_ID":     canary + "-client-id",
+		"GITHUB_OAUTH_CLIENT_SECRET": canary + "-client-secret",
+		"GITHUB_OAUTH_BASE_URL":      "http://" + canary + ".example",
+		"REFRESH_SECRET":             canary + strings.Repeat("r", 32),
+		"GITHUB_TOKEN":               canary + "-github-token",
+		"SLACK_WEBHOOK_URL":          "https://hooks.example/" + canary,
+		"TURSO_URL":                  "libsql://" + canary + ".example",
+		"TURSO_AUTH_TOKEN":           canary + "-turso",
+	}
+	// An empty value means "unset this one", so that a case can reach the branch the one before it
+	// stopped at.
+	envWith := func(changes map[string]string) map[string]string {
+		m := maps.Clone(full)
+		for k, v := range changes {
+			if v == "" {
+				delete(m, k)
+				continue
+			}
+			m[k] = v
+		}
+		return m
+	}
+
+	for name, tc := range map[string]struct {
+		path string
 		env  map[string]string
-		key  string
 	}{
-		{"unknown key", "server:\n  base_url: http://localhost:8080\n  prot: 1\n", nil, "prot"},
-		{"bad base url", "server:\n  base_url: localhost\n", nil, "server.base_url"},
-		{"dev mode on non-localhost", "server:\n  base_url: https://zorgscope.fly.dev\n", map[string]string{"AUTH_MODE": "dev"}, "AUTH_MODE"},
-		{"bad auth mode", "server:\n  base_url: http://localhost:8080\n", map[string]string{"AUTH_MODE": "magic"}, "AUTH_MODE"},
-		{"interval too small", "server:\n  base_url: http://localhost:8080\ngithub:\n  enabled: true\n  me: x\n  poll_interval: 5s\n  repos: [a/b]\n", map[string]string{"GITHUB_TOKEN": "t", "AUTH_MODE": "dev"}, "github.poll_interval"},
-		{"bad repo name", "server:\n  base_url: http://localhost:8080\ngithub:\n  enabled: true\n  me: x\n  repos: [nope]\n", map[string]string{"GITHUB_TOKEN": "t", "AUTH_MODE": "dev"}, "github.repos[0]"},
-		{"github enabled without token", "server:\n  base_url: http://localhost:8080\ngithub:\n  enabled: true\n  me: x\n  repos: [a/b]\n", map[string]string{"AUTH_MODE": "dev"}, "GITHUB_TOKEN"},
-		{"github enabled without me", "server:\n  base_url: http://localhost:8080\ngithub:\n  enabled: true\n  repos: [a/b]\n", map[string]string{"GITHUB_TOKEN": "t", "AUTH_MODE": "dev"}, "github.me"},
-		{"bad snapshot time", "server:\n  base_url: http://localhost:8080\nsnapshot:\n  time: 25:00\n", map[string]string{"AUTH_MODE": "dev"}, "snapshot.time"},
-		{"bad timezone", "server:\n  base_url: http://localhost:8080\n  timezone: Mars/Olympus\n", nil, "server.timezone"},
-		{"unknown tile", "server:\n  base_url: http://localhost:8080\nui:\n  tiles: [attention, weather]\n", map[string]string{"AUTH_MODE": "dev"}, "ui.tiles[1]"},
-		{"bad credential date", "server:\n  base_url: http://localhost:8080\nwatch:\n  credentials:\n    - name: x\n      expires: 31.12.2026\n", map[string]string{"AUTH_MODE": "dev"}, "watch.credentials[0].expires"},
-		{"passkey without session secret", "server:\n  base_url: https://zorgscope.fly.dev\n", map[string]string{"AUTH_MODE": "passkey"}, "SESSION_SECRET"},
-		{"unknown key in repo mapping", "server:\n  base_url: http://localhost:8080\ngithub:\n  enabled: true\n  me: x\n  repos:\n    - name: a/b\n      pol_interval: 5m\n", map[string]string{"GITHUB_TOKEN": "t", "AUTH_MODE": "dev"}, "pol_interval"},
-		{"plausible enabled without token", "server:\n  base_url: http://localhost:8080\nplausible:\n  enabled: true\n  sites: [arc42.org]\n", map[string]string{"AUTH_MODE": "dev"}, "PLAUSIBLE_API_KEY"},
-		{"todoist enabled without token", "server:\n  base_url: http://localhost:8080\ntodoist:\n  enabled: true\n", map[string]string{"AUTH_MODE": "dev"}, "TODOIST_TOKEN"},
-		{"bad plausible site", "server:\n  base_url: http://localhost:8080\nplausible:\n  enabled: true\n  sites: [arc42.org/bad]\n", map[string]string{"PLAUSIBLE_API_KEY": "p", "AUTH_MODE": "dev"}, "plausible.sites[0]"},
-		{"malformed PORT", "server:\n  base_url: http://localhost:8080\n", map[string]string{"AUTH_MODE": "dev", "PORT": "abc"}, "PORT"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			_, err := Parse(strings.NewReader(c.yaml), env(c.env))
+		"an unparsable duration":    {"testdata/bad-interval.yaml", full},
+		"a missing auth repo":       {"testdata/no-auth-repo.yaml", full},
+		"a missing client id":       {"testdata/valid.yaml", envWith(map[string]string{"GITHUB_OAUTH_CLIENT_ID": ""})},
+		"a missing client secret":   {"testdata/valid.yaml", envWith(map[string]string{"GITHUB_OAUTH_CLIENT_SECRET": ""})},
+		"an off-machine OAuth host": {"testdata/valid.yaml", full},
+		"a short refresh secret":    {"testdata/valid.yaml", envWith(map[string]string{"GITHUB_OAUTH_BASE_URL": "", "REFRESH_SECRET": canary})},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := config.Load(tc.path, env(tc.env))
 			if err == nil {
-				t.Fatal("expected error")
+				t.Fatal("this case has to fail, or the canary never reaches an error message")
 			}
-			var ve *ValidationError
-			if !errors.As(err, &ve) {
-				t.Fatalf("expected ValidationError, got %T %v", err, err)
-			}
-			if !strings.Contains(ve.Key, c.key) {
-				t.Fatalf("key = %q, want it to contain %q (msg %q)", ve.Key, c.key, ve.Msg)
+			if strings.Contains(err.Error(), canary) {
+				t.Errorf("a secret value leaked into %q (QS-4.3)", err)
 			}
 		})
-	}
-}
-
-func TestDisabledSourcesNeedNoSecrets(t *testing.T) {
-	y := "server:\n  base_url: http://localhost:8080\ngithub:\n  enabled: false\n"
-	if _, err := Parse(strings.NewReader(y), env(map[string]string{"AUTH_MODE": "dev"})); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestLoadMissingFile(t *testing.T) {
-	if _, err := Load("testdata/does-not-exist.yaml", env(nil)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("want ErrNotExist, got %v", err)
-	}
-}
-
-// TestLoadUnknownKeyFixture loads testdata/unknown-key.yaml through Load (rather than an inline
-// string via Parse, as TestValidationErrors/unknown_key does) so the fixture file is exercised.
-func TestLoadUnknownKeyFixture(t *testing.T) {
-	_, err := Load("testdata/unknown-key.yaml", env(nil))
-	var ve *ValidationError
-	if !errors.As(err, &ve) {
-		t.Fatalf("expected ValidationError, got %T %v", err, err)
-	}
-	if !strings.Contains(ve.Key, "prot") {
-		t.Fatalf("key = %q, want it to contain %q", ve.Key, "prot")
-	}
-}
-
-// TestIntervalBoundaryAccepted pins checkInterval's bound at >=, not >: exactly the minimum
-// interval (10s) must be accepted.
-func TestIntervalBoundaryAccepted(t *testing.T) {
-	y := "server:\n  base_url: http://localhost:8080\ngithub:\n  enabled: true\n  me: x\n  poll_interval: 10s\n  repos: [a/b]\n"
-	if _, err := Parse(strings.NewReader(y), env(map[string]string{"GITHUB_TOKEN": "t", "AUTH_MODE": "dev"})); err != nil {
-		t.Fatalf("10s (the minimum) should be accepted: %v", err)
 	}
 }

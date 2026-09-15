@@ -1,0 +1,15 @@
+{
+  "total_count": 1,
+  "workflow_runs": [
+    {
+      "id": 1001,
+      "name": "CI",
+      "path": ".github/workflows/ci.yml",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/org/repo/actions/runs/1001",
+      "run_started_at": "2026-08-10T08:00:00Z",
+      "updated_at": "2026-08-10T08:05:00Z"
+    }
+  ]
+}

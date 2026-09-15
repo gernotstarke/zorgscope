@@ -1,0 +1,77 @@
+{{define "content"}}
+{{/* The page behind the front page's indicator (FR-2.3): every watched repository, worst first. */}}
+<h1>Build status</h1>
+{{with .Dashboard.Builds}}
+<p class="page-lead">
+  {{.Summary}}{{if .Running}}, {{.Running}} running{{end}}. This is the last state GitHub reported;
+  nothing on this page contacts it.
+</p>
+
+{{/* The source's own health, which is a different question from any repository's: a fetch that
+     failed means every row below is as old as the last one that worked. */}}
+{{if .Disabled}}
+<p class="notice notice-disabled" role="status">Not fetching — {{.DisabledReason}}.</p>
+{{else if .Error}}
+<p class="notice notice-error" role="alert">Failing — {{.Error}} (last success {{if .LastOK.Known}}<time datetime="{{.LastOK.Absolute}}">{{.LastOK.Relative}}</time>{{else}}never{{end}})</p>
+{{else if .Stale}}
+<p class="notice notice-stale" role="status">Stale — no build state has been fetched recently.</p>
+{{end}}
+
+{{if .Rows}}
+<div class="table-scroll">
+<table class="builds-table">
+  <thead>
+    <tr>
+      <th scope="col">Repository</th>
+      <th scope="col">State</th>
+      <th scope="col">Workflow</th>
+      <th scope="col">Badge</th>
+      <th scope="col">Last finished</th>
+    </tr>
+  </thead>
+  <tbody>
+  {{range .Rows}}
+    <tr class="build-row build-row-{{.Health}}">
+      <th scope="row" class="build-repo">
+        {{/* The link goes to the run, which is where a broken build is actually diagnosed. A
+             repository with no run has nothing to link to and is plain text rather than a dead
+             link. */}}
+        {{if .RunURL}}<a href="{{.RunURL}}" target="_blank" rel="noopener noreferrer">{{.Repo}}</a>{{else}}{{.Repo}}{{end}}
+      </th>
+      <td>
+        <span class="badge badge-{{.Health}}">{{.Label}}</span>
+        {{/* A run in progress sits on top of the previous outcome, and both are shown
+             (FR-2.3 AC2) — the state of the repository is still what last completed. */}}
+        {{if .Running}}<span class="build-running">running now</span>{{end}}
+      </td>
+      <td class="build-workflow">{{if .Workflow}}{{.Workflow}}{{else}}—{{end}}</td>
+      {{/* The badge for this workflow, drawn from bytes this dashboard already holds (FR-2.3 AC5).
+           It is carried in the page rather than linked, so opening this page fetches nothing from
+           anywhere: the refresh run that read the state in the row beside it fetched the picture
+           of that state at the same time.
+
+           A run with no workflow file behind it — GitHub's built-in Pages deployment — cannot be
+           addressed by any badge service, and neither can one whose badge did not arrive. Both say
+           so in words, rather than leaving a broken image whose alt text sprawls across the
+           column. */}}
+      <td class="build-badge">
+        {{if .Badge}}<img src="{{.Badge}}" alt="Build badge for {{.Repo}}" height="20" decoding="async">
+        {{else}}<span class="build-nobadge" title="There is no badge for this run: either it has no workflow file to address, or the badge could not be fetched at the last refresh.">no badge</span>{{end}}
+      </td>
+      <td class="build-finished">{{if .Finished.Known}}<time datetime="{{.Finished.Absolute}}">{{.Finished.Relative}}</time>{{else}}never{{end}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+<p class="page-note">
+  Everything here is what GitHub told this dashboard at the last refresh, badges included: they
+  are fetched from shields.io by the refresh run and stored, so this page draws them from its own
+  bytes and contacts nobody while you are reading it.
+</p>
+{{else}}
+<p class="empty">No repositories are configured, so there is nothing to build.</p>
+{{end}}
+{{end}}
+<p class="back"><a href="/">Back to the dashboard</a></p>
+{{end}}

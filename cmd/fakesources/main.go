@@ -1,10 +1,11 @@
-// Command fakesources serves fake upstream APIs (GitHub in M1) for e2e tests and the local demo.
+// Command fakesources serves a fixture-backed stand-in for GitHub, so that each adapter (Tasks
+// 7-10) can be developed and tested against a real HTTP server instead of a live network
+// dependency and a real credential (FR-9.2). `make fakes` runs this on http://localhost:9090.
 package main
 
 import (
 	"context"
 	"errors"
-	"flag"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,44 +13,44 @@ import (
 	"syscall"
 	"time"
 
-	githubfake "github.com/gernotstarke/zorgscope/test/fakes/github"
+	"github.com/gernotstarke/zorgscope/internal/fakesources"
 )
 
 func main() {
-	if err := run(); err != nil {
-		slog.Error("fakesources stopped", "err", err)
-		os.Exit(1)
+	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	addr := ":" + envOr("PORT", "9090")
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           fakesources.NewServer(),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	go func() {
+		log.Info("fakesources listening", "addr", addr)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("server failed", "err", err)
+			os.Exit(1)
+		}
+	}()
+
+	<-ctx.Done()
+	log.Info("shutting down")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Error("shutdown failed", "err", err)
 	}
 }
 
-func run() error {
-	addr := flag.String("addr", ":9090", "listen address")
-	flag.Parse()
-	gh := githubfake.New()
-	githubfake.Seed(gh, time.Now())
-	slog.Info("fakesources listening", "addr", *addr, "github", "/graphql, /repos/…/actions/runs, /notifications, /__control/*")
-	srv := &http.Server{Addr: *addr, Handler: gh.Handler(), ReadHeaderTimeout: 5 * time.Second}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	errCh := make(chan error, 1)
-	go func() { errCh <- srv.ListenAndServe() }()
-
-	select {
-	case <-ctx.Done():
-	case err := <-errCh:
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return err
-		}
-		return nil
+// envOr returns the environment variable key, or fallback if it is unset or empty.
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
 	}
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	slog.Info("shutting down")
-	if err := srv.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
-	}
-	return nil
+	return fallback
 }
