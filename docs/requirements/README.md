@@ -14,6 +14,10 @@ design, the implementation plan, tests and commit messages.
 
 Priorities use MoSCoW: **M**ust (v1), **S**hould (v2), **W**on't (explicitly out of scope).
 
-These requirements were reset on 2026-08-17. The previous, considerably larger set was cut back to
-what the single user actually asked for; see [the design](../superpowers/specs/2026-08-17-zorgscope-reset-design.md)
-for the reasoning.
+These requirements were reset twice: on 2026-08-17, when a considerably larger set was cut back to
+what the single user actually asked for (that design is removed, see git history), and again on
+2026-09-15, when everything that assumed a database — build status, refresh runs, notifications,
+the in-app documentation pages — was retired along with the database itself. See
+[ADR‑0010](../decisions/0010-stateless-no-database.md) and
+`docs/superpowers/specs/2026-09-15-stateless-reset-design.md` for the reasoning behind the second
+reset.

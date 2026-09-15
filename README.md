@@ -3,34 +3,55 @@
 One page that answers *does anything need me right now?*
 
 **zorgscope** is Gernot Starke's ("zorg") personal status dashboard. It collects the open issues and
-pull requests of the arc42 sites' repositories on GitHub, marks what arrived since the last look, and
-costs almost nothing to run:
+pull requests of the arc42 sites' repositories on GitHub, behind a GitHub sign-in, and marks what is
+new since the last look.
 
-* **GitHub** — open issues and pull requests of the configured repositories, with their age and last
-  activity, plus the GitHub Actions build state per repository.
-* **Filters** — by repository, kind, creation date and text; every filtered view is a URL.
-* **New** — anything first seen after your last visit carries a `NEW` badge until you mark it seen.
+(screenshot placeholder)
 
-One Go binary runs on a Fly.io Machine that is **stopped whenever nothing is happening**. There is no
-background scheduler: [cron-job.org](https://cron-job.org) calls `POST /api/refresh` on a schedule,
-which fetches every source, writes the result to [Turso](https://turso.tech) — and, incidentally,
-keeps the machine warm so that opening the page is fast. All state lives in the database; the
-container itself is disposable.
+One Go binary runs on a Fly.io Machine that is **stopped whenever nothing is happening**. There is
+no database and no background scheduler: the backend fetches straight from GitHub on demand, keeps
+the last fetched list in memory for a few minutes, and a "Refresh" button fetches immediately when
+that is not fresh enough. The container itself is disposable — it remembers nothing between restarts
+except what a signed-in visitor's own browser carries in its session cookie (design
+[ADR‑0010](docs/decisions/0010-stateless-no-database.md)).
 
 ## Quick start
 
 Only Docker and GNU make are needed. Nothing is installed on the host.
 
 ```sh
-cp deploy/env.example .env   # then fill in the GitHub OAuth pair, REFRESH_SECRET and GITHUB_TOKEN
-make backend                 # terminal 1: the backend and its libSQL database
+cp deploy/env.example .env   # then fill in the GitHub OAuth pair and GITHUB_TOKEN
+make backend                 # terminal 1: the backend, fetching straight from GitHub
 make client                  # terminal 2: open the browser at it
-make fakes                   # terminal 3 (optional): fixture upstreams instead of the real ones
-
-make check                   # everything CI runs: vet, lint, tests, docs, fly.toml validation
-make clean                   # stop the local backend, drop caches and local data
-make help                    # every target
+make fakes                   # terminal 3 (optional): a fixture GitHub instead of the real one
 ```
+
+`.env` needs three values:
+
+```env
+GITHUB_OAUTH_CLIENT_ID=      # the local OAuth App, callback http://localhost:8080/auth/callback
+GITHUB_OAUTH_CLIENT_SECRET=
+GITHUB_TOKEN=                # any personal access token; public repositories need no scope
+```
+
+See [configuration](docs/concepts/configuration.md) for where these come from and
+[security and token handling](docs/concepts/security-and-tokens.md) for what each can do and how to
+rotate it.
+
+## Make targets
+
+| Target | Purpose |
+|--------|---------|
+| `make help` | List every target |
+| `make backend` | Run the backend locally against the real GitHub (terminal 1) |
+| `make client` | Open the browser at the local backend (terminal 2) |
+| `make fakes` | Serve fixture GitHub responses, OAuth endpoints included, on `:9090` (terminal 3) |
+| `make check` | Everything CI runs, plus `markdownlint` and `fly.toml` validation |
+| `make deploy` | Build remotely on Fly and deploy — `fly deploy --remote-only --config deploy/fly.toml` |
+| `make clean` | Stop the local backend; remove build output and caches |
+
+Deploying is `make deploy`, run from the laptop with a `fly` login; there is no deploy workflow in
+CI — CI only tests (design §9, [ADR‑0010](docs/decisions/0010-stateless-no-database.md)).
 
 ## Repository layout
 
@@ -38,36 +59,33 @@ make help                    # every target
 |------|---------|
 | `docs/requirements/` | Requirements in [req42](https://req42.de) form: goals, stakeholders, constraints, functional and quality requirements |
 | `docs/decisions/` | Architecture decisions (MADR) |
-| `docs/concepts/` | Security and token handling, data storage, configuration |
-| `docs/superpowers/` | The design specs and their implementation plans |
+| `docs/concepts/` | Security and token handling, configuration |
+| `docs/superpowers/` | The design spec of the stateless reset and its implementation plan |
 | `cmd/zorgscope/` | The binary |
 | `cmd/fakesources/` | Fixture-backed GitHub, including the OAuth endpoints |
 | `internal/domain/` | The rules — items, new-detection, dashboard assembly. Standard library only |
-| `internal/ports/` | `SourceFetcher`, `Store`, `Notifier`, `Clock` |
-| `internal/adapters/` | GitHub, Slack, libSQL |
+| `internal/ports/` | `Source`, `AccessChecker`, `Clock` |
+| `internal/adapters/github/` | The GitHub GraphQL fetcher and the access checker |
+| `internal/snapshot/` | The in-memory cache of the last fetched item list |
 | `internal/config/` | YAML configuration plus environment secrets |
-| `internal/refresh/` | One refresh run over all sources |
-| `internal/web/` | Router, handlers, templates, static assets, rendered documentation |
+| `internal/web/` | Router, handlers, templates, static assets |
 | `config/` | The non-secret configuration file |
 | `deploy/` | Dockerfile, Compose, `fly.toml` |
 
-Go tests live next to the code they test. The running system serves its own documentation at `/docs`.
+Go tests live next to the code they test.
 
 ## Documentation
 
 * [Requirements](docs/requirements/README.md)
-* [Decisions](docs/decisions/README.md)
-* [Design: the reset](docs/superpowers/specs/2026-08-17-zorgscope-reset-design.md)
-  and [its implementation plan](docs/superpowers/plans/2026-08-17-zorgscope-v1.md)
-* [Design: GitHub sign-in and focus](docs/superpowers/specs/2026-09-14-github-signin-and-focus-design.md)
-  and [its implementation plan](docs/superpowers/plans/2026-09-14-github-signin-and-focus.md)
+* [Decisions](docs/decisions/README.md), including
+  [ADR‑0010: stateless, no database, no refresh pipeline](docs/decisions/0010-stateless-no-database.md)
+* [The stateless reset design](docs/superpowers/specs/2026-09-15-stateless-reset-design.md)
 
 ## Status
 
-Reset on 2026-08-17 to a much smaller scope than the previous iteration. The requirements, the design
-and the implementation plan are written; the infrastructure — module, container, Compose, Fly
-configuration and the make targets — is in place and `make check` passes. The application itself is
-being built task by task from the plan.
+Reset on 2026-09-15 to a stateless process: no database, no refresh pipeline, three secrets, one
+deploy command, one CI job. The requirements, the decisions and the design are current with the
+code; `make check` passes.
 
 ## Licence
 

@@ -76,9 +76,10 @@ unscoped token. GitHub documents it for the authenticated user, and the fake sou
 reproduces it, but if a real sign-in ever came back without it the callback would refuse — it fails
 closed — and log it as `no permissions block`. The fix in that case is to request the `read:org` or
 `repo` scope, at the cost of asking the visitor for more than their identity. The flow is verified by
-hand against the real GitHub before the production OAuth App is put to use, following the steps in
-[the handover](../superpowers/plans/HANDOVER.md); see
-[the design](../superpowers/specs/2026-09-14-github-signin-and-focus-design.md) §8.
+hand against the real GitHub before the production OAuth App is put to use, following the steps
+that were recorded in `docs/superpowers/plans/HANDOVER.md` (removed in the stateless reset, see git
+history); see the 2026-09-14 sign-in and focus design, §8 (also removed in the stateless reset, see
+git history).
 
 ## Pros and cons of the options
 

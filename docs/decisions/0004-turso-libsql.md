@@ -1,6 +1,7 @@
 # 0004. Turso and libSQL for persistence, `libsql-server` locally
 
-* Status: accepted
+* Status: superseded by [0010](0010-stateless-no-database.md) — the stateless reset removed
+  persistence altogether, so there is no longer a database for this record's choice to apply to.
 * Date: 2026-08-17
 * Requirements: C‑3, C‑4, C‑8, QS‑3.1, QS‑3.2
 

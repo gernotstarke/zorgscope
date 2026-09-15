@@ -57,7 +57,7 @@ db-driver:
 accident; the build fails, not the code review. The package layout on disk
 (`internal/domain`, `internal/ports`, `internal/adapters/github|plausible|todoist|slack|libsql`,
 `internal/refresh`, `internal/config`, `internal/web`) is the same shape §4 ("Structure") of the
-[design](../superpowers/specs/2026-08-17-zorgscope-reset-design.md) describes.
+2026-08-17 reset design (removed in the stateless reset, see git history) describes.
 
 ### Consequences
 

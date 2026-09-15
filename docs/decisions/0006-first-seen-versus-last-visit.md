@@ -1,6 +1,7 @@
 # 0006. First-seen versus last-visit as the definition of "new"
 
-* Status: accepted
+* Status: superseded by [0010](0010-stateless-no-database.md) — `NEW` is now created-after-seen
+  carried in the signed session cookie, not a stored `first_seen_at`/`last_visit_at` pair.
 * Date: 2026-08-17
 * Requirements: FR‑1.2, FR‑1.3, FR‑5.3, QS‑1.2, QS‑1.3, QS‑3.2
 

@@ -1,6 +1,7 @@
 # 0005. Embedded SQL migrations rather than a schema tool
 
-* Status: accepted
+* Status: superseded by [0010](0010-stateless-no-database.md) — the stateless reset removed the
+  schema this record migrated, so there is nothing left to apply a migration to.
 * Date: 2026-08-17
 * Requirements: C‑2, C‑4, QG‑5
 
@@ -63,9 +64,9 @@ NOTHING` because "two machines starting at the same time may both apply an idemp
 only the row must not be duplicated." There is no make target for migrating: the server applies
 every migration on start-up, so an ordinary deploy is the migration. `cmd/migrate` calls the same
 method without starting the binary, for the one case start-up does not cover — preparing a fresh
-Turso database by hand before the first deploy — and it is run the way the SQL shell in
-[data storage](../concepts/data-storage.md) is, through a `docker run` of the Go image with
-`TURSO_URL` and `TURSO_AUTH_TOKEN` in its environment.
+Turso database by hand before the first deploy — and it is run the way the SQL shell described in
+`docs/concepts/data-storage.md` (removed in the stateless reset, see git history) was, through a
+`docker run` of the Go image with `TURSO_URL` and `TURSO_AUTH_TOKEN` in its environment.
 
 ### Consequences
 

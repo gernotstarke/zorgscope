@@ -1,72 +1,55 @@
 # Security and token handling
 
-Two independent credentials, a session cookie derived from one of them, and what never reaches a
-log. See [ADR‑0009](../decisions/0009-github-sign-in-push-access.md) for why admission to the
-dashboard is GitHub's question to answer rather than this system's,
-[ADR‑0007](../decisions/0007-token-sign-in-derived-cookie.md) for the shared token it superseded and
-for where the derived cookie came from, and
-[ADR‑0003](../decisions/0003-fly-scale-to-zero-external-cron.md) for why a refresh has to be
-triggered by an authenticated HTTP call at all.
+Two independent kinds of credential, a session cookie derived from one of them, and what never
+reaches a log. See [ADR‑0009](../decisions/0009-github-sign-in-push-access.md) for why admission to
+the dashboard is GitHub's question to answer rather than this system's, and
+[ADR‑0010](../decisions/0010-stateless-no-database.md) for why the session cookie is the whole of
+this process's authentication state.
 
-## Two independent credentials
+## Two kinds of credential
 
-zorgscope has exactly two secrets that authenticate a request, and they are deliberately unrelated.
-A third row is in the table because it is the row a reader expects to find there, and because it is
-the one that must never drift into the first two: the tokens that read GitHub authenticate nothing
-here.
+zorgscope has two kinds of secret, and they are deliberately unrelated: one proves a browser is
+signed in, the other reads GitHub on this process's behalf. Neither can do the other's job.
 
 | Credential | Environment variable | Authorises | Never authorises |
 |------------|----------------------|------------|-------------------|
-| OAuth client secret | `GITHUB_OAUTH_CLIENT_SECRET` | Exchanging the code at `/auth/callback`, and — as the seed of the session key — every later request that carries the cookie | `POST /api/refresh` |
-| Refresh secret | `REFRESH_SECRET` | `POST /api/refresh` as a bearer token | Reading any page or fragment |
-| GitHub read tokens | `GITHUB_TOKEN`, plus the visitor's own token at sign-in | Reading GitHub: the backend's token fetches items and builds, the visitor's answers exactly one question about their permission on the repository | Anything at all in zorgscope. The visitor's token is used for one request and never stored, logged or rendered |
+| OAuth client secret | `GITHUB_OAUTH_CLIENT_SECRET` | Exchanging the code at `/auth/callback`, and — as the seed of the session key — verifying every later request that carries the session cookie | Reading anything on GitHub |
+| GitHub read tokens | `GITHUB_TOKEN`, plus the visitor's own token at sign-in | Reading GitHub: the backend's token fetches issues and pull requests, the visitor's token answers exactly one question about their permission on `github.auth_repo` | Anything at all in zorgscope itself — neither token is ever presented back to this process as a credential |
 
-The reason the first two are unrelated is stated directly in the
-[reset design](../superpowers/specs/2026-08-17-zorgscope-reset-design.md) (§6): "the two credentials
-are independent so the cron service holds only the ability to trigger a refresh." cron-job.org is an
-external, third-party service that this system trusts with one narrow capability. If `REFRESH_SECRET`
-alone could also read the dashboard, a compromised or misconfigured cron job would expose Gernot's
-private repositories — not just trigger a fetch. Symmetrically, a session cookie minted for the
-browser must never be accepted by `/api/refresh`: a stolen cookie should not be able to force
-refreshes at will (a route to hammering GitHub's rate limit, QS‑3.5) any more than a stolen bearer
-secret should be able to open the dashboard.
+A leaked client secret lets someone mint themselves a valid session cookie once they also hold it
+(it is never sent anywhere except to GitHub's token endpoint and used locally to sign and verify
+cookies); it reads nothing on GitHub. A leaked `GITHUB_TOKEN` reads whatever repositories it can see
+on GitHub; it opens no session on zorgscope. Keeping them apart means a compromise of one is not
+automatically a compromise of the other.
 
-`deploy/env.example` documents them, with the independence spelled out in the comment on the last:
+`deploy/env.example` documents the required three, all of which `internal/config.Load` refuses to
+start without:
 
 ```env
-# The OAuth App registered for this environment (FR-8.3). Local and production have one App each,
-# because a GitHub OAuth App has exactly one callback URL; take both values from the same App.
+# Sign in with GitHub (FR-8.3): the OAuth App registered for THIS environment.
 GITHUB_OAUTH_CLIENT_ID=
 GITHUB_OAUTH_CLIENT_SECRET=
-# Bearer secret cron-job.org sends to POST /api/refresh (FR-5.1). At least 32 characters.
-# Deliberately separate from the OAuth pair: the cron service can trigger a refresh and nothing else.
-REFRESH_SECRET=
+GITHUB_TOKEN=
 ```
-
-`internal/config/config.go`'s `Load` enforces a minimum length of 32 characters on `REFRESH_SECRET`
-— a configuration that supplies a shorter value fails at start-up rather than accepting a guessable
-secret — and `web.New` refuses to start at all unless both OAuth values are present, exactly as it
-refused to start without the sign-in token before it. Half-configured authentication is not a state
-this system is willing to serve a page from.
 
 ## What the sign-in checks
 
 Signing in is three routes, and only the third makes a decision:
 
 ```text
-GET  /login              public   the sign-in page: one button, "Sign in with GitHub"
+GET  /login              public   the sign-in page: one link, "Sign in with GitHub"
 GET  /auth/github        public   sets a state cookie, redirects to GitHub's authorize URL
 GET  /auth/callback      public   verifies state, exchanges the code, checks push access,
                                   sets the session cookie, redirects to /
 ```
 
 `GET /auth/github` generates 32 random bytes, stores them base64-encoded in a short-lived
-`zorgscope_oauth_state` cookie (HttpOnly, Secure, SameSite=Lax, ten minutes), and redirects to GitHub
-with the client id, that state, and **no scopes**. zorgscope is a public repository, and reading the
-authenticated user's own permission on a public repository needs no scope, so the App asks the
-visitor for nothing beyond their identity. No `redirect_uri` is sent either: GitHub uses the callback
-registered on the App, which is why the backend never has to know its own public URL or trust a
-`Host` header.
+`zorgscope_oauth_state` cookie (HttpOnly, Secure, SameSite=Lax, ten minutes, scoped to
+`/auth/callback` alone), and redirects to GitHub with the client id, that state, and **no scopes**.
+zorgscope is a public repository, and reading the authenticated user's own permission on a public
+repository needs no scope, so the App asks the visitor for nothing beyond their identity. No
+`redirect_uri` is sent either: GitHub uses the callback registered on the App, which is why the
+backend never has to know its own public URL or trust a `Host` header.
 
 `GET /auth/callback` compares the `state` parameter with the cookie, clears the cookie, exchanges the
 code for an access token, and makes exactly one request with it — `GET {api}/repos/{auth_repo}`,
@@ -85,67 +68,72 @@ would be blocked; a link navigation is not subject to `form-action`.
 Signing in does not create a server-side session record. The cookie's value is:
 
 ```text
-base64(expiry) + "." + base64(HMAC-SHA256(key, expiry))
+base64(expiry:seen) + "." + base64(HMAC-SHA256(key, expiry:seen))
 where key = SHA256("zorgscope-session-v2" + GITHUB_OAUTH_CLIENT_SECRET)
 ```
 
-Verifying a request recomputes the HMAC from the *current* `GITHUB_OAUTH_CLIENT_SECRET` and compares
-it against the cookie's signature. This gives two properties for free, without a database:
+`expiry` and `seen` are both Unix seconds. `seen` is the moment of the visitor's last "Mark all
+seen"; it is `0` on a fresh sign-in, so nothing is `NEW` until the first mark (design §4). Verifying
+a request recomputes the HMAC from the *current* `GITHUB_OAUTH_CLIENT_SECRET` and compares it
+against the cookie's signature with `subtle.ConstantTimeCompare`. This gives three properties for
+free, without a database:
 
 * **Stateless verification.** No session table, no lookup — the server needs nothing but the current
   client secret to check a cookie's validity, which fits a machine that may be stopped and started
-  between any two requests (ADR‑0003). It also means an existing session survives a GitHub outage:
-  verifying one touches nothing upstream.
+  between any two requests. It also means an existing session survives a GitHub outage: verifying
+  one touches nothing upstream.
 * **Rotation invalidates every session (FR‑8.3 AC4).** Because `key` is derived from the client
   secret, regenerating that secret on GitHub changes the key, and every cookie signed under the old
   key fails verification immediately — everywhere, on every device, without a sign-out action or a
-  revocation list. That is the property
-  [ADR‑0007](../decisions/0007-token-sign-in-derived-cookie.md) was chosen for, and the one thing
-  about it this design deliberately kept.
+  revocation list.
+* **The seen mark cannot be forged, only moved within safe bounds.** `POST /seen` re-mints the
+  cookie with `seen` set to the fetched-at time of the list the visitor was actually shown, sent as
+  a hidden form field and clamped to now; a missing, unparsable or future value falls back to now
+  (`internal/web/dashboard.go`'s `seenAt`). Because the value only ever reaches the cookie after
+  that clamp, and the cookie is signed afterwards, a visitor editing the form field before submitting
+  it can only move their own future seen mark somewhere inside those bounds — never forge one signed
+  by an earlier state, and never affect anyone else's session.
 
 The cookie carries HttpOnly, Secure and SameSite=Lax (FR‑8.3 AC2) and holds a signature over an
-expiry and nothing else — no identity, no login name, and above all not the visitor's GitHub token,
-which was dropped at the end of the callback. A leaked cookie therefore leaks a thirty-day session
-and nothing else.
+expiry and a seen mark and nothing else — no identity, no login name, and above all not the
+visitor's GitHub token, which was dropped at the end of the callback. A leaked cookie therefore
+leaks a thirty-day session and whatever seen mark it carried, and nothing else.
 
 ## Constant-time comparison and rate limiting
 
-QS‑4.2 requires that "comparison is constant-time, attempts are rate-limited, and the submitted value
-never reaches a log." `subtle.ConstantTimeCompare` is used for all three secret comparisons in the
-request path — the OAuth state parameter against its cookie, the session cookie's signature against
-the recomputed HMAC, and the bearer on `/api/refresh` against `REFRESH_SECRET` — so that a failed
-comparison takes the same time regardless of how many leading bytes matched. An ordinary `==` on
-secret bytes does not have that property, and is exactly the kind of timing side-channel `subtle`
-exists to close.
+QS‑4.2 requires that refused sign-in callbacks are rate-limited and that neither the authorization
+code, the state, nor the visitor's token ever reaches a log. `subtle.ConstantTimeCompare` is used
+for both secret comparisons in the sign-in path — the OAuth state parameter against its cookie, and
+the session cookie's signature against the recomputed HMAC — so that a failed comparison takes the
+same time regardless of how many leading bytes matched. An ordinary `==` on secret bytes does not
+have that property, and is exactly the kind of timing side-channel `subtle` exists to close.
 
 Callbacks are rate-limited by an in-memory token bucket keyed by client IP, and the token is spent
-at the top of the handler — before the state is compared, and before any request leaves this process.
-The ordering is the substance of the limit rather than a detail of it. Charged at the exit instead,
-it would decide only what the visitor is shown: an anonymous caller could loop `/auth/github` and
-`/auth/callback` for as long as it liked and still make zorgscope post to GitHub's token endpoint
-once per attempt, spending an upstream quota it does not own and holding a machine that scales to
-zero awake for the length of the loop. A mismatched or missing state, a cancelled authorisation, a
-failed code exchange, a visitor without push access and a sign-in that succeeds therefore all cost
-the same single token, from the same bucket that failed token sign-ins counted against before. One
-attempt costs one token on every path, so somebody who gets it right on their last try is still
-admitted. The bucket is deliberately in-memory rather than a Turso-backed table: the machine stops
-when idle (ADR‑0003), so a persistent counter would add a database write to every refusal without
-meaningfully raising the cost of a patient attack.
+at the top of the handler — before the state is compared, and before any request leaves this
+process. The ordering is the substance of the limit rather than a detail of it. Charged at the exit
+instead, it would decide only what the visitor is shown: an anonymous caller could loop
+`/auth/github` and `/auth/callback` for as long as it liked and still make zorgscope post to
+GitHub's token endpoint once per attempt, spending an upstream quota it does not own and holding a
+machine that scales to zero awake for the length of the loop. A mismatched or missing state, a
+cancelled authorisation, a failed code exchange, a visitor without push access and a sign-in that
+succeeds therefore all cost the same single token, from the same bucket. One attempt costs one
+token on every path, so somebody who gets it right on their last try is still admitted. The bucket
+is deliberately in-memory rather than persisted: the machine stops when idle, so a persistent
+counter would add a write to every refusal without meaningfully raising the cost of a patient
+attack.
 
 That trade-off is comfortable here, because **the rate limiter is not what stands between a stranger
 and the dashboard — GitHub is.** There is no value to guess at the callback: a caller who holds no
 code issued by GitHub against this App, in a browser holding the matching state cookie, is not
 admitted at any rate at all. Throttling keeps the logs quiet and the machine asleep; it is not the
-defence. The concrete budget and window live in `internal/web/auth.go`, where they can be read and
-changed together with the code that enforces them; this page deliberately does not restate them,
-because it is published unauthenticated at `/docs`.
+defence.
 
 ## What the callback logs
 
-Every callback logs one line, admitted or refused, because "a collaborator signed in" is the whole of
-the audit need here and losing it silently would be worse than the line's cost. An admitted visitor is
-`sign-in accepted` and the client IP, and nothing further — not the permission level that admitted
-them, and not the account that holds it.
+Every callback logs one line, admitted or refused, because "a collaborator signed in" is the whole
+of the audit need here and losing it silently would be worse than the line's cost. An admitted
+visitor is `sign-in accepted` and the client IP, and nothing further — not the permission level that
+admitted them, and not the account that holds it.
 
 A refusal is `sign-in refused`, the client IP, and the reason in the system's own words: `state
 mismatch`, `no code` (the visitor cancelled on GitHub's authorisation page, which comes back as
@@ -153,8 +141,7 @@ mismatch`, `no code` (the visitor cancelled on GitHub's authorisation page, whic
 repository response was not 200), `no permissions block` (GitHub answered without saying what the
 visitor may do), or `no push access` (the permission was `pull` alone). An attempt past the rate
 limit is `sign-in rate-limited` and the client IP alone: the budget is spent before the exchange, so
-at that point there is no reason yet to name — the refusals underneath a burst of 429s each logged
-their own while there was still budget for them.
+at that point there is no reason yet to name.
 
 It never carries the authorization code, the state value, the visitor's access token, the client
 secret, or a login name the visitor did not choose to publish. The session cookie holds no identity
@@ -162,17 +149,17 @@ either, so nothing downstream can reconstruct one from it.
 
 ## What is never logged (QS‑4.3)
 
-No client secret, no derived session key, no authorization code, no visitor token, no webhook URL and
-no upstream API token may appear in a log line, an HTTP response body, an error page, or the rendered
-configuration page. Two pieces of this sit in code that has nothing to do with the web layer:
+No client secret, no derived session key, no authorization code, no visitor token and no upstream
+API token may appear in a log line, an HTTP response body, or an error page. Two pieces of this sit
+in code that has nothing to do with the web layer:
 
 * `internal/config/config.go`'s `Load` wraps every validation error with the *name* of the offending
-  field (`"refresh.interval: %w"`, `"REFRESH_SECRET must be at least 32 characters"`), never the
-  value. `TestErrorNeverContainsSecretValues` in `internal/config/config_test.go` asserts this
-  directly: it configures a canary secret value and checks that no returned error string contains it.
-* `internal/adapters/libsql/store.go`'s `Open` and `dsn` functions are documented never to return an
-  error containing the DSN, "since the auth token lives in it" — errors from that package name the
-  host at most.
+  field (`"github.cache_ttl: %w"`, `"GITHUB_OAUTH_CLIENT_SECRET is not set"`), never the value.
+  `TestErrorNeverContainsSecretValues` in `internal/config/config_test.go` asserts this directly: it
+  configures a canary secret value and checks that no returned error string contains it.
+* `internal/web/server.go`'s `Redact` replaces every configured secret value found in text with a
+  marker, reading `config.Secrets`' fields by reflection so a new secret is covered the moment it is
+  declared rather than needing a hand-written list kept in step.
 
 `TestNoResponseEverContainsASecret` in `internal/web` is the HTTP-level version of the same
 guarantee: every secret is configured with a recognisable canary value, every route is exercised
@@ -189,6 +176,8 @@ One middleware wraps every response with:
   style. `form-action` and `base-uri` are named explicitly because `default-src` covers neither: an
   injected `<form action="https://elsewhere">` would otherwise be a working exfiltration route, and
   an injected `<base>` would re-point every relative URL on the page, that form's action included.
+  `img-src` allows `data:` and nothing external, because every image this page shows — the logo, the
+  vendored icons — is served from this origin.
 * `X-Content-Type-Options: nosniff`
 * `Referrer-Policy: strict-origin-when-cross-origin`
 * `Strict-Transport-Security`, on top of the HTTPS Fly already enforces at the edge (`force_https`
@@ -196,55 +185,39 @@ One middleware wraps every response with:
 
 ## Rotating each secret
 
-`GITHUB_OAUTH_CLIENT_SECRET`, `REFRESH_SECRET` and `GITHUB_TOKEN` are Fly secrets in production and
-`.env` entries locally — never repository content (C‑9). The two below are the ones with a procedure
-worth writing down; `GITHUB_TOKEN` is rotated like any other GitHub personal access token, and
-nothing in zorgscope is derived from it. The examples use `<new-value>` as a placeholder, never a
-real secret.
+`GITHUB_OAUTH_CLIENT_SECRET` and `GITHUB_TOKEN` are Fly secrets in production and `.env` entries
+locally — never repository content. `GITHUB_OAUTH_CLIENT_ID` travels beside them for convenience,
+though it is not really a secret: it is half of the authorize URL a sign-in is redirected to, and
+appears in the browser's address bar on every sign-in.
 
 **Rotating the OAuth client secret.** Generate a new one on GitHub — Settings → Developer settings →
 OAuth Apps → the App for this environment → *Generate a new client secret* — and set it as a Fly
-secret with `flyctl`:
+secret:
 
 ```sh
-flyctl secrets set GITHUB_OAUTH_CLIENT_SECRET=<new-value>
+flyctl secrets set GITHUB_OAUTH_CLIENT_SECRET=<new-value> -a zorgscope
 ```
 
-This signs everyone out immediately, everywhere, because the session key is derived from that value.
-That is the point of the derivation above, not a side effect to work around: it is the one action
-that revokes every outstanding session at once. Everybody signs in again at `/login`, which costs
-them two taps on a GitHub page they are already signed in to. Delete the old secret on GitHub once
-the new one is deployed, and replace the old value in any local `.env`.
+This signs everyone out immediately, everywhere, because the session key is derived from that value
+— that is the point of the derivation above, not a side effect to work around. Everybody signs in
+again at `/login`, which costs them two taps on a GitHub page they are already signed in to. Delete
+the old secret on GitHub once the new one is deployed, and replace the old value in any local `.env`.
 
-Taking somebody's access away is the other direction and needs no secret at all: remove their push
-access on GitHub, and the next sign-in refuses them. A session they already hold survives until it
-expires, because verifying it asks GitHub nothing — so for an urgent revocation, do both.
+Taking somebody's access away is the other direction and needs no secret rotation at all: remove
+their push access on GitHub, and the next sign-in refuses them. A session they already hold survives
+until it expires, because verifying it asks GitHub nothing — so for an urgent revocation, do both.
 
-**Removing `ZORGSCOPE_TOKEN`.** The shared token of ADR‑0007 is gone from the code, but a deployment
-that ever ran the old build still holds its value as a Fly secret — a live credential that nothing
-reads, which is the kind that is never rotated and never missed when it leaks. Once this change is
-deployed:
+**Rotating `GITHUB_TOKEN`.** This is an ordinary GitHub personal access token, rotated the way any
+PAT is: generate a new one, set it as a Fly secret, delete the old one on GitHub. Nothing in
+zorgscope is derived from it, so rotating it changes only what the next fetch reads with — no
+session is affected, nobody is signed out, and the change is invisible to a visitor except that the
+list keeps working:
 
 ```sh
-flyctl secrets unset ZORGSCOPE_TOKEN
+flyctl secrets set GITHUB_TOKEN=<new-value> -a zorgscope
 ```
-
-The same line can be deleted from any local `.env`; `deploy/env.example` no longer carries it.
-
-**Rotating `REFRESH_SECRET`.** Generate a new value and set it the same way:
-
-```sh
-openssl rand -base64 32
-flyctl secrets set REFRESH_SECRET=<new-value>
-```
-
-Update the `Authorization: Bearer <new-value>` header in the cron-job.org job configuration to
-match — until you do, every scheduled refresh fails with 401 (FR‑5.1 AC2) and the dashboard's data
-goes stale without failing loudly, since stale-but-present content is exactly what FR‑1.4 AC3
-guarantees rather than a blank page.
 
 `flyctl secrets list` shows secret *names* and their deployment status only, never values, so a
 rotation can be verified without ever displaying what was set; `flyctl secrets import` reads
 `NAME=VALUE` pairs from stdin rather than from command-line arguments, so a secret value never
-appears in shell history or a process listing while it is being set. Deploying is CI's job (FR‑9.3);
-these two commands are the occasions on which a person talks to Fly directly.
+appears in shell history or a process listing while it is being set.

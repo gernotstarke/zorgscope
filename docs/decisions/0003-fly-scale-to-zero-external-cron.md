@@ -1,14 +1,15 @@
 # 0003. Fly.io scaled to zero with an external cron trigger
 
-* Status: accepted
+* Status: partially superseded by [0010](0010-stateless-no-database.md) — the cron-triggered
+  refresh half only; scale to zero itself stays, unchanged from the decision below.
 * Date: 2026-08-17
 * Requirements: C‑3, C‑5, C‑8, QS‑2.1, QS‑2.4, QS‑3.1
 
 ## Context and problem statement
 
 The previous design assumed "an always-on Fly Machine with a persistent volume [and] an in-process
-scheduler" (design [§1](../superpowers/specs/2026-08-17-zorgscope-reset-design.md), "Why the
-reset"). C‑3 now fixes `min_machines_running = 0`: no process survives between requests. A process
+scheduler" (the 2026-08-17 reset design, "Why the reset" — removed in the stateless reset, see git
+history). C‑3 now fixes `min_machines_running = 0`: no process survives between requests. A process
 that survives between requests is exactly what an in-process scheduler needs to exist — a
 `time.Ticker` running in a goroutine does nothing once the machine that hosts it is stopped. The
 question is how a refresh happens at all when nothing is running to notice that fifteen minutes
