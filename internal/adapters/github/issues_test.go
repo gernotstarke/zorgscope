@@ -8,7 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -17,7 +17,6 @@ import (
 	"github.com/gernotstarke/zorgscope/internal/adapters/github"
 	"github.com/gernotstarke/zorgscope/internal/domain"
 	"github.com/gernotstarke/zorgscope/internal/fakesources"
-	"github.com/gernotstarke/zorgscope/internal/ports"
 )
 
 func TestFetchReturnsIssuesAndPRs(t *testing.T) {
@@ -28,33 +27,45 @@ func TestFetchReturnsIssuesAndPRs(t *testing.T) {
 		Token: "x", BaseURL: srv.URL + "/graphql", Repos: []string{"org/repo"},
 	}, srv.Client())
 
-	res, err := f.Fetch(context.Background())
+	items, err := f.Fetch(context.Background())
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
-	if len(res.Items) == 0 {
+	if len(items) == 0 {
 		t.Fatal("want items")
 	}
-	for _, it := range res.Items {
-		if it.Source != "github" {
-			t.Errorf("Source = %q, want github", it.Source)
-		}
+	for _, it := range items {
 		if it.Kind != domain.KindIssue && it.Kind != domain.KindPR {
 			t.Errorf("Kind = %q, want issue or pr", it.Kind)
 		}
-		if it.ExternalID == "" || it.URL == "" || it.Title == "" {
+		if it.URL == "" || it.Title == "" {
 			t.Errorf("incomplete item: %+v", it)
 		}
 		if it.CreatedAt.IsZero() || it.UpdatedAt.IsZero() {
-			t.Errorf("item %s has no timestamps; FR-2.2 needs them", it.ExternalID)
+			t.Errorf("item %+v has no timestamps; FR-2.2 needs them", it)
 		}
 	}
 }
 
+// itemKey identifies one item the way the fixtures' issue and pull-request numbers do: a kind
+// prefix plus repo#number, since issues and pull requests share one number namespace per
+// repository.
+func itemKey(it domain.Item) string {
+	return string(it.Kind) + ":" + it.Repo + "#" + strconv.Itoa(it.Number)
+}
+
+func byKey(items []domain.Item) map[string]domain.Item {
+	out := make(map[string]domain.Item, len(items))
+	for _, it := range items {
+		out[itemKey(it)] = it
+	}
+	return out
+}
+
 // FR-2.1 AC1: a pull request's draft flag is fetched and reaches the item. It is carried in
 // State — "DRAFT" for a draft, "OPEN" for a ready one — so a draft is distinguishable from a
-// ready pull request by the time the item reaches the store, with no new column. The fixture's
-// org/repo has PR #11 marked isDraft and PR #10 not.
+// ready pull request by the time the item reaches the page, with no dedicated field. The
+// fixture's org/repo has PR #11 marked isDraft and PR #10 not.
 //
 // The issues in the same fixture are asserted too: isDraft exists on GitHub's PullRequest and not
 // on its Issue, so an issue must never come back as DRAFT.
@@ -66,19 +77,16 @@ func TestPullRequestDraftFlagIsFetched(t *testing.T) {
 		Token: "x", BaseURL: srv.URL + "/graphql", Repos: []string{"org/repo"},
 	}, srv.Client())
 
-	res, err := f.Fetch(context.Background())
+	items, err := f.Fetch(context.Background())
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
 
-	byID := map[string]domain.Item{}
-	for _, it := range res.Items {
-		byID[it.ExternalID] = it
-	}
+	byID := byKey(items)
 
 	draft, ok := byID["pr:org/repo#11"]
 	if !ok {
-		t.Fatalf("draft pull request pr:org/repo#11 missing from %d items", len(res.Items))
+		t.Fatalf("draft pull request pr:org/repo#11 missing from %d items", len(items))
 	}
 	if draft.State != "DRAFT" {
 		t.Errorf("draft PR State = %q, want DRAFT — the draft flag is not carried (FR-2.1 AC1)", draft.State)
@@ -92,9 +100,9 @@ func TestPullRequestDraftFlagIsFetched(t *testing.T) {
 		t.Errorf("ready PR State = %q, want OPEN — a ready PR must not read as a draft", ready.State)
 	}
 
-	for _, it := range res.Items {
+	for _, it := range items {
 		if it.Kind == domain.KindIssue && it.State != "OPEN" {
-			t.Errorf("issue %s State = %q, want OPEN", it.ExternalID, it.State)
+			t.Errorf("issue %s State = %q, want OPEN", itemKey(it), it.State)
 		}
 	}
 }
@@ -165,23 +173,42 @@ func TestFetchFollowsPagination(t *testing.T) {
 	defer srv.Close()
 
 	f := github.NewIssueFetcher(github.Config{Token: "x", BaseURL: srv.URL + "/graphql", Repos: []string{"org/paged"}}, srv.Client())
-	res, err := f.Fetch(context.Background())
+	items, err := f.Fetch(context.Background())
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
-	if len(res.Items) != 150 {
-		t.Fatalf("len(items) = %d, want 150 — pagination was not followed (QS-1.5)", len(res.Items))
+	if len(items) != 150 {
+		t.Fatalf("len(items) = %d, want 150 — pagination was not followed (QS-1.5)", len(items))
 	}
 }
 
-// QS-1.4: one bad repository must not lose the others.
+// QS-1.4: one bad repository must not lose the others. internal/fakesources no longer offers a
+// control route to inject a failure (it served the refresh-pipeline testing the stateless reset
+// removed), so the failure is injected here instead, by a small middleware in front of the real
+// fake that fails only requests naming org/bad and forwards everything else unchanged.
 func TestFetchReportsFailureButKeepsGoodRepos(t *testing.T) {
-	srv := httptest.NewServer(fakesources.NewServer())
+	fake := fakesources.NewServer()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "unreadable body", http.StatusBadRequest)
+			return
+		}
+		var body struct {
+			Variables struct{ Owner, Name string } `json:"variables"`
+		}
+		_ = json.Unmarshal(raw, &body)
+		if body.Variables.Owner+"/"+body.Variables.Name == "org/bad" {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		fake.ServeHTTP(w, r)
+	}))
 	defer srv.Close()
-	post(t, srv.URL+"/_control/fail?source=github&repo=org/bad&status=500")
 
 	f := github.NewIssueFetcher(github.Config{Token: "x", BaseURL: srv.URL + "/graphql", Repos: []string{"org/repo", "org/bad"}}, srv.Client())
-	res, err := f.Fetch(context.Background())
+	items, err := f.Fetch(context.Background())
 
 	if err == nil {
 		t.Fatal("want an error naming the failing repository")
@@ -189,40 +216,8 @@ func TestFetchReportsFailureButKeepsGoodRepos(t *testing.T) {
 	if !strings.Contains(err.Error(), "org/bad") {
 		t.Errorf("error %q must name the failing repository", err)
 	}
-	if len(res.Items) == 0 {
+	if len(items) == 0 {
 		t.Error("items from the healthy repository must still be returned (QS-1.4)")
-	}
-}
-
-func TestExternalIDIsStableAcrossFetches(t *testing.T) {
-	// two Fetch calls must produce identical ExternalIDs, or every refresh would
-	// re-mark everything as new (FR-5.3).
-	srv := httptest.NewServer(fakesources.NewServer())
-	defer srv.Close()
-
-	f := github.NewIssueFetcher(github.Config{
-		Token: "x", BaseURL: srv.URL + "/graphql", Repos: []string{"org/repo", "org/paged"},
-	}, srv.Client())
-
-	res1, err := f.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("Fetch (1st): %v", err)
-	}
-	res2, err := f.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("Fetch (2nd): %v", err)
-	}
-
-	ids1 := externalIDs(res1.Items)
-	ids2 := externalIDs(res2.Items)
-
-	if len(ids1) != len(ids2) {
-		t.Fatalf("fetch produced different item counts: %d vs %d", len(ids1), len(ids2))
-	}
-	for i := range ids1 {
-		if ids1[i] != ids2[i] {
-			t.Fatalf("ExternalIDs differ across fetches at index %d: %q vs %q — ids must be stable (FR-5.3)", i, ids1[i], ids2[i])
-		}
 	}
 }
 
@@ -242,7 +237,7 @@ func TestFetchStopsWhenCursorNeverAdvances(t *testing.T) {
 		Token: "x", BaseURL: srv.URL + "/graphql", Repos: []string{"org/stuck"},
 	}, srv.Client())
 
-	res, err := fetchWithTimeout(t, f, 10*time.Second)
+	items, err := fetchWithTimeout(t, f, 10*time.Second)
 
 	if err == nil {
 		t.Fatal("want an error when the pagination cursor never advances")
@@ -252,7 +247,7 @@ func TestFetchStopsWhenCursorNeverAdvances(t *testing.T) {
 	}
 	// The first page's items were already collected before the stuck cursor was detected; the
 	// point of the guard is stopping, not discarding what was already fetched.
-	if len(res.Items) == 0 {
+	if len(items) == 0 {
 		t.Error("want the first page's items even though pagination stopped early")
 	}
 }
@@ -289,25 +284,25 @@ func TestFetchStopsAtPageCap(t *testing.T) {
 // fetchWithTimeout runs f.Fetch on its own goroutine and fails the test — instead of hanging the
 // whole suite — if it has not returned within timeout. A regression that removes the pagination
 // guard is caught as a fast, explicit failure rather than an indefinite hang.
-func fetchWithTimeout(t *testing.T, f *github.IssueFetcher, timeout time.Duration) (ports.FetchResult, error) {
+func fetchWithTimeout(t *testing.T, f *github.IssueFetcher, timeout time.Duration) ([]domain.Item, error) {
 	t.Helper()
 
 	type result struct {
-		res ports.FetchResult
-		err error
+		items []domain.Item
+		err   error
 	}
 	done := make(chan result, 1)
 	go func() {
-		res, err := f.Fetch(context.Background())
-		done <- result{res: res, err: err}
+		items, err := f.Fetch(context.Background())
+		done <- result{items: items, err: err}
 	}()
 
 	select {
 	case r := <-done:
-		return r.res, r.err
+		return r.items, r.err
 	case <-time.After(timeout):
 		t.Fatalf("Fetch did not return within %s — pagination loop is unbounded (QS-2.5)", timeout)
-		return ports.FetchResult{}, nil
+		return nil, nil
 	}
 }
 
@@ -365,30 +360,6 @@ func stuckNode(number int) map[string]any {
 	}
 }
 
-// externalIDs returns the sorted set of ExternalIDs from items, so two fetches can be compared
-// by value rather than by order.
-func externalIDs(items []domain.Item) []string {
-	ids := make([]string, len(items))
-	for i, it := range items {
-		ids[i] = it.ExternalID
-	}
-	sort.Strings(ids)
-	return ids
-}
-
-// post posts an empty body to url and fails the test on error or a non-2xx status.
-func post(t *testing.T, url string) {
-	t.Helper()
-	resp, err := http.Post(url, "application/json", nil)
-	if err != nil {
-		t.Fatalf("post %s: %v", url, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 300 {
-		t.Fatalf("post %s: status = %d, want < 300", url, resp.StatusCode)
-	}
-}
-
 // The item's own description reaches the item, so the dashboard can say what an issue is about
 // rather than only what it is called. An issue opened with an empty body carries none — the
 // fixture's issue #3 is deliberately written without one — and must arrive with an empty summary
@@ -401,19 +372,16 @@ func TestIssueBodyTextReachesTheItem(t *testing.T) {
 		Token: "x", BaseURL: srv.URL + "/graphql", Repos: []string{"org/repo"},
 	}, srv.Client())
 
-	res, err := f.Fetch(context.Background())
+	items, err := f.Fetch(context.Background())
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
 
-	byID := map[string]domain.Item{}
-	for _, it := range res.Items {
-		byID[it.ExternalID] = it
-	}
+	byID := byKey(items)
 
 	withBody, ok := byID["issue:org/repo#1"]
 	if !ok {
-		t.Fatalf("issue:org/repo#1 missing from %d items", len(res.Items))
+		t.Fatalf("issue:org/repo#1 missing from %d items", len(items))
 	}
 	if !strings.Contains(withBody.Summary, "liveness probe") {
 		t.Errorf("Summary = %q, want the issue's body text", withBody.Summary)

@@ -85,11 +85,6 @@ func (s *server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if status, fail := s.shouldFailLocked("github", repo); fail {
-		w.WriteHeader(status)
-		return
-	}
-
 	fx := s.githubRepos[repo] // nil (zero value) for an unconfigured repo: served as empty.
 
 	wantIssues, wantPRs := connectionsRequested(req.Query)

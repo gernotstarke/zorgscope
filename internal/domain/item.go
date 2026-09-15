@@ -18,11 +18,9 @@ const (
 	KindPR    Kind = "pr"
 )
 
-// Item is a single tracked unit from a source: a GitHub issue or pull request.
+// Item is a single tracked unit from GitHub: an issue or a pull request.
 type Item struct {
-	Source     string
-	ExternalID string
-	Kind       Kind
+	Kind Kind
 	// Repo is the repository the item belongs to, "owner/name".
 	Repo   string
 	Number int
@@ -32,20 +30,19 @@ type Item struct {
 	// because it is displayed short: the dashboard renders it in small type under the title, so
 	// that a list of numbers and headlines says what the items are actually about. It is
 	// borrowed text like Title, and is escaped, never trusted.
-	Summary     string
-	URL         string
-	Author      string
-	State       string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	FirstSeenAt time.Time
+	Summary   string
+	URL       string
+	Author    string
+	State     string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
-// IsNew reports whether the item first appeared after lastVisit. An item never seen
-// (FirstSeenAt zero) is not new, and an item first seen exactly at lastVisit is not new either —
-// only a first sighting strictly after the visit counts.
-func (i Item) IsNew(lastVisit time.Time) bool {
-	return !i.FirstSeenAt.IsZero() && i.FirstSeenAt.After(lastVisit)
+// IsNew reports whether the item was created after seen. The zero seen means the visitor has
+// never marked the list, and then nothing is new: a first visit that shouts NEW at every item
+// says nothing.
+func (i Item) IsNew(seen time.Time) bool {
+	return !seen.IsZero() && i.CreatedAt.After(seen)
 }
 
 // SortItems orders items new-first, then by most recently updated within each group. The sort is

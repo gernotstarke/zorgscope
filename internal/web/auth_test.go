@@ -861,23 +861,18 @@ func (s *stubAccess) HasPushAccess(_ context.Context, token string) (bool, error
 	return s.allow[token], s.err
 }
 
-// startFakeGitHub starts the fixture server, points the options' OAuth base URL at it, and
-// registers the app's callback with it. It returns the fake's URL.
+// startFakeGitHub starts the fixture server and points the options' OAuth base URL at it. It
+// returns the fake's URL.
 //
-// The callback is registered rather than sent as redirect_uri because that is the shape of the
-// real request: zorgscope never sends redirect_uri, so GitHub uses the one on the App (design
-// 2026-09-14 §2) — and the fake insists on the same.
+// No callback is registered with it: zorgscope never sends redirect_uri (design 2026-09-14 §2),
+// which is the shape of the real request, and the fake answers such a request with its own one
+// fixed default callback, standing in for the callback a real GitHub App would have registered.
 func startFakeGitHub(t *testing.T, o *Options) string {
 	t.Helper()
 	fake := httptest.NewServer(fakesources.NewServer())
 	t.Cleanup(fake.Close)
 	o.Config.GitHub.OAuthBaseURL = fake.URL
 	o.HTTPClient = fake.Client()
-	resp, err := http.Post(fake.URL+"/_control/oauth-callback?url=http://zorgscope.test/auth/callback", "", nil) //nolint:noctx // a test helper against a local fixture server
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = resp.Body.Close()
 	return fake.URL
 }
 

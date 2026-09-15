@@ -32,9 +32,6 @@ func TestGitHubConfigDerivesTheGraphQLEndpoint(t *testing.T) {
 			if got.BaseURL != tc.wantGraphQL {
 				t.Errorf("BaseURL = %q, want %q", got.BaseURL, tc.wantGraphQL)
 			}
-			if got.RESTBaseURL != tc.base {
-				t.Errorf("RESTBaseURL = %q, want %q", got.RESTBaseURL, tc.base)
-			}
 		})
 	}
 }

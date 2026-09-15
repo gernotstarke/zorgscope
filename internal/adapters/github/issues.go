@@ -1,7 +1,6 @@
-// Package github implements ports.SourceFetcher for GitHub: open issues and pull requests over
-// the GraphQL API v4 (this file), and — from Task 8 — build/workflow status over the REST API.
-// It is the one package allowed to import github.com/shurcooL/githubv4 (QS-5.2, enforced by
-// depguard).
+// Package github implements ports.Source for GitHub: open issues and pull requests over the
+// GraphQL API v4. It is the one package allowed to import github.com/shurcooL/githubv4 (QS-5.2,
+// enforced by depguard).
 package github
 
 import (
@@ -16,7 +15,6 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/gernotstarke/zorgscope/internal/domain"
-	"github.com/gernotstarke/zorgscope/internal/ports"
 )
 
 // defaultGraphQLURL is used when Config.BaseURL is empty.
@@ -31,25 +29,11 @@ const defaultGraphQLURL = "https://api.github.com/graphql"
 // deadline on Fetch (Task 15 adds one later).
 const maxPages = 100
 
-// Config configures access to GitHub for every fetcher in this package. BaseURL and RESTBaseURL
-// are deliberately two separate fields, not one repurposed field: BaseURL is the GraphQL
-// endpoint IssueFetcher talks to (an httptest URL in tests already ends in "/graphql"), while
-// RESTBaseURL is the API root BuildFetcher (Task 8) builds
-// "{RESTBaseURL}/repos/{owner}/{repo}/actions/runs" on top of. Task 12 wires both from
-// config.GitHub.BaseURL — but they name different things on GitHub's real API surface
-// (api.github.com/graphql vs. api.github.com), so collapsing them into one field would force one
-// of the two fetchers to mangle it back into shape.
+// Config configures access to GitHub for IssueFetcher.
 type Config struct {
-	Token       string
-	BaseURL     string   // "" -> https://api.github.com/graphql (GraphQL endpoint, IssueFetcher)
-	RESTBaseURL string   // "" -> https://api.github.com (REST API root, BuildFetcher)
-	Repos       []string // "owner/name"
-	// BadgeBaseURL is the root a workflow's badge image is appended to, "" for shields.io's
-	// (FR-2.3 AC5). It is separate from the two above because it is a different service
-	// altogether: no credential is sent to it, and a deployment pointed at a fake GitHub must be
-	// able to point this somewhere fake too, or its refreshes would still reach out to the real
-	// internet for pictures.
-	BadgeBaseURL string
+	Token   string
+	BaseURL string   // "" -> https://api.github.com/graphql (GraphQL endpoint)
+	Repos   []string // "owner/name"
 }
 
 // IssueFetcher fetches open issues and open pull requests for the repositories in Config, over
@@ -83,14 +67,12 @@ func NewIssueFetcher(cfg Config, hc *http.Client) *IssueFetcher {
 	}
 }
 
-// Name identifies this fetcher's source (FR-2.1).
-func (f *IssueFetcher) Name() string { return "github" }
-
-// Fetch retrieves open issues and open pull requests for every repository in f.repos. A failure
-// fetching one repository does not lose items already fetched from the others (QS-1.4): every
-// per-repository error is collected, joined with errors.Join, and returned alongside every item
-// successfully fetched — never returned early on the first failure.
-func (f *IssueFetcher) Fetch(ctx context.Context) (ports.FetchResult, error) {
+// Fetch retrieves open issues and open pull requests for every repository in f.repos, so that
+// *IssueFetcher satisfies ports.Source. A failure fetching one repository does not lose items
+// already fetched from the others (QS-1.4): every per-repository error is collected, joined with
+// errors.Join, and returned alongside every item successfully fetched — never returned early on
+// the first failure.
+func (f *IssueFetcher) Fetch(ctx context.Context) ([]domain.Item, error) {
 	var items []domain.Item
 	var errs []error
 
@@ -114,7 +96,7 @@ func (f *IssueFetcher) Fetch(ctx context.Context) (ports.FetchResult, error) {
 		items = append(items, prs...)
 	}
 
-	return ports.FetchResult{Items: items}, errors.Join(errs...)
+	return items, errors.Join(errs...)
 }
 
 // ghIssueConnection is one page of the issues connection: a page of nodes plus pageInfo.
@@ -287,36 +269,21 @@ func nextAfter(prev *githubv4.String, pageInfo ghPageInfo, repo string) (after *
 	return &cursor, false, nil
 }
 
-// externalIDPrefix returns the ExternalID prefix for kind: "issue" or "pr". Issue and
-// pull-request numbers share one namespace per GitHub repository, so without a kind prefix an
-// issue and a PR could collide on the same ExternalID and silently overwrite each other in the
-// store's primary key (source, external_id).
-func externalIDPrefix(kind domain.Kind) string {
-	if kind == domain.KindPR {
-		return "pr"
-	}
-	return "issue"
-}
-
-// toItem maps one GraphQL issue node to a domain.Item. DueAt and Priority are left zero — GitHub
-// items have neither. FirstSeenAt is left zero too: the store owns it, and an adapter writing it
-// would break the one invariant the product depends on (FR-5.3).
+// toItem maps one GraphQL issue node to a domain.Item.
 func toItem(owner, name string, kind domain.Kind, n ghIssueNode) domain.Item {
 	repo := owner + "/" + name
 	number := int(n.Number)
 	return domain.Item{
-		Source:     "github",
-		ExternalID: fmt.Sprintf("%s:%s#%d", externalIDPrefix(kind), repo, number),
-		Kind:       kind,
-		Repo:       repo,
-		Number:     number,
-		Title:      string(n.Title),
-		Summary:    summarise(string(n.BodyText)),
-		URL:        n.URL.String(),
-		Author:     string(n.Author.Login),
-		State:      string(n.State),
-		CreatedAt:  n.CreatedAt.UTC(),
-		UpdatedAt:  n.UpdatedAt.UTC(),
+		Kind:      kind,
+		Repo:      repo,
+		Number:    number,
+		Title:     string(n.Title),
+		Summary:   summarise(string(n.BodyText)),
+		URL:       n.URL.String(),
+		Author:    string(n.Author.Login),
+		State:     string(n.State),
+		CreatedAt: n.CreatedAt.UTC(),
+		UpdatedAt: n.UpdatedAt.UTC(),
 	}
 }
 

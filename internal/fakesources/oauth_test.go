@@ -14,22 +14,29 @@ import (
 	"github.com/gernotstarke/zorgscope/internal/fakesources"
 )
 
-func TestAuthorizeRedirectsToTheConfiguredCallbackWithTheState(t *testing.T) {
-	h := fakesources.NewServer()
-	post(t, h, "/_control/oauth-callback?url=http://app.test/auth/callback")
-	rec := get(t, h, "/login/oauth/authorize?client_id=abc&state=xyz")
+// With no redirect_uri on the request — the shape of the backend's own request (design 2026-09-14
+// §2) — the fake falls back to its one fixed default callback, standing in for the callback a
+// real GitHub App would have registered.
+func TestAuthorizeRedirectsToTheDefaultCallbackWithTheState(t *testing.T) {
+	rec := get(t, fakesources.NewServer(), "/login/oauth/authorize?client_id=abc&state=xyz")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("code = %d", rec.Code)
+	}
+	if got := rec.Header().Get("Location"); got != "http://zorgscope.test/auth/callback?code=fake-code&state=xyz" {
+		t.Fatalf("Location = %q", got)
+	}
+}
+
+// A caller that does pass its own redirect_uri — not the shape of zorgscope's own request, but a
+// real GitHub App would still honour one if a client sent it — is redirected there instead of the
+// default.
+func TestAuthorizeHonoursAnExplicitRedirectURI(t *testing.T) {
+	rec := get(t, fakesources.NewServer(), "/login/oauth/authorize?client_id=abc&state=xyz&redirect_uri=http://app.test/auth/callback")
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("code = %d", rec.Code)
 	}
 	if got := rec.Header().Get("Location"); got != "http://app.test/auth/callback?code=fake-code&state=xyz" {
 		t.Fatalf("Location = %q", got)
-	}
-}
-
-func TestAuthorizeWithoutACallbackIs400(t *testing.T) {
-	rec := get(t, fakesources.NewServer(), "/login/oauth/authorize?client_id=abc&state=xyz")
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("code = %d", rec.Code)
 	}
 }
 
@@ -86,16 +93,12 @@ func TestRepositoryNeedsTheFakeToken(t *testing.T) {
 	}
 }
 
-func TestResetRestoresPushAndClearsTheCallback(t *testing.T) {
+// A freshly built server starts with the default sign-in permission (push), which is what every
+// other test in this package relies on without setting it itself.
+func TestNewServerStartsWithPushPermission(t *testing.T) {
 	h := fakesources.NewServer()
-	post(t, h, "/_control/oauth-user?permission=none")
-	post(t, h, "/_control/oauth-callback?url=http://app.test/cb")
-	post(t, h, "/_control/reset")
 	if rec := getWithBearer(t, h, "/repos/o/r", "fake-token"); !strings.Contains(rec.Body.String(), `"push":true`) {
-		t.Fatal("reset did not restore push")
-	}
-	if rec := get(t, h, "/login/oauth/authorize?state=s"); rec.Code != http.StatusBadRequest {
-		t.Fatal("reset did not clear the callback")
+		t.Fatal("a fresh server does not start with push permission")
 	}
 }
 

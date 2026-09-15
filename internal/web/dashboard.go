@@ -40,12 +40,8 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, tmpl string) {
 	snap := s.cache.Get(r.Context())
 	now := s.clock.Now()
 
-	items := snap.Items
-	if !sess.Seen.IsZero() {
-		items = shimFirstSeen(snap.Items)
-	}
 	d := domain.BuildDashboard(domain.DashboardInput{
-		Now: now, LastVisitAt: sess.Seen, Items: items,
+		Now: now, LastVisitAt: sess.Seen, Items: snap.Items,
 		Repos: s.cfg.GitHub.Repos, Filter: parseFilter(r.URL.Query(), s.loc),
 	})
 	view := s.dashboardView(d, snap, now)
@@ -58,23 +54,6 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, tmpl string) {
 		NewCount:  view.NewTotal,
 		Dashboard: &view,
 	})
-}
-
-// shimFirstSeen copies items with FirstSeenAt set to CreatedAt, so today's domain.Item.IsNew —
-// which still keys off FirstSeenAt — reads NEW the way the stateless design defines it: "created
-// after the visitor's last mark seen" (design §5). The GitHub adapter leaves FirstSeenAt zero, so
-// without this nothing would ever be NEW. It never mutates snap.Items, which is shared across
-// requests by the cache.
-//
-// Task 3's domain change (Item loses FirstSeenAt, IsNew becomes CreatedAt.After(seen)) removes
-// this shim along with the field it works around.
-func shimFirstSeen(items []domain.Item) []domain.Item {
-	out := make([]domain.Item, len(items))
-	for i, it := range items {
-		it.FirstSeenAt = it.CreatedAt
-		out[i] = it
-	}
-	return out
 }
 
 // handleSeen re-mints the cookie with seen = the fetched-at of the snapshot the visitor was shown

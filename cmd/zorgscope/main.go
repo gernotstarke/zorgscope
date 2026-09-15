@@ -22,7 +22,6 @@ import (
 
 	"github.com/gernotstarke/zorgscope/internal/adapters/github"
 	"github.com/gernotstarke/zorgscope/internal/config"
-	"github.com/gernotstarke/zorgscope/internal/domain"
 	"github.com/gernotstarke/zorgscope/internal/ports"
 	"github.com/gernotstarke/zorgscope/internal/snapshot"
 	"github.com/gernotstarke/zorgscope/internal/web"
@@ -60,16 +59,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 
 	hc := &http.Client{Timeout: upstreamTimeout}
 	fetcher := github.NewIssueFetcher(githubConfig(cfg), hc)
-	src := ports.SourceFunc(func(ctx context.Context) ([]domain.Item, error) {
-		r, err := fetcher.Fetch(ctx)
-		return r.Items, err
-	})
 
 	ttl := cfg.Refresh.Interval
 	if ttl <= 0 {
 		ttl = defaultCacheTTL
 	}
-	cache := snapshot.New(src, ttl, ports.SystemClock{})
+	cache := snapshot.New(fetcher, ttl, ports.SystemClock{})
 
 	srv, err := web.New(web.Options{
 		Config: cfg,
@@ -96,9 +91,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 // "" would point production traffic at a relative path.
 func githubConfig(cfg config.Config) github.Config {
 	gh := github.Config{
-		Token:       cfg.Secrets.GitHubToken,
-		RESTBaseURL: cfg.GitHub.BaseURL,
-		Repos:       cfg.GitHub.Repos,
+		Token: cfg.Secrets.GitHubToken,
+		Repos: cfg.GitHub.Repos,
 	}
 	if cfg.GitHub.BaseURL != "" {
 		gh.BaseURL = cfg.GitHub.BaseURL + "/graphql"

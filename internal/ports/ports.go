@@ -12,22 +12,6 @@ import (
 	"github.com/gernotstarke/zorgscope/internal/domain"
 )
 
-// FetchResult is everything a single fetch can return: the items and builds it found. A fetcher
-// populates only the fields relevant to its source; the rest stay nil.
-//
-// It is kept here, unused by Source below, only because internal/adapters/github's build fetcher
-// and internal/ports/fake.go's FakeFetcher still reach for its shape; Task 3 removes it along with
-// them.
-type FetchResult struct {
-	Items  []domain.Item
-	Builds []domain.Build
-
-	// OwnsBuilds declares that this fetcher fills the builds table, so Builds is the whole truth
-	// about it — and an empty Builds means "no repository has a build right now", not "this
-	// source has nothing to say about builds".
-	OwnsBuilds bool
-}
-
 // ErrNoPermissionsBlock is what an AccessChecker reports when the upstream answered without
 // saying what the visitor may do at all.
 //

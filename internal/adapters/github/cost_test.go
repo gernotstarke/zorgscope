@@ -38,9 +38,6 @@ func representativeRepos() []string {
 // and page sizes it asks for), and a fake server cannot compute that; counting requests is the
 // proxy the requirement chose.
 //
-// The GitHub REST calls BuildFetcher makes are deliberately not counted: they draw on a separate
-// rate limit, and QS-3.5 is about the GraphQL one.
-//
 // At the representative configuration this comes to exactly 20 — 10 repositories × 2 queries,
 // since issues and pull requests paginate independently and cannot share a query. The budget is
 // met with no headroom: one more query per repository, or one repository whose issues spill onto

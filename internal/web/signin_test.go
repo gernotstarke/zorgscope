@@ -327,11 +327,6 @@ func startCountingFakeGitHub(t *testing.T, o *Options) *atomic.Int64 {
 	t.Cleanup(fake.Close)
 	o.Config.GitHub.OAuthBaseURL = fake.URL
 	o.HTTPClient = fake.Client()
-	resp, err := http.Post(fake.URL+"/_control/oauth-callback?url=http://zorgscope.test/auth/callback", "", nil) //nolint:noctx // a test helper against a local fixture server
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = resp.Body.Close()
 	return &exchanges
 }
 

@@ -320,7 +320,7 @@ func TestErrorNoticeNeverContainsASecret(t *testing.T) {
 func TestItemsFragmentNarrowsByRepoAndIsFragmentOnly(t *testing.T) {
 	inRepo := ghItem(1, "In org/repo", testNow.Add(-time.Hour))
 	inOther := domain.Item{
-		Source: "github", ExternalID: "issue:org/other#2", Kind: domain.KindIssue,
+		Kind: domain.KindIssue,
 		Repo: "org/other", Number: 2, Title: "In org/other",
 		URL:       "https://github.com/org/other/issues/2",
 		CreatedAt: testNow.Add(-time.Hour), UpdatedAt: testNow.Add(-time.Hour),
@@ -885,17 +885,15 @@ func firstLineContaining(body, needle string) string {
 func ghItem(number int, title string, at time.Time) domain.Item {
 	id := strconv.Itoa(number)
 	return domain.Item{
-		Source:     "github",
-		ExternalID: "issue:org/repo#" + id,
-		Kind:       domain.KindIssue,
-		Repo:       "org/repo",
-		Number:     number,
-		Title:      title,
-		URL:        "https://github.com/org/repo/issues/" + id,
-		Author:     "someone",
-		State:      "OPEN",
-		CreatedAt:  at,
-		UpdatedAt:  at,
+		Kind:      domain.KindIssue,
+		Repo:      "org/repo",
+		Number:    number,
+		Title:     title,
+		URL:       "https://github.com/org/repo/issues/" + id,
+		Author:    "someone",
+		State:     "OPEN",
+		CreatedAt: at,
+		UpdatedAt: at,
 	}
 }
 
@@ -915,17 +913,15 @@ func representativeItems() []domain.Item {
 				kind = domain.KindPR
 			}
 			items = append(items, domain.Item{
-				Source:     "github",
-				ExternalID: string(kind) + ":" + repo + "#" + strconv.Itoa(n),
-				Kind:       kind,
-				Repo:       repo,
-				Number:     n,
-				Title:      "A reasonably long issue title that describes some problem, number " + strconv.Itoa(n),
-				URL:        "https://github.com/" + repo + "/issues/" + strconv.Itoa(n),
-				Author:     "a-contributor",
-				State:      "OPEN",
-				CreatedAt:  testNow.Add(-time.Duration(n) * time.Hour),
-				UpdatedAt:  testNow.Add(-time.Duration(i) * time.Hour),
+				Kind:      kind,
+				Repo:      repo,
+				Number:    n,
+				Title:     "A reasonably long issue title that describes some problem, number " + strconv.Itoa(n),
+				URL:       "https://github.com/" + repo + "/issues/" + strconv.Itoa(n),
+				Author:    "a-contributor",
+				State:     "OPEN",
+				CreatedAt: testNow.Add(-time.Duration(n) * time.Hour),
+				UpdatedAt: testNow.Add(-time.Duration(i) * time.Hour),
 			})
 		}
 	}

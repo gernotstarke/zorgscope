@@ -16,6 +16,14 @@ const (
 	fakeToken = "fake-token"
 )
 
+// defaultCallback is where GET /login/oauth/authorize redirects to when the request itself
+// carries no redirect_uri — the case the backend's own request is always in (design 2026-09-14
+// §2: zorgscope never sends redirect_uri, so real GitHub uses the callback registered on the
+// App). A real GitHub App's registered callback is a deployment-time setting with nothing to
+// stand in for it here, so the fake answers every such request with this one fixed address
+// instead of needing a control route to configure it per test.
+const defaultCallback = "http://zorgscope.test/auth/callback"
+
 // permissionSets are the permissions blocks GET /repos/{owner}/{repo} can answer with. GitHub
 // reports five booleans and higher roles imply the lower ones; "absent" leaves the key out
 // entirely, which is the shape the backend must treat as no access at all.
@@ -31,19 +39,13 @@ var permissionSets = map[string]map[string]bool{
 // handleAuthorize serves GET /login/oauth/authorize, GitHub's first sign-in redirect. The real
 // endpoint sends the browser on to redirect_uri with a code the caller exchanges for a token;
 // this fake does the same, but the backend's own request (spec §2) carries no redirect_uri, so it
-// falls back to whatever POST /_control/oauth-callback last configured. Neither present is a
-// caller error worth a clear 400, not a silent redirect to nowhere.
+// falls back to defaultCallback, standing in for the callback a real GitHub App would have
+// registered.
 func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	callback := q.Get("redirect_uri")
 	if callback == "" {
-		s.mu.Lock()
-		callback = s.oauthCallback
-		s.mu.Unlock()
-	}
-	if callback == "" {
-		http.Error(w, "no callback: POST /_control/oauth-callback?url=… first, or pass redirect_uri", http.StatusBadRequest)
-		return
+		callback = defaultCallback
 	}
 	u, err := url.Parse(callback)
 	if err != nil {
@@ -54,8 +56,9 @@ func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	v.Set("code", fakeCode)
 	v.Set("state", q.Get("state"))
 	u.RawQuery = v.Encode()
-	// #nosec G710 -- the destination is the callback a test registered or passed in; this server
-	// is a fixture that only ever listens on localhost, never on the internet.
+	// #nosec G710 -- the destination is either a caller-supplied redirect_uri or the fixed
+	// default above; this server is a fixture that only ever listens on localhost, never on the
+	// internet.
 	http.Redirect(w, r, u.String(), http.StatusSeeOther)
 }
 
@@ -84,8 +87,7 @@ func (s *server) handleAccessToken(w http.ResponseWriter, r *http.Request) {
 
 // handleRepository serves GET /repos/{owner}/{repo} for the OAuth flow: it needs the fake bearer
 // token exchanged above and answers with the repository's full name and, unless the control below
-// set "absent", a permissions block. It coexists with GET /repos/{owner}/{repo}/actions/runs
-// (github_rest.go) because net/http's mux always prefers the more specific pattern.
+// set "absent", a permissions block.
 func (s *server) handleRepository(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("Authorization") != "Bearer "+fakeToken {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "Bad credentials"})
@@ -112,16 +114,6 @@ func (s *server) handleControlOAuthUser(w http.ResponseWriter, r *http.Request) 
 	}
 	s.mu.Lock()
 	s.oauthPermission = p
-	s.mu.Unlock()
-	w.WriteHeader(http.StatusOK)
-}
-
-// handleControlOAuthCallback serves POST /_control/oauth-callback?url=…, setting where
-// /login/oauth/authorize redirects to when the request itself carries no redirect_uri — the case
-// the backend's real request is in (spec §2).
-func (s *server) handleControlOAuthCallback(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	s.oauthCallback = r.URL.Query().Get("url")
 	s.mu.Unlock()
 	w.WriteHeader(http.StatusOK)
 }

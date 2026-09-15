@@ -10,7 +10,7 @@ import (
 // (working directory: the package) and `go run ./cmd/fakesources` (working directory: the module
 // root) — a relative path would only work for one of the two.
 //
-//go:embed testdata/github/repos/*.json testdata/github/runs/*.json
+//go:embed testdata/github/repos/*.json
 var fixturesFS embed.FS
 
 // ghIssue is a single GitHub issue or pull request, shaped exactly as shurcooL/githubv4
@@ -53,28 +53,6 @@ type ghRepoFixture struct {
 	PullRequests []ghIssue `json:"pullRequests"`
 }
 
-// workflowRun is one entry of the GitHub Actions "list workflow runs" REST response.
-type workflowRun struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
-	// Path is the workflow file GitHub ran. It is the only field that can address the workflow
-	// from outside — a badge takes the file name, never the display name above it — and not every
-	// run has one: GitHub's built-in Pages deployment reports "dynamic/pages/…", which is no file
-	// in the repository at all.
-	Path         string  `json:"path"`
-	Status       string  `json:"status"`
-	Conclusion   *string `json:"conclusion"`
-	HTMLURL      string  `json:"html_url"`
-	RunStartedAt string  `json:"run_started_at"`
-	UpdatedAt    string  `json:"updated_at"`
-}
-
-// runsFixture is the pristine content of one fake repository's GitHub Actions run history.
-type runsFixture struct {
-	TotalCount   int           `json:"total_count"`
-	WorkflowRuns []workflowRun `json:"workflow_runs"`
-}
-
 // githubRepoFiles maps a "owner/name" repository to the fixture file holding its issues and pull
 // requests. A repository requested via GraphQL but absent here is served as empty — no issues, no
 // pull requests — rather than an error, so an adapter test that misspells a repo name gets an
@@ -85,21 +63,9 @@ var githubRepoFiles = map[string]string{
 	"org/bad":   "testdata/github/repos/org-bad.json",
 }
 
-// githubRunsFiles maps a "owner/name" repository to its GitHub Actions runs fixture. It covers
-// the three shapes Task 8 needs: a newest run that is completed with a conclusion (org/repo), a
-// newest run that is in_progress over an older completed run (org/build-running), and a
-// repository with no workflow runs at all (org/build-none). A repository absent here is served
-// with an empty workflow_runs array, matching FR-2.3 AC3.
-var githubRunsFiles = map[string]string{
-	"org/repo":          "testdata/github/runs/org-repo.json",
-	"org/build-running": "testdata/github/runs/org-build-running.json",
-	"org/build-none":    "testdata/github/runs/org-build-none.json",
-}
-
 // loadFixtures reads every embedded fixture document fresh and returns a new, independent copy of
-// the pristine state. It is used both to build the server's initial state and to implement
-// POST /_control/reset — calling it again always yields the same starting point, discarding any
-// injected issues or failures from a previous call.
+// the pristine state. It is used to build the server's initial state — calling it again always
+// yields the same starting point.
 func loadFixtures() (fixtures, error) {
 	var fx fixtures
 
@@ -112,15 +78,6 @@ func loadFixtures() (fixtures, error) {
 		fx.repos[name] = &repo
 	}
 
-	fx.runs = make(map[string]*runsFixture, len(githubRunsFiles))
-	for name, path := range githubRunsFiles {
-		var runs runsFixture
-		if err := readFixture(path, &runs); err != nil {
-			return fixtures{}, fmt.Errorf("loading github runs fixture %s: %w", name, err)
-		}
-		fx.runs[name] = &runs
-	}
-
 	return fx, nil
 }
 
@@ -129,7 +86,6 @@ func loadFixtures() (fixtures, error) {
 // opportunity to swap two of them at the call site.
 type fixtures struct {
 	repos map[string]*ghRepoFixture
-	runs  map[string]*runsFixture
 }
 
 // readFixture reads the embedded file at path and decodes it into v.
