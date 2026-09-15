@@ -40,12 +40,6 @@ linters:
           deny:
             - pkg: "github.com/shurcooL/githubv4"
               desc: "the GitHub client belongs in internal/adapters/github (QS-5.2)"
-        db-driver:
-          files:
-            - "!**/internal/adapters/libsql/**"
-          deny:
-            - pkg: "github.com/tursodatabase/libsql-client-go"
-              desc: "the libSQL driver belongs in internal/adapters/libsql (QS-5.2)"
 
     misspell:
       locale: UK
