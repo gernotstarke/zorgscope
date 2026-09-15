@@ -1,4 +1,5 @@
 timezone: Europe/Berlin
-githbu:
+github:
   auth_repo: gernotstarke/zorgscope
+  cache_ttl: -5m
   repos: [org/one, org/two]

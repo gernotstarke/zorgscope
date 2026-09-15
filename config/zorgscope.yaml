@@ -3,23 +3,17 @@
 
 timezone: Europe/Berlin
 
-refresh:
-  # What cron-job.org is configured to. Used for the freshness display; changing it here does not
-  # change the schedule — change it in both places (see docs/concepts/configuration.md).
-  interval: 15m
-  # How old a source's data may be before its tile is shown as stale.
-  stale_after: 45m
-
 github:
-  login: gernotstarke
   # Push access here admits a visitor (FR-8.3).
   auth_repo: gernotstarke/zorgscope
+  # How old the fetched item list may be before a page view refetches it.
+  cache_ttl: 5m
   # The repository names are the ones GitHub actually uses, which for the arc42 family means the
   # "-site" suffix on every property that has a website: arc42/quality.arc42.org does not exist,
   # arc42/quality.arc42.org-site does. A name that is merely wrong fetches nothing and reports the
   # repository as failing rather than as missing.
   #
-  # QS-3.5 budgets 20 GraphQL queries per refresh and the issue fetcher spends two per repository
+  # QS-3.5 budgets 20 GraphQL queries per page view and the issue fetcher spends two per repository
   # (issues and pull requests paginate independently), so this list may hold at most ten entries.
   # It holds eight.
   repos:
@@ -31,7 +25,3 @@ github:
     - arc42/faq.arc42.org-site
     - arc42/examples.arc42.org-site
     - gernotstarke/zorgscope
-
-notifications:
-  slack:
-    enabled: false

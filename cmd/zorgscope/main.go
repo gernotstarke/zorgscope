@@ -31,11 +31,6 @@ import (
 // that a hanging upstream fails a fetch rather than holding a page view open indefinitely.
 const upstreamTimeout = 20 * time.Second
 
-// defaultCacheTTL is how old the snapshot may be before a page view refetches it, used when the
-// configuration names none. Task 4 renames the config field this is read from
-// (cfg.Refresh.Interval) to github.cache_ttl; until then this is where the default lives.
-const defaultCacheTTL = 5 * time.Minute
-
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel()}))
 
@@ -60,11 +55,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	hc := &http.Client{Timeout: upstreamTimeout}
 	fetcher := github.NewIssueFetcher(githubConfig(cfg), hc)
 
-	ttl := cfg.Refresh.Interval
-	if ttl <= 0 {
-		ttl = defaultCacheTTL
-	}
-	cache := snapshot.New(fetcher, ttl, ports.SystemClock{})
+	cache := snapshot.New(fetcher, cfg.GitHub.CacheTTL, ports.SystemClock{})
 
 	srv, err := web.New(web.Options{
 		Config: cfg,

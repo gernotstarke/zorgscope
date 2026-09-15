@@ -1,6 +1,5 @@
-# Scale to zero (C-3, ADR-0003). Nothing runs between requests: the machine is started by a visitor
-# or by the cron-job.org ping to POST /api/refresh, and stopped again when idle. The ping doubles as
-# the warmer that keeps an ordinary visit off the cold-start path (QS-2.4).
+# Scale to zero (C-3, ADR-0003): the Machine is stopped whenever nothing is in flight.
+# A visitor's request starts it, and the first page view after a cold start pays the one fetch (design §5).
 app = "zorgscope"
 primary_region = "fra"
 

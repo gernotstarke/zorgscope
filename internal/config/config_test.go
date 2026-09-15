@@ -13,18 +13,23 @@ func env(pairs map[string]string) func(string) string {
 	return func(k string) string { return pairs[k] }
 }
 
-func TestLoadValid(t *testing.T) {
-	cfg, err := config.Load("testdata/valid.yaml", env(map[string]string{
+// fullEnv is every environment variable Load requires, present. Individual tests delete one to
+// see it named in the error, or override GITHUB_OAUTH_BASE_URL.
+func fullEnv() map[string]string {
+	return map[string]string{
 		"GITHUB_OAUTH_CLIENT_ID":     "id",
 		"GITHUB_OAUTH_CLIENT_SECRET": "secret",
-		"REFRESH_SECRET":             strings.Repeat("r", 32),
 		"GITHUB_TOKEN":               "ghp_x",
-	}))
+	}
+}
+
+func TestLoadValid(t *testing.T) {
+	cfg, err := config.Load("testdata/valid.yaml", env(fullEnv()))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Refresh.Interval != 15*time.Minute {
-		t.Errorf("interval = %v, want 15m", cfg.Refresh.Interval)
+	if cfg.GitHub.CacheTTL != 5*time.Minute {
+		t.Errorf("cache_ttl = %v, want the 5m default (github.cache_ttl was not set)", cfg.GitHub.CacheTTL)
 	}
 	if len(cfg.GitHub.Repos) != 2 {
 		t.Errorf("repos = %d, want 2", len(cfg.GitHub.Repos))
@@ -37,40 +42,54 @@ func TestLoadValid(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsBadDuration(t *testing.T) {
-	_, err := config.Load("testdata/bad-interval.yaml", env(map[string]string{
-		"GITHUB_OAUTH_CLIENT_ID":     "id",
-		"GITHUB_OAUTH_CLIENT_SECRET": "secret",
-		"REFRESH_SECRET":             strings.Repeat("r", 32),
-	}))
-	if err == nil {
-		t.Fatal("want an error for an unparsable interval (FR-8.1 AC3)")
+// FR-8.1 AC3: github.cache_ttl defaults to 5 minutes when the configuration names none.
+func TestLoadCacheTTLDefaultsTo5m(t *testing.T) {
+	cfg, err := config.Load("testdata/valid.yaml", env(fullEnv()))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
 	}
-	if !strings.Contains(err.Error(), "refresh.interval") {
-		t.Errorf("error %q must name the offending field (FR-8.1 AC3)", err)
+	if cfg.GitHub.CacheTTL != 5*time.Minute {
+		t.Errorf("cache_ttl = %v, want 5m", cfg.GitHub.CacheTTL)
 	}
 }
 
-func TestLoadRequiresALongEnoughRefreshSecret(t *testing.T) {
-	_, err := config.Load("testdata/valid.yaml", env(map[string]string{
-		"GITHUB_OAUTH_CLIENT_ID":     "id",
-		"GITHUB_OAUTH_CLIENT_SECRET": "secret",
-		"REFRESH_SECRET":             "short",
-	}))
-	if err == nil {
-		t.Fatal("want an error: REFRESH_SECRET below 32 characters")
+func TestLoadCacheTTLExplicitValue(t *testing.T) {
+	cfg, err := config.Load("testdata/cache-ttl.yaml", env(fullEnv()))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.GitHub.CacheTTL != 2*time.Minute {
+		t.Errorf("cache_ttl = %v, want 2m", cfg.GitHub.CacheTTL)
+	}
+}
+
+func TestLoadRejectsBadCacheTTL(t *testing.T) {
+	for name, path := range map[string]string{
+		"unparsable":   "testdata/bad-cache-ttl.yaml",
+		"not positive": "testdata/negative-cache-ttl.yaml",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := config.Load(path, env(fullEnv()))
+			if err == nil {
+				t.Fatal("want an error for a bad github.cache_ttl (FR-8.1 AC3)")
+			}
+			if !strings.Contains(err.Error(), "github.cache_ttl") {
+				t.Errorf("error %q must name the offending field (FR-8.1 AC3)", err)
+			}
+		})
 	}
 }
 
 // FR-8.3: sign-in needs the OAuth App's pair and the repository whose push access admits a
-// visitor, so a deployment missing any of the three fails at start-up rather than at the callback.
-func TestLoadRequiresTheOAuthPairAndTheAuthRepo(t *testing.T) {
-	base := map[string]string{"REFRESH_SECRET": strings.Repeat("r", 32), "GITHUB_OAUTH_CLIENT_ID": "id", "GITHUB_OAUTH_CLIENT_SECRET": "secret"}
+// visitor, and fetching needs a token, so a deployment missing any of the four fails at start-up
+// rather than at the callback or with an empty page.
+func TestLoadRequiresTheOAuthPairAuthRepoAndToken(t *testing.T) {
+	base := fullEnv()
 
 	if _, err := config.Load("testdata/valid.yaml", env(base)); err != nil {
 		t.Fatalf("valid: %v", err)
 	}
-	for _, missing := range []string{"GITHUB_OAUTH_CLIENT_ID", "GITHUB_OAUTH_CLIENT_SECRET"} {
+	for _, missing := range []string{"GITHUB_OAUTH_CLIENT_ID", "GITHUB_OAUTH_CLIENT_SECRET", "GITHUB_TOKEN"} {
 		m := maps.Clone(base)
 		delete(m, missing)
 		if _, err := config.Load("testdata/valid.yaml", env(m)); err == nil || !strings.Contains(err.Error(), missing) {
@@ -87,11 +106,7 @@ func TestLoadRequiresTheOAuthPairAndTheAuthRepo(t *testing.T) {
 // attempt to send the visitor's authorisation — and this deployment's client secret with it — to
 // somebody else's host, and either way it must not start (QS-4.3).
 func TestLoadRejectsAnOAuthBaseURLThatIsNeitherHTTPSNorLoopback(t *testing.T) {
-	base := map[string]string{
-		"GITHUB_OAUTH_CLIENT_ID":     "id",
-		"GITHUB_OAUTH_CLIENT_SECRET": "secret",
-		"REFRESH_SECRET":             strings.Repeat("r", 32),
-	}
+	base := fullEnv()
 	load := func(value string) error {
 		m := maps.Clone(base)
 		if value != "" {
@@ -135,11 +150,7 @@ func TestLoadRejectsAnOAuthBaseURLThatIsNeitherHTTPSNorLoopback(t *testing.T) {
 // TestLoadRejectsUnknownField guards against a misspelled top-level key (e.g. "githbu" instead of
 // "github") being silently dropped, which would leave that source unconfigured with no error.
 func TestLoadRejectsUnknownField(t *testing.T) {
-	_, err := config.Load("testdata/unknown-key.yaml", env(map[string]string{
-		"GITHUB_OAUTH_CLIENT_ID":     "id",
-		"GITHUB_OAUTH_CLIENT_SECRET": "secret",
-		"REFRESH_SECRET":             strings.Repeat("r", 32),
-	}))
+	_, err := config.Load("testdata/unknown-key.yaml", env(fullEnv()))
 	if err == nil {
 		t.Fatal("want an error for an unknown top-level key")
 	}
@@ -152,11 +163,7 @@ func TestLoadRejectsUnknownField(t *testing.T) {
 // with — config/zorgscope.yaml is baked into the production image, so a mismatch here would only
 // surface as a start-up failure in production.
 func TestLoadRealConfigFile(t *testing.T) {
-	_, err := config.Load("../../config/zorgscope.yaml", env(map[string]string{
-		"GITHUB_OAUTH_CLIENT_ID":     "id",
-		"GITHUB_OAUTH_CLIENT_SECRET": "secret",
-		"REFRESH_SECRET":             strings.Repeat("r", 32),
-	}))
+	_, err := config.Load("../../config/zorgscope.yaml", env(fullEnv()))
 	if err != nil {
 		t.Fatalf("Load(config/zorgscope.yaml): %v", err)
 	}
@@ -172,11 +179,7 @@ func TestErrorNeverContainsSecretValues(t *testing.T) {
 		"GITHUB_OAUTH_CLIENT_ID":     canary + "-client-id",
 		"GITHUB_OAUTH_CLIENT_SECRET": canary + "-client-secret",
 		"GITHUB_OAUTH_BASE_URL":      "http://" + canary + ".example",
-		"REFRESH_SECRET":             canary + strings.Repeat("r", 32),
 		"GITHUB_TOKEN":               canary + "-github-token",
-		"SLACK_WEBHOOK_URL":          "https://hooks.example/" + canary,
-		"TURSO_URL":                  "libsql://" + canary + ".example",
-		"TURSO_AUTH_TOKEN":           canary + "-turso",
 	}
 	// An empty value means "unset this one", so that a case can reach the branch the one before it
 	// stopped at.
@@ -196,12 +199,12 @@ func TestErrorNeverContainsSecretValues(t *testing.T) {
 		path string
 		env  map[string]string
 	}{
-		"an unparsable duration":    {"testdata/bad-interval.yaml", full},
+		"an unparsable cache_ttl":   {"testdata/bad-cache-ttl.yaml", full},
 		"a missing auth repo":       {"testdata/no-auth-repo.yaml", full},
 		"a missing client id":       {"testdata/valid.yaml", envWith(map[string]string{"GITHUB_OAUTH_CLIENT_ID": ""})},
 		"a missing client secret":   {"testdata/valid.yaml", envWith(map[string]string{"GITHUB_OAUTH_CLIENT_SECRET": ""})},
+		"a missing github token":    {"testdata/valid.yaml", envWith(map[string]string{"GITHUB_TOKEN": ""})},
 		"an off-machine OAuth host": {"testdata/valid.yaml", full},
-		"a short refresh secret":    {"testdata/valid.yaml", envWith(map[string]string{"GITHUB_OAUTH_BASE_URL": "", "REFRESH_SECRET": canary})},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := config.Load(tc.path, env(tc.env))

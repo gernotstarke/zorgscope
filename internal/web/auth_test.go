@@ -269,12 +269,8 @@ func TestNoResponseEverContainsASecret(t *testing.T) {
 	s := newTestServerWith(t, func(o *Options) {
 		o.Config.Secrets = config.Secrets{
 			GitHubToken:       canary + "-github",
-			SlackWebhook:      "https://hooks.example/" + canary + "-slack",
 			OAuthClientID:     publicID,
 			OAuthClientSecret: canary + "-client-secret",
-			RefreshSecret:     canary + "-refresh",
-			TursoURL:          "libsql://db.example?authToken=" + canary + "-turso",
-			TursoAuthToken:    canary + "-turso",
 		}
 		o.Cache = snapshot.New(src, time.Hour, o.Clock)
 		o.Log = slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -312,7 +308,7 @@ func TestNoResponseEverContainsASecret(t *testing.T) {
 	// The shared failure path every handler renders errors through.
 	failing := httptest.NewRecorder()
 	s.fail(failing, httptest.NewRequest(http.MethodGet, "/", nil),
-		"refreshing", errors.New("dial libsql://db.example?authToken="+canary+"-turso: refused"))
+		"refreshing", errors.New("querying GitHub: token "+canary+"-github was rejected"))
 	responses = append(responses, failing)
 
 	const authorizePrefix = "https://github.com/login/oauth/authorize"
@@ -346,18 +342,16 @@ func TestRedactScrubsEverySecretValue(t *testing.T) {
 	secrets := config.Secrets{
 		OAuthClientID:     "client-id-value",
 		OAuthClientSecret: "client-secret-value",
-		RefreshSecret:     "refresh-secret-value",
-		TursoAuthToken:    "turso-secret-value",
-		GitHubToken:       "",
+		GitHubToken:       "github-token-value",
 	}
-	in := "dial libsql://db.example?authToken=turso-secret-value failed for client-secret-value"
+	in := "querying GitHub: token github-token-value was rejected for client-secret-value"
 	got := Redact(secrets, in)
-	for _, s := range []string{"turso-secret-value", "client-secret-value"} {
+	for _, s := range []string{"github-token-value", "client-secret-value"} {
 		if strings.Contains(got, s) {
 			t.Errorf("Redact left %q in %q", s, got)
 		}
 	}
-	if !strings.Contains(got, "libsql://db.example") {
+	if !strings.Contains(got, "querying GitHub: token") {
 		t.Errorf("Redact removed more than the secret: %q", got)
 	}
 	if Redact(secrets, "nothing to hide") != "nothing to hide" {
@@ -829,7 +823,6 @@ func testOptions() Options {
 	cfg := config.Config{
 		Timezone: "UTC",
 		GitHub: config.GitHub{
-			Login:    "someone",
 			AuthRepo: testAuthRepo,
 			Repos:    []string{"org/repo"},
 		},
