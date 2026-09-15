@@ -6,11 +6,9 @@ package web
 import (
 	"bytes"
 	"compress/gzip"
-	"context"
 	"errors"
 	"io"
 	"io/fs"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -24,51 +22,53 @@ import (
 
 	"github.com/gernotstarke/zorgscope/internal/domain"
 	"github.com/gernotstarke/zorgscope/internal/ports"
-	"github.com/gernotstarke/zorgscope/internal/refresh"
+	"github.com/gernotstarke/zorgscope/internal/snapshot"
 )
 
 // FR-1.1 AC1, FR-1.2 AC1/AC2.
-func TestDashboardRendersTheListAndNewBadges(t *testing.T) {
-	store := &dashStore{
-		lastVisit: testNow.Add(-2 * time.Hour),
-		items: []domain.Item{
-			ghItem(1, "An issue from last week", testNow.Add(-7*24*time.Hour)),
-			ghItem(2, "An issue that arrived since", testNow.Add(-time.Hour)),
-		},
-		states: healthyStates(testNow),
-	}
-	body := getAuthed(t, dashHandler(t, store), "/").Body.String()
+func TestDashboardRendersTheListGroupedByRepository(t *testing.T) {
+	src := &fakeSource{items: []domain.Item{
+		ghItem(1, "An issue from last week", testNow.Add(-7*24*time.Hour)),
+		ghItem(2, "An issue that arrived since", testNow.Add(-time.Hour)),
+	}}
+	body := getAuthed(t, dashHandler(t, src), "/").Body.String()
 
-	// One list, grouped by repository (FR-1.1 AC1). Builds are one indicator on this page and a
-	// page of their own (FR-2.3), so that the front page stays about what needs handling.
 	if !strings.Contains(body, `id="items"`) {
 		t.Error("the dashboard has no list section (FR-1.1 AC1)")
 	}
 	if !strings.Contains(body, `<a href="https://github.com/org/repo"`) {
 		t.Error("the list does not group by repository, or the heading does not link it (FR-1.1 AC1)")
 	}
-	if !strings.Contains(body, "NEW") {
-		t.Error("the new item has no NEW badge (FR-1.2 AC1)")
-	}
-	if n := strings.Count(body, "NEW"); n != 1 {
-		t.Errorf("NEW appears %d times, want 1 (FR-1.2 AC1)", n)
-	}
-	if !strings.Contains(body, "1 new") {
-		t.Error("the repository heading does not state how many of its items are new (FR-1.2 AC2)")
-	}
 	if !strings.Contains(body, "2 open") {
 		t.Error("the list does not state how many items are open (FR-1.2 AC2)")
 	}
 }
 
+// design §5: NEW is "created after my previous mark seen". An item created exactly at the seen
+// mark is not new either — only a first sighting strictly after it counts.
+func TestNewMarkerAppearsOnlyForItemsCreatedAfterSeen(t *testing.T) {
+	seen := testNow.Add(-2 * time.Hour)
+	src := &fakeSource{items: []domain.Item{
+		ghItem(1, "Created exactly at the seen mark", seen),
+		ghItem(2, "Created after the seen mark", seen.Add(time.Minute)),
+		ghItem(3, "Created well before", seen.Add(-time.Hour)),
+	}}
+	h := dashHandler(t, src)
+	body := getAs(h, "/", mintSessionSeenAt(seen)).Body.String()
+
+	if n := strings.Count(body, `<span class="badge badge-new">NEW</span>`); n != 1 {
+		t.Errorf("the per-item NEW marker appears %d times, want 1", n)
+	}
+	if !strings.Contains(body, "NEW 1") {
+		t.Error("the header's NEW total does not count the one item created after seen")
+	}
+}
+
 // FR-1.2 AC3.
 func TestTabTitleCarriesTheNewCount(t *testing.T) {
-	store := &dashStore{
-		lastVisit: testNow.Add(-2 * time.Hour),
-		items:     []domain.Item{ghItem(1, "Fresh", testNow.Add(-time.Hour))},
-		states:    healthyStates(testNow),
-	}
-	body := getAuthed(t, dashHandler(t, store), "/").Body.String()
+	src := &fakeSource{items: []domain.Item{ghItem(1, "Fresh", testNow.Add(-time.Hour))}}
+	h := dashHandler(t, src)
+	body := getAs(h, "/", mintSessionSeenAt(testNow.Add(-2*time.Hour))).Body.String()
 	if !strings.Contains(body, "<title>(1) zorgscope") {
 		t.Errorf("title does not carry the new count:\n%s", firstLineContaining(body, "<title>"))
 	}
@@ -76,28 +76,23 @@ func TestTabTitleCarriesTheNewCount(t *testing.T) {
 
 // FR-1.2 AC3: "when it is greater than zero" — nothing new means no prefix at all.
 func TestTabTitleHasNoPrefixWhenNothingIsNew(t *testing.T) {
-	store := &dashStore{
-		lastVisit: testNow,
-		items:     []domain.Item{ghItem(1, "Old news", testNow.Add(-72*time.Hour))},
-		states:    healthyStates(testNow),
-	}
-	body := getAuthed(t, dashHandler(t, store), "/").Body.String()
+	src := &fakeSource{items: []domain.Item{ghItem(1, "Old news", testNow.Add(-72*time.Hour))}}
+	h := dashHandler(t, src)
+	body := getAs(h, "/", mintSessionSeenAt(testNow)).Body.String()
 	if !strings.Contains(body, "<title>zorgscope</title>") {
 		t.Errorf("title carries a prefix with nothing new:\n%s", firstLineContaining(body, "<title>"))
 	}
 }
 
-// FR-1.3 AC1/AC2/AC3.
-func TestMarkAllSeenClearsTheBadges(t *testing.T) {
-	store := &dashStore{
-		lastVisit: testNow.Add(-2 * time.Hour),
-		items:     []domain.Item{ghItem(1, "Fresh", testNow.Add(-time.Hour))},
-		states:    healthyStates(testNow),
-	}
-	h := dashHandler(t, store)
-	c := signIn(t, h)
+// FR-1.3: POST /seen re-mints the cookie with seen = now, and the next GET shows no NEW.
+func TestMarkSeenClearsTheNewBadgeOnTheNextGet(t *testing.T) {
+	src := &fakeSource{items: []domain.Item{ghItem(1, "Fresh", testNow.Add(-time.Hour))}}
+	h := dashHandler(t, src)
+	// Seen before the item was created, so it starts out NEW; a fresh sign-in's seen = 0 would
+	// show nothing as new at all (design §4), which is not what this test needs to prove.
+	c := mintSessionSeenAt(testNow.Add(-2 * time.Hour))
 
-	if body := getAs(h, "/", c).Body.String(); !strings.Contains(body, "NEW") {
+	if body := getAs(h, "/", c).Body.String(); !strings.Contains(body, "badge-new") {
 		t.Fatal("the fixture is wrong: nothing is new before the click")
 	}
 
@@ -110,131 +105,134 @@ func TestMarkAllSeenClearsTheBadges(t *testing.T) {
 	if got := rec.Header().Get("Location"); got != "/" {
 		t.Errorf("POST /seen redirects to %q, want %q", got, "/")
 	}
-	if len(store.visits) != 1 || !store.visits[0].Equal(testNow) {
-		t.Errorf("last visit recorded as %v, want one write of %v (FR-1.3 AC1)", store.visits, testNow)
+	reminted := cookieNamed(rec, sessionCookieName)
+	if reminted == nil {
+		t.Fatal("POST /seen set no cookie")
 	}
 
-	if body := getAs(h, "/", c).Body.String(); strings.Contains(body, "NEW") {
+	if body := getAs(h, "/", reminted).Body.String(); strings.Contains(body, "badge-new") {
 		t.Error("an item still carries NEW after mark all seen (FR-1.3 AC2)")
 	}
 }
 
-// FR-1.1 AC2.
-func TestDashboardMakesNoUpstreamRequest(t *testing.T) {
-	fetcher := &ports.FakeFetcher{SourceName: "github"}
-	store := &dashStore{
-		items:  []domain.Item{ghItem(1, "Stored already", testNow.Add(-time.Hour))},
-		states: healthyStates(testNow),
+// design §5: POST /refresh invalidates the cache, so the next GET fetches again.
+func TestRefreshInvalidatesTheCacheSoTheNextGetFetches(t *testing.T) {
+	src := &fakeSource{items: []domain.Item{ghItem(1, "One", testNow.Add(-time.Hour))}}
+	h := dashHandler(t, src)
+	c := signIn(t, h)
+
+	getAs(h, "/", c) // the first view pays the one fetch
+	if n := src.CallCount(); n != 1 {
+		t.Fatalf("the fixture is wrong: %d fetches before refresh, want 1", n)
 	}
-	s := newTestServerWith(t, func(o *Options) {
-		credentialAllSources(o)
-		o.Store = store
-		o.Runner = refresh.New(store, []ports.SourceFetcher{fetcher}, o.Clock, nil,
-			slog.New(slog.NewTextHandler(io.Discard, nil)))
-	})
-	h := s.Handler()
+
+	rec := postAs(h, "/refresh", nil, c)
+	if rec.Code != http.StatusSeeOther {
+		t.Errorf("POST /refresh = %d, want %d", rec.Code, http.StatusSeeOther)
+	}
+	if got := rec.Header().Get("Location"); got != "/" {
+		t.Errorf("POST /refresh redirects to %q, want %q", got, "/")
+	}
+
+	getAs(h, "/", c)
+	if n := src.CallCount(); n != 2 {
+		t.Errorf("fetches after refresh = %d, want 2: /refresh must make the next GET fetch again", n)
+	}
+}
+
+// Two page views within the TTL share one fetch: rendering reads the cache, it does not decide
+// on its own to go to GitHub (FR-1.1 AC2's stateless equivalent).
+func TestTwoPageViewsWithinTheTTLShareOneFetch(t *testing.T) {
+	src := &fakeSource{items: []domain.Item{ghItem(1, "Stored already", testNow.Add(-time.Hour))}}
+	h := dashHandler(t, src)
 
 	getAuthed(t, h, "/")
 	getAuthed(t, h, "/items")
 
-	if n := fetcher.CallCount(); n != 0 {
-		t.Errorf("rendering the dashboard fetched %d time(s) upstream, want 0 (FR-1.1 AC2)", n)
+	if n := src.CallCount(); n != 1 {
+		t.Errorf("two page views fetched %d time(s), want 1 (the cache, not the handler, decides when to fetch)", n)
 	}
 }
 
-// FR-1.1 AC3.
-func TestHeaderCarriesTheLogoAndTheLastRunTime(t *testing.T) {
-	// The healthy case: the latest run is also the last successful one, so the store answers with
-	// the same run twice — and the header says it once.
-	run := domain.RefreshRun{StartedAt: testNow.Add(-21 * time.Minute),
-		FinishedAt: testNow.Add(-20 * time.Minute), OK: true}
-	store := &dashStore{lastRun: run, lastSuccessfulRun: run, states: healthyStates(testNow)}
-	body := getAuthed(t, dashHandler(t, store), "/").Body.String()
-	if !strings.Contains(body, `class="logo"`) {
-		t.Error("the header carries no logo (FR-1.1 AC3)")
+// design §5: a failing fetch keeps the previous items and reports the error; a first fetch that
+// fails yields an empty list with the notice.
+func TestAFailingSourceShowsTheNoticeAndKeepsThePreviousList(t *testing.T) {
+	src := &fakeSource{items: []domain.Item{ghItem(1, "Still visible", testNow.Add(-72*time.Hour))}}
+	h := dashHandler(t, src)
+	c := signIn(t, h)
+
+	getAs(h, "/", c) // populate the cache with a good fetch
+
+	src.setErr(errors.New("github: unexpected status 502"))
+	postAs(h, "/refresh", nil, c)
+
+	body := getAs(h, "/", c).Body.String()
+	if !strings.Contains(body, "github: unexpected status 502") {
+		t.Error("the notice does not show the error text (FR-1.4)")
 	}
-	if !strings.Contains(body, "20 minutes ago") {
-		t.Error("the header does not state when the last refresh run finished (FR-1.1 AC3)")
+	if !strings.Contains(body, "GitHub unreachable since") {
+		t.Error("the notice does not say the source is unreachable")
 	}
-	if n := strings.Count(body, "Last successful refresh"); n != 1 {
-		t.Errorf("the header says \"Last successful refresh\" %d times, want 1: when the latest "+
-			"run is the successful one there is only one time to state", n)
+	if !strings.Contains(body, "Still visible") {
+		t.Error("a failing source blanked the previous list")
 	}
 }
 
-// FR-1.1 AC3, the case the header could not answer while the store only offered the most recently
-// started run: the latest attempt failed, and the time AC3 asks for belongs to an earlier run.
-//
-// Both halves have to be on the page. Naming only the failure leaves the header silent about how
-// old the data being read actually is — the tiles are full of the last good fetch and nothing says
-// when that was — and naming only the success would present a broken refresh as a working one,
-// which is the reading FR-1.1 AC3 exists to forbid.
-func TestHeaderNamesTheLastSuccessfulRunWhenTheLatestOneFailed(t *testing.T) {
-	store := &dashStore{
-		lastRun: domain.RefreshRun{StartedAt: testNow.Add(-6 * time.Minute),
-			FinishedAt: testNow.Add(-5 * time.Minute), OK: false, Detail: "github: fetch: 500"},
-		lastSuccessfulRun: domain.RefreshRun{StartedAt: testNow.Add(-3 * time.Hour),
-			FinishedAt: testNow.Add(-2 * time.Hour), OK: true},
-		states: healthyStates(testNow),
-	}
-	body := getAuthed(t, dashHandler(t, store), "/").Body.String()
+// QS-4.3: the error notice renders upstream error text, and upstream error text can quote a
+// credential.
+func TestErrorNoticeNeverContainsASecret(t *testing.T) {
+	const secret = "ghp-canary-value-0123456789abcdef"
+	src := &fakeSource{err: errors.New("github: 401 for token " + secret)}
+	s := newTestServerWith(t, func(o *Options) {
+		o.Config.Secrets.GitHubToken = secret
+		o.Cache = snapshot.New(src, time.Hour, o.Clock)
+	})
+	body := getAuthed(t, s.Handler(), "/").Body.String()
 
-	if !strings.Contains(body, "Last refresh failed") || !strings.Contains(body, "5 minutes ago") {
-		t.Error("the header does not say that the latest refresh failed, and when (FR-1.1 AC3)")
+	if strings.Contains(body, secret) {
+		t.Error("the notice rendered a secret out of an upstream error (QS-4.3)")
 	}
-	if !strings.Contains(body, "last successful refresh") || !strings.Contains(body, "2 hours ago") {
-		t.Error("the header does not state the time of the last successful refresh run although " +
-			"one exists (FR-1.1 AC3)")
+	if !strings.Contains(body, "[redacted]") {
+		t.Error("the error text was dropped rather than scrubbed; the visitor loses the diagnosis")
 	}
 }
 
-// The same reach-back while a run is open — the state the 409 "a refresh is already running" page
-// is always in. An open run has no finishing time of its own, so without the last successful run
-// the header can say only that something is happening, never how old what is on the screen is.
-func TestHeaderNamesTheLastSuccessfulRunWhileARefreshIsRunning(t *testing.T) {
-	store := &dashStore{
-		lastRun: domain.RefreshRun{StartedAt: testNow.Add(-30 * time.Second)},
-		lastSuccessfulRun: domain.RefreshRun{StartedAt: testNow.Add(-3 * time.Hour),
-			FinishedAt: testNow.Add(-2 * time.Hour), OK: true},
-		states: healthyStates(testNow),
+// FR-1.6: GET /items narrows by the same filter as the page, and answers with the fragment alone.
+func TestItemsFragmentNarrowsByRepoAndIsFragmentOnly(t *testing.T) {
+	inRepo := ghItem(1, "In org/repo", testNow.Add(-time.Hour))
+	inOther := domain.Item{
+		Source: "github", ExternalID: "issue:org/other#2", Kind: domain.KindIssue,
+		Repo: "org/other", Number: 2, Title: "In org/other",
+		URL:       "https://github.com/org/other/issues/2",
+		CreatedAt: testNow.Add(-time.Hour), UpdatedAt: testNow.Add(-time.Hour),
 	}
-	body := getAuthed(t, dashHandler(t, store), "/").Body.String()
+	src := &fakeSource{items: []domain.Item{inRepo, inOther}}
+	h := newTestServerWith(t, func(o *Options) {
+		o.Config.GitHub.Repos = []string{"org/repo", "org/other"}
+		o.Cache = snapshot.New(src, time.Hour, o.Clock)
+	}).Handler()
 
-	if !strings.Contains(body, "Refreshing now") {
-		t.Error("the header does not say that a refresh is in flight (FR-1.1 AC3)")
-	}
-	if !strings.Contains(body, "last successful refresh") || !strings.Contains(body, "2 hours ago") {
-		t.Error("the header does not state the time of the last successful refresh run while a " +
-			"refresh is running (FR-1.1 AC3)")
-	}
-}
+	rec := getAuthed(t, h, "/items?repo=org/repo")
+	body := rec.Body.String()
 
-// A store that has never completed a good run has no time to state, and the header must not
-// invent one from the failed attempt it does have.
-func TestHeaderStatesNoSuccessfulRunWhenThereHasNeverBeenOne(t *testing.T) {
-	store := &dashStore{
-		lastRun: domain.RefreshRun{StartedAt: testNow.Add(-2 * time.Minute),
-			FinishedAt: testNow.Add(-time.Minute), OK: false},
-		states: healthyStates(testNow),
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /items?repo=org/repo = %d, want 200", rec.Code)
 	}
-	body := getAuthed(t, dashHandler(t, store), "/").Body.String()
-
-	if !strings.Contains(body, "Last refresh failed") {
-		t.Error("the header does not say that the refresh failed (FR-1.1 AC3)")
+	if strings.Contains(body, "<html") {
+		t.Error("the list fragment must be a fragment, not a page (FR-1.6 AC1)")
 	}
-	if strings.Contains(body, "successful refresh") {
-		t.Error("the header claims a successful refresh although no run has ever succeeded " +
-			"(FR-1.1 AC3)")
+	if !strings.Contains(body, "In org/repo") {
+		t.Error("the fragment does not show the matching item")
+	}
+	if strings.Contains(body, "In org/other") {
+		t.Error("the fragment did not narrow to the requested repository")
 	}
 }
 
 // FR-1.6 AC1.
 func TestTheItemsFragmentRendersWithoutTheLayout(t *testing.T) {
-	store := &dashStore{
-		items:  []domain.Item{ghItem(1, "An issue", testNow.Add(-time.Hour))},
-		states: healthyStates(testNow),
-	}
-	rec := getAuthed(t, dashHandler(t, store), "/items")
+	src := &fakeSource{items: []domain.Item{ghItem(1, "An issue", testNow.Add(-time.Hour))}}
+	rec := getAuthed(t, dashHandler(t, src), "/items")
 	body := rec.Body.String()
 
 	if rec.Code != http.StatusOK {
@@ -251,47 +249,10 @@ func TestTheItemsFragmentRendersWithoutTheLayout(t *testing.T) {
 	}
 }
 
-// FR-1.6 AC1: the list polls itself at the configured refresh interval, carrying the filter it was
-// drawn with — an open tab must keep polling the list it is showing, not widen to everything.
-func TestTheListPollsItselfAtTheConfiguredInterval(t *testing.T) {
-	store := &dashStore{states: healthyStates(testNow)}
-	h := dashHandler(t, store)
-	body := getAuthed(t, h, "/").Body.String()
-
-	// testOptions configures a 15-minute interval. The swap has to be outerHTML: the fragment is
-	// the whole <section id="items">, so htmx's default innerHTML swap would nest the returned
-	// list inside the existing one on every poll, duplicating its items and its id.
-	if !strings.Contains(body, `hx-get="/items" hx-trigger="every 900s" hx-swap="outerHTML"`) {
-		t.Errorf("the list does not replace itself on a poll at the configured interval (FR-1.6 AC1):\n%s",
-			firstLineContaining(body, "items-section"))
-	}
-	filtered := getAuthed(t, h, "/?kind=pr").Body.String()
-	if !strings.Contains(filtered, `hx-get="/items?kind=pr"`) {
-		t.Errorf("a filtered list polls the unfiltered fragment (FR-1.6 AC1):\n%s",
-			firstLineContaining(filtered, "items-section"))
-	}
-	// Two parameters, so the separator is actually exercised. html/template escapes the "&" of
-	// the query string as "&amp;" inside the attribute, and url.Values.Encode percent-encodes the
-	// "/" of the repository name — which is what a browser hands back to htmx as "&" and "/", so
-	// the URL polled is the one meant. Asserting the escaped form is asserting what is in the
-	// document; asserting the unescaped one would be asserting a page that is invalid HTML.
-	two := getAuthed(t, h, "/?kind=pr&repo=org/repo").Body.String()
-	if !strings.Contains(two, `hx-get="/items?kind=pr&amp;repo=org%2Frepo"`) {
-		t.Errorf("a two-parameter poll URL is not carried correctly (FR-1.6 AC1):\n%s",
-			firstLineContaining(two, "items-section"))
-	}
-	// And the fragment carries it too, or polling stops after the first swap.
-	fragment := getAuthed(t, h, "/items").Body.String()
-	if !strings.Contains(fragment, `hx-swap="outerHTML"`) {
-		t.Error("the list fragment does not carry its own swap, so the list stops polling " +
-			"after the first one (FR-1.6 AC1)")
-	}
-}
-
 // FR-1.2: the filter narrows the list from the query string alone, so the narrowed page is a URL
 // that can be reloaded, bookmarked and shared — everything htmx does on top of it is enhancement.
 func TestTheFrontPageFiltersByQueryString(t *testing.T) {
-	h := dashHandler(t, representativeStore())
+	h := dashHandler(t, &fakeSource{items: representativeItems()})
 	c := signIn(t, h)
 
 	all := getAs(h, "/", c).Body.String()
@@ -315,21 +276,15 @@ func TestTheFrontPageFiltersByQueryString(t *testing.T) {
 
 // A repository that configuration no longer names keeps the items it already had — the domain
 // lists such a group after the configured ones — so a filter naming one selects something real
-// and the control that applied it has to be able to show it. Built from configuration alone the
-// select could not: the page came back with "all" selected, and the next touch of any other
-// control submitted repo="" and threw the filter away without anyone asking it to.
+// and the control that applied it has to be able to show it.
 func TestTheFilterEchoesARepositoryConfigurationNoLongerNames(t *testing.T) {
 	retired := ghItem(1, "Opened before the repository was dropped", testNow.Add(-time.Hour))
 	retired.Repo = "gone/repo"
-	store := &dashStore{
-		items:  []domain.Item{retired, ghItem(2, "Still watched", testNow.Add(-time.Hour))},
-		states: healthyStates(testNow),
-	}
-	// org/repo is configured; gone/repo is not, and dashHandler does not add it.
+	src := &fakeSource{items: []domain.Item{retired, ghItem(2, "Still watched", testNow.Add(-time.Hour))}}
+	// org/repo is configured; gone/repo is not.
 	h := newTestServerWith(t, func(o *Options) {
-		credentialAllSources(o)
 		o.Config.GitHub.Repos = []string{"org/repo"}
-		o.Store = store
+		o.Cache = snapshot.New(src, time.Hour, o.Clock)
 	}).Handler()
 
 	body := getAuthed(t, h, "/?repo=gone/repo").Body.String()
@@ -337,53 +292,27 @@ func TestTheFilterEchoesARepositoryConfigurationNoLongerNames(t *testing.T) {
 		t.Errorf("the filter cannot echo a repository configuration no longer names:\n%s",
 			firstLineContaining(body, "<option"))
 	}
-	// And it really is filtering by it, rather than merely drawing the option.
 	if !strings.Contains(body, "Opened before the repository was dropped") {
 		t.Error("the filtered page does not show the retired repository's items")
 	}
 	if strings.Contains(body, "Still watched") {
 		t.Error("the filter drew the option but narrowed nothing")
 	}
-	// The configured repository is still offered, and is not the one selected.
 	if !strings.Contains(body, `<option value="org/repo">org/repo</option>`) {
 		t.Error("appending the retired repository dropped a configured one")
 	}
-	// An unfiltered page offers configuration alone: the retired repository is reachable by a URL
-	// that names it, not an entry that grows the control for everyone.
 	plain := getAuthed(t, h, "/").Body.String()
 	if strings.Contains(plain, `value="gone/repo"`) {
 		t.Error("a repository nobody is watching is offered on the unfiltered page")
 	}
 }
 
-// FR-1.6 AC1: the fragment a poll returns carries the four blocks that live outside the list, or
-// each of them would keep the figure the page was loaded with from the first swap on.
-func TestTheItemsFragmentCarriesTheOutOfBandBlocks(t *testing.T) {
-	h := dashHandler(t, representativeStore())
-	c := signIn(t, h)
-
-	body := getAs(h, "/items?kind=issue", c).Body.String()
-	for _, want := range []string{`id="items"`, `hx-get="/items?kind=issue"`, `<title>`, `id="dash-summary"`, `hx-swap-oob="true"`} {
-		if !strings.Contains(body, want) {
-			t.Errorf("fragment lacks %s", want)
-		}
-	}
-	if strings.Contains(body, "<html") {
-		t.Fatal("the fragment must not be a whole document")
-	}
-}
-
 // FR-1.3 AC3: the filter is a plain GET form with htmx on top, never a form that only works with
-// script. The htmx attributes fetch this page and swap the list out of it, rather than fetching
-// the fragment endpoint: what hx-push-url then puts in the address bar is a URL that renders the
-// page being looked at, so reloading it shows the same narrowed list.
+// script.
 func TestTheFilterFormIsAPlainGetFormWithHtmxOnTop(t *testing.T) {
-	h := dashHandler(t, representativeStore())
+	h := dashHandler(t, &fakeSource{items: representativeItems()})
 	body := getAs(h, "/", signIn(t, h)).Body.String()
 
-	// The attributes are looked for inside the form's own opening tag, not anywhere in the page:
-	// the list section carries an hx-swap of its own, so a page-wide search would report the
-	// form's swap as present after it had been deleted.
 	form := openingTag(t, body, `<form class="filter"`)
 	for _, want := range []string{
 		`method="get"`, `action="/"`,
@@ -399,18 +328,17 @@ func TestTheFilterFormIsAPlainGetFormWithHtmxOnTop(t *testing.T) {
 			t.Errorf("form lacks %s", want)
 		}
 	}
-	// Without script the submit button is the only way to apply the filter, so it has to be there
-	// for exactly the visitor who has no script.
 	if !strings.Contains(body, "<noscript><button type=\"submit\">Apply</button></noscript>") {
 		t.Error("the form cannot be applied with JavaScript switched off (FR-1.3 AC3)")
 	}
 }
 
-// FR-1.2: the badge and the tab title count what is new, not what is visible. A filter that moved
-// either would make the dashboard lie about what has arrived the moment somebody typed in the box.
-func TestTheBadgeIgnoresTheFilter(t *testing.T) {
-	h := dashHandler(t, representativeStore())
-	c := signIn(t, h)
+// FR-1.2: the NEW total and the tab title count what is new, not what is visible. A filter that
+// moved either would make the dashboard lie about what has arrived the moment somebody typed in
+// the box.
+func TestTheNewBadgeIgnoresTheFilter(t *testing.T) {
+	h := dashHandler(t, &fakeSource{items: representativeItems()})
+	c := mintSessionSeenAt(testNow.Add(-24 * time.Hour))
 
 	all := getAs(h, "/", c).Body.String()
 	some := getAs(h, "/?q=zzz-no-such-text", c).Body.String()
@@ -422,192 +350,54 @@ func TestTheBadgeIgnoresTheFilter(t *testing.T) {
 	if title(all) != title(some) {
 		t.Fatalf("tab title changed with the filter: %q vs %q", title(all), title(some))
 	}
-	summary := func(s string) string { return firstLineContaining(s, `id="dash-summary"`) }
-	if summary(all) != summary(some) {
-		t.Errorf("the summary line changed with the filter:\n%s\n%s", summary(all), summary(some))
+	badge := func(s string) string { return firstLineContaining(s, "badge-new") }
+	if badge(all) != badge(some) {
+		t.Errorf("the NEW badge changed with the filter:\n%s\n%s", badge(all), badge(some))
 	}
 }
 
-// FR-1.6 AC2.
-func TestRenderingIsNeverAVisit(t *testing.T) {
-	store := &dashStore{
-		lastVisit: testNow.Add(-2 * time.Hour),
-		items:     []domain.Item{ghItem(1, "Fresh", testNow.Add(-time.Hour))},
-		states:    healthyStates(testNow),
-	}
-	h := dashHandler(t, store)
-	// The status is checked, because this test's whole claim is about what a *served* request
-	// did: pointed at a path the mux rejects, it would pass without a handler ever running — as
-	// it silently did when /tile/{source} was replaced by /items.
-	for _, path := range []string{"/", "/items"} {
-		if code := getAuthed(t, h, path).Code; code != http.StatusOK {
-			t.Fatalf("GET %s = %d, want 200: this test proves nothing against a path that is "+
-				"not served (FR-1.6 AC2)", path, code)
+// Rendering is never a visit: only POST /seen may move the seen-mark, so a plain GET must never
+// re-mint the session cookie.
+func TestRenderingNeverReMintsTheSessionCookie(t *testing.T) {
+	src := &fakeSource{items: []domain.Item{ghItem(1, "Fresh", testNow.Add(-time.Hour))}}
+	h := dashHandler(t, src)
+	c := signIn(t, h)
+
+	for _, p := range []string{"/", "/items"} {
+		rec := getAs(h, p, c)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d, want 200", p, rec.Code)
+		}
+		if cookieNamed(rec, sessionCookieName) != nil {
+			t.Errorf("GET %s re-minted the session cookie; only POST /seen may move the seen-mark (FR-1.3 AC2)", p)
 		}
 	}
+}
 
-	if len(store.visits) != 0 {
-		t.Errorf("rendering wrote the last visit %d time(s), want 0 (FR-1.6 AC2)", len(store.visits))
+// design §5: FetchedAt is shown as a clock time in the configured timezone.
+func TestTheHeaderStatesWhenTheListWasFetched(t *testing.T) {
+	src := &fakeSource{items: []domain.Item{ghItem(1, "One", testNow.Add(-time.Hour))}}
+	body := getAuthed(t, dashHandler(t, src), "/").Body.String()
+	want := "Fetched " + testNow.In(time.UTC).Format("15:04")
+	if !strings.Contains(body, want) {
+		t.Errorf("the header does not state when the list was fetched (design §5):\nwant: %s\ngot:  %s",
+			want, firstLineContaining(body, "fetched-line"))
 	}
 }
 
-// FR-1.4 AC2/AC3.
-func TestFailingSourceShowsItsErrorAndKeepsContent(t *testing.T) {
-	store := &dashStore{
-		items: []domain.Item{ghItem(1, "Still visible", testNow.Add(-72*time.Hour))},
-		states: map[string]domain.SourceState{
-			"github": {
-				Source:        "github",
-				LastSuccessAt: testNow.Add(-30 * time.Minute),
-				LastError:     "github: unexpected status 502",
-				LastErrorAt:   testNow.Add(-time.Minute),
-			},
-		},
-	}
-	body := getAuthed(t, dashHandler(t, store), "/items").Body.String()
-
-	if !strings.Contains(body, "github: unexpected status 502") {
-		t.Error("the list does not show the error text (FR-1.4 AC2)")
-	}
-	// As one contiguous string: "30 minutes ago" on its own is equally satisfied by the source
-	// line's own age span, so the whole "(last success …)" clause could be deleted unnoticed.
-	lastSuccess := `(last success <time datetime="` +
-		testNow.Add(-30*time.Minute).UTC().Format(time.RFC3339) + `">30 minutes ago</time>)`
-	if !strings.Contains(body, lastSuccess) {
-		t.Errorf("the failing list does not state when the source last succeeded (FR-1.4 AC2).\nwant: %s", lastSuccess)
-	}
-	if !strings.Contains(body, "Still visible") {
-		t.Error("a failing source blanked the list (FR-1.4 AC3)")
-	}
-}
-
-// FR-1.4 AC1.
-func TestTheListStatesTheAgeOfItsData(t *testing.T) {
-	store := &dashStore{states: map[string]domain.SourceState{
-		"github":        {LastSuccessAt: testNow.Add(-5 * time.Minute)},
-		"github-builds": {LastSuccessAt: testNow.Add(-5 * time.Minute)},
-	}}
-	body := getAuthed(t, dashHandler(t, store), "/").Body.String()
-
-	if !strings.Contains(body, "Fetched <time") || !strings.Contains(body, "5 minutes ago") {
-		t.Errorf("the list does not state the age of its data (FR-1.4 AC1):\n%s",
-			firstLineContaining(body, "source-line"))
-	}
-}
-
-// FR-1.4 AC1: a source whose last success is older than stale_after says so in words, not only in
-// colour (FR-1.5 AC2).
-func TestAStaleSourceSaysSoInWords(t *testing.T) {
-	store := &dashStore{states: map[string]domain.SourceState{
-		"github": {LastSuccessAt: testNow.Add(-3 * time.Hour)}, // stale_after is 45m
-	}}
-	body := getAuthed(t, dashHandler(t, store), "/items").Body.String()
-	if !strings.Contains(body, "Stale") {
-		t.Error("a stale source does not say so (FR-1.4 AC1, FR-1.5 AC2)")
-	}
-}
-
-// FR-8.2 AC2.
-func TestASourceWithoutACredentialSaysSoAboveTheList(t *testing.T) {
-	// The default test options configure no upstream credential at all.
-	body := getAuthed(t, newTestServerWith(t, func(o *Options) {
-		o.Store = &dashStore{}
-	}).Handler(), "/").Body.String()
-
-	if n := strings.Count(body, "no credential is configured"); n != 1 {
-		t.Errorf("the list says its source is disabled for lack of a credential %d times, want 1 (FR-8.2 AC2)", n)
-	}
-	if !strings.Contains(body, "Disabled —") {
-		t.Error("a source with no credential is not reported as disabled (FR-8.2 AC2)")
-	}
-}
-
-// QS-4.3: the list renders upstream error text, and upstream error text can quote a credential.
-func TestASourceErrorIsScrubbedOfSecrets(t *testing.T) {
-	const secret = "ghp-canary-value-0123456789abcdef"
-	store := &dashStore{states: map[string]domain.SourceState{
-		"github": {
-			LastSuccessAt: testNow.Add(-time.Hour),
-			LastError:     "github: 401 for token " + secret,
-			LastErrorAt:   testNow,
-		},
-	}}
-	s := newTestServerWith(t, func(o *Options) {
-		credentialAllSources(o)
-		o.Config.Secrets.GitHubToken = secret
-		o.Store = store
-	})
-	body := getAuthed(t, s.Handler(), "/").Body.String()
-
-	if strings.Contains(body, secret) {
-		t.Error("the list rendered a secret out of an upstream error (QS-4.3)")
-	}
-	if !strings.Contains(body, "[redacted]") {
-		t.Error("the error text was dropped rather than scrubbed; the visitor loses the diagnosis")
-	}
-}
-
-// FR-2.3 AC1/AC2, on the page that now shows them. A completed run states its conclusion, and a
-// run in progress is shown as running with the previous outcome still deciding the row's state:
-// a repository whose last completed run failed is broken whether or not a new attempt is under
-// way.
-func TestBuildDetailsShowARunInProgressNextToThePreviousConclusion(t *testing.T) {
-	store := &dashStore{
-		builds: []domain.Build{
-			{Repo: "org/green", Workflow: "CI", Status: "completed", Conclusion: "success",
-				RunURL: "https://github.com/org/green/actions/runs/1", FinishedAt: testNow.Add(-time.Hour),
-				FetchedAt: testNow},
-			{Repo: "org/busy", Workflow: "CI", Status: "in_progress", Conclusion: "failure",
-				RunURL: "https://github.com/org/busy/actions/runs/2", FinishedAt: testNow.Add(-3 * time.Hour),
-				FetchedAt: testNow},
-		},
-		states: healthyStates(testNow),
-	}
-	body := getAuthed(t, dashHandler(t, store), "/builds").Body.String()
-
-	if !strings.Contains(body, "success") {
-		t.Error("a completed run does not show its conclusion (FR-2.3 AC1)")
-	}
-	if !strings.Contains(body, "running now") {
-		t.Error("a run in progress is not shown as such (FR-2.3 AC2)")
-	}
-	// The row's state is the last completed run's, which for org/busy is a failure.
-	if !strings.Contains(body, `class="build-row build-row-broken"`) {
-		t.Error("a repository whose last completed run failed is not reported as broken")
-	}
-	if !strings.Contains(body, "failure") {
-		t.Error("the previous conclusion is not shown beside the run in progress (FR-2.3 AC2)")
-	}
-}
-
-// FR-2.3 AC3: a repository with no workflow runs is not an error. It is also not nothing — it is
-// a repository whose CI has never reported, which the page says in those words.
-func TestARepositoryWithNoBuildsIsNamedRatherThanHidden(t *testing.T) {
-	s := newTestServerWith(t, func(o *Options) {
-		credentialAllSources(o)
-		o.Config.GitHub.Repos = []string{"org/silent"}
-		o.Store = &dashStore{states: healthyStates(testNow)}
-	})
-	body := getAuthed(t, s.Handler(), "/builds").Body.String()
-
-	if strings.Contains(body, "Failing") {
-		t.Error("a repository without workflows shows an error rather than no build state (FR-2.3 AC3)")
-	}
-	if !strings.Contains(body, "org/silent") {
-		t.Error("a configured repository with no run at all is missing from the page entirely")
-	}
-	if !strings.Contains(body, "no build information") {
-		t.Error("a repository that has never produced a run is not named as such")
+// A first fetch that fails yields an empty list with the notice, and FetchedAt says "never".
+func TestTheHeaderSaysNeverWhenTheFirstFetchFails(t *testing.T) {
+	src := &fakeSource{err: errors.New("github: unreachable")}
+	body := getAuthed(t, dashHandler(t, src), "/").Body.String()
+	if !strings.Contains(body, "Fetched never") {
+		t.Errorf("the header does not say the list was never fetched:\n%s", firstLineContaining(body, "fetched-line"))
 	}
 }
 
 // Nothing derived from upstream data may reach the page unescaped.
 func TestUpstreamTextIsEscaped(t *testing.T) {
-	store := &dashStore{
-		items:  []domain.Item{ghItem(1, `<script>alert("xss")</script>`, testNow.Add(-time.Hour))},
-		states: healthyStates(testNow),
-	}
-	body := getAuthed(t, dashHandler(t, store), "/").Body.String()
+	src := &fakeSource{items: []domain.Item{ghItem(1, `<script>alert("xss")</script>`, testNow.Add(-time.Hour))}}
+	body := getAuthed(t, dashHandler(t, src), "/").Body.String()
 
 	if strings.Contains(body, `<script>alert`) {
 		t.Error("an item title reached the page as live markup")
@@ -618,37 +408,22 @@ func TestUpstreamTextIsEscaped(t *testing.T) {
 }
 
 // inlineEventHandler matches any HTML attribute of the on* family — onclick, onmouseover, onfocus,
-// onsubmit and the rest of them — rather than the three the first version of this test happened to
-// list. The CSP forbids the whole family, so the test has to cover the whole family.
+// onsubmit and the rest of them.
 var inlineEventHandler = regexp.MustCompile(`(?i)\son[a-z]+\s*=`)
 
 // QS-4.4: the Content-Security-Policy carries no 'unsafe-inline', so nothing this application
-// renders may contain an inline style, an inline script or an inline event handler. Every route
-// that produces HTML is swept, not only the dashboard: a fragment is markup the browser applies to
-// the very same document.
+// renders may contain an inline style, an inline script or an inline event handler.
 func TestNoRenderedHTMLNeedsUnsafeInline(t *testing.T) {
-	store := &dashStore{
-		items:  []domain.Item{ghItem(1, "An issue", testNow.Add(-time.Hour))},
-		builds: []domain.Build{{Repo: "org/repo", Workflow: "CI", Status: "completed", Conclusion: "success"}},
-		states: healthyStates(testNow),
-	}
-	h := dashHandler(t, store)
+	src := &fakeSource{items: []domain.Item{ghItem(1, "An issue", testNow.Add(-time.Hour))}}
+	h := dashHandler(t, src)
 	c := signIn(t, h)
 
-	// Every HTML-producing route: the page, the sign-in form, the documentation, the list
-	// fragment — filtered, because the filter form is markup too — and the body of a 401 on a
-	// fragment route.
 	pages := map[string]string{
 		"GET /":            getAs(h, "/", c).Body.String(),
 		"GET /?kind=pr":    getAs(h, "/?kind=pr", c).Body.String(),
 		"GET /login":       get(h, "/login").Body.String(),
-		"GET /docs":        get(h, "/docs").Body.String(),
 		"GET /items":       getAs(h, "/items", c).Body.String(),
-		"GET /builds":      getAs(h, "/builds", c).Body.String(),
 		"POST /seen (401)": post(h, "/seen", nil).Body.String(),
-		// The stop page in the state this handler can produce: it was built with no way to stop,
-		// so the route renders its refusal. It is visitor-facing HTML and is swept like the rest.
-		"POST /stop (501)": postAs(h, "/stop", nil, c).Body.String(),
 	}
 	// The sign-in page's error state renders visitor-facing text, so it is swept too. A callback
 	// with no state cookie is the refusal anyone who did not start here is answered with.
@@ -668,21 +443,15 @@ func TestNoRenderedHTMLNeedsUnsafeInline(t *testing.T) {
 				t.Errorf("contains the inline event handler %q, which the CSP forbids (QS-4.4)", strings.TrimSpace(m))
 			}
 			// Any script at all has to be a file this application serves from /static — never
-			// an inline one, which is what 'unsafe-inline' would be needed for. The URL carries
-			// a content hash, so the prefix is what is stable about it.
+			// an inline one, which is what 'unsafe-inline' would be needed for.
 			external := strings.Count(body, `<script src="/static/`)
 			if n := strings.Count(body, "<script"); n != external {
 				t.Errorf("has %d script tags of which %d are files under /static; the rest "+
 					"would need 'unsafe-inline' (QS-4.4)", n, external)
 			}
-			// A full page links the vendored htmx and the orbit enhancement, both by file; a
-			// fragment carries no script at all, because it is markup applied to a document that
-			// already has them.
 			if name == "GET /" {
-				for _, want := range []string{`<script src="/static/htmx.min.js?`, `<script src="/static/orbit.js?`} {
-					if !strings.Contains(body, want) {
-						t.Errorf("the dashboard does not link %s (QS-4.4)", want)
-					}
+				if !strings.Contains(body, `<script src="/static/htmx.min.js?`) {
+					t.Error("the dashboard does not link htmx (QS-4.4)")
 				}
 			}
 			if name == "GET /items" && external != 0 {
@@ -692,25 +461,9 @@ func TestNoRenderedHTMLNeedsUnsafeInline(t *testing.T) {
 	}
 }
 
-// The store is the only thing between the handler and a 500; its error must never reach the page.
-func TestAStoreFailureRendersTheFixedMessage(t *testing.T) {
-	store := &dashStore{fakeStore: fakeStore{err: errors.New("dial libsql://db.example: refused")}}
-	h := dashHandler(t, store)
-
-	for _, path := range []string{"/", "/items"} {
-		rec := getAuthed(t, h, path)
-		if rec.Code != http.StatusInternalServerError {
-			t.Errorf("GET %s with a broken store = %d, want 500", path, rec.Code)
-		}
-		if strings.Contains(rec.Body.String(), "libsql") {
-			t.Errorf("GET %s leaked the store's error text (QS-4.3)", path)
-		}
-	}
-}
-
 // QS-2.3.
 func TestRenderedPageStaysInsideItsBudget(t *testing.T) {
-	body := getAuthed(t, dashHandler(t, representativeStore()), "/").Body.String()
+	body := getAuthed(t, dashHandler(t, &fakeSource{items: representativeItems()}), "/").Body.String()
 	if n := len(body); n > 150*1024 {
 		t.Errorf("dashboard is %d bytes, budget is 150 kB (QS-2.3)", n)
 	} else {
@@ -718,15 +471,16 @@ func TestRenderedPageStaysInsideItsBudget(t *testing.T) {
 	}
 }
 
-// QS-2.2: the server-side share of the 200 ms budget. The store is in memory here, so what this
-// measures is assembly and rendering alone — the part this task owns.
+// QS-2.2: the server-side share of the 200 ms budget. The cache is warm here, so what this
+// measures is assembly and rendering alone.
 func BenchmarkDashboard(b *testing.B) {
-	s, err := New(func() Options {
-		o := testOptions()
-		credentialAllSources(&o)
-		o.Store = representativeStore()
-		return o
-	}())
+	src := &fakeSource{items: representativeItems()}
+	o := testOptions()
+	o.Config.GitHub.Repos = append([]string{"org/repo"}, representativeRepos()...)
+	clock := &ports.FixedClock{T: testNow}
+	o.Clock = clock
+	o.Cache = snapshot.New(src, time.Hour, clock)
+	s, err := New(o)
 	if err != nil {
 		b.Fatalf("New() error = %v", err)
 	}
@@ -770,51 +524,13 @@ func TestHumanise(t *testing.T) {
 	}
 }
 
-// FR-1.4 AC1 read together with FR-8.2 AC2: a source disabled for lack of a credential still shows
-// whatever was stored while it had one, so the list must not claim it was never fetched.
-func TestADisabledSourceHoldingStoredItemsIsHonestAboutTheirAge(t *testing.T) {
-	// The default test options carry no GitHub credential, so the source is disabled.
-	store := &dashStore{
-		items:  []domain.Item{ghItem(1, "Stored while the token still worked", testNow.Add(-time.Hour))},
-		states: healthyStates(testNow),
-	}
-	h := newTestServerWith(t, func(o *Options) { o.Store = store }).Handler()
-	body := getAuthed(t, h, "/items").Body.String()
-
-	if !strings.Contains(body, "Stored while the token still worked") {
-		t.Fatal("the fixture is wrong: the disabled list shows no stored item")
-	}
-	if strings.Contains(body, "Never fetched") {
-		t.Error("a disabled list above items stamped '1 hour ago' claims the source was never " +
-			"fetched, which is false (FR-1.4 AC1)")
-	}
-	// The age itself, as a machine-readable stamp, not merely the absence of a wrong claim: the
-	// items below were fetched while the credential was there and are exactly this old, and
-	// stating the state without the time is what let the page show hour-old data with no age at
-	// all (FR-1.4 AC1).
-	age := `Last fetched <time datetime="` + testNow.UTC().Format(time.RFC3339) + `">`
-	if !strings.Contains(body, age) {
-		t.Errorf("a disabled list does not state the age of the data it is showing (FR-1.4 AC1)."+
-			"\nwant: %s\ngot:  %s", age, firstLineContaining(body, "notice-disabled"))
-	}
-	if !strings.Contains(body, "Disabled —") {
-		t.Error("a disabled list does not say that it is disabled (FR-8.2 AC2)")
-	}
-	if !strings.Contains(body, "no credential is configured") {
-		t.Error("a disabled list no longer says why it is disabled (FR-8.2 AC2)")
-	}
-	if !strings.Contains(body, "stored before it went away") {
-		t.Error("a disabled list showing stored data does not say that is what it is")
-	}
-}
-
 // FR-2.2 AC1: a stored row whose created_at is zero must read as unknown, not render an empty
 // <time datetime="">, which is invalid HTML and shows the word "opened" followed by nothing.
 func TestAnItemWithoutACreationTimeSaysSo(t *testing.T) {
 	item := ghItem(1, "An issue whose creation time did not survive", testNow.Add(-time.Hour))
 	item.CreatedAt = time.Time{}
-	store := &dashStore{items: []domain.Item{item}, states: healthyStates(testNow)}
-	body := getAuthed(t, dashHandler(t, store), "/items").Body.String()
+	src := &fakeSource{items: []domain.Item{item}}
+	body := getAuthed(t, dashHandler(t, src), "/items").Body.String()
 
 	if strings.Contains(body, `datetime=""`) {
 		t.Error("a zero timestamp rendered as an empty <time datetime=\"\">")
@@ -822,57 +538,38 @@ func TestAnItemWithoutACreationTimeSaysSo(t *testing.T) {
 	if !strings.Contains(body, "opened at an unknown time") {
 		t.Error("an item with no creation time does not say so (FR-2.2 AC1)")
 	}
-	// The stamp that is known still renders.
 	if !strings.Contains(body, "updated <time") {
 		t.Error("the update time went missing along with the creation time")
 	}
 }
 
-// FR-1.6 AC1: the poll interval follows the configured refresh interval, but never below a floor.
-// A misconfigured `refresh.interval: 5s` would otherwise turn every open tab into a request every
-// five seconds against a Machine that is billed for being awake.
-func TestThePollIntervalNeverDropsBelowItsFloor(t *testing.T) {
-	for _, tc := range []struct {
-		interval time.Duration
-		want     int
-	}{
-		{0, minPollSeconds},
-		{time.Second, minPollSeconds},
-		{29 * time.Second, minPollSeconds},
-		{minPollSeconds * time.Second, minPollSeconds},
-		{31 * time.Second, 31},
-		{15 * time.Minute, 900},
-	} {
-		s := newTestServerWith(t, func(o *Options) { o.Config.Refresh.Interval = tc.interval })
-		if got := s.pollSeconds(); got != tc.want {
-			t.Errorf("pollSeconds() with interval %v = %d, want %d", tc.interval, got, tc.want)
+// GET / used to be registered as the mux's catch-all, so every path no other route claimed —
+// /admin, a typo, a fragment path with a segment too many — answered 200 with the whole dashboard.
+func TestAnUnknownPathIsNotTheDashboard(t *testing.T) {
+	h := dashHandler(t, &fakeSource{})
+	c := signIn(t, h)
+
+	for _, p := range []string{"/admin", "/no-such-page", "/items/extra"} {
+		rec := getAs(h, p, c)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404: an unknown path must not render the dashboard", p, rec.Code)
+		}
+		if strings.Contains(rec.Body.String(), `id="items"`) {
+			t.Errorf("GET %s answered with the dashboard", p)
 		}
 	}
-
-	// And the floor reaches the page, rather than only the helper.
-	s := newTestServerWith(t, func(o *Options) {
-		credentialAllSources(o)
-		o.Config.Refresh.Interval = 5 * time.Second
-		o.Store = &dashStore{states: healthyStates(testNow)}
-	})
-	body := getAuthed(t, s.Handler(), "/").Body.String()
-	if !strings.Contains(body, "every 30s") {
-		t.Error("a five-second refresh interval was not floored on the page (FR-1.6 AC1)")
-	}
-	if strings.Contains(body, "every 5s") {
-		t.Error("the page polls at the misconfigured five-second interval (FR-1.6 AC1)")
+	if rec := getAs(h, "/", c); rec.Code != http.StatusOK {
+		t.Errorf("GET / = %d, want 200: the dashboard itself still has to answer", rec.Code)
 	}
 }
 
 // QS-2.3, the static half of the budget, measured where the requirement's goal clause points: on
 // the wire. Uncompressed the vendored htmx alone is 50 kB, so the budget is unreachable by
-// construction unless it means transferred bytes — which is what "small enough for a slow
-// connection" is about. Every asset the rendered page links is fetched exactly as a browser would
-// fetch it, with Accept-Encoding: gzip, and what crosses the wire is added up.
+// construction unless it means transferred bytes.
 func TestStaticAssetsFitTheirBudgetOnTheWire(t *testing.T) {
 	const budget = 50 * 1024
 
-	h := dashHandler(t, representativeStore())
+	h := dashHandler(t, &fakeSource{items: representativeItems()})
 	page := getAuthed(t, h, "/").Body.String()
 
 	assets := linkedStaticAssets(page)
@@ -895,16 +592,11 @@ func TestStaticAssetsFitTheirBudgetOnTheWire(t *testing.T) {
 		total += transferred
 		t.Logf("%s: %d bytes on the wire", asset, transferred)
 
-		// What arrives has to be the file itself, not merely something small.
 		stored, err := fs.ReadFile(embedded, "static"+strings.TrimPrefix(asset, "/static"))
 		if err != nil {
 			t.Fatalf("reading the embedded %s: %v", asset, err)
 		}
 
-		// A PNG is already deflate-compressed, so it is served as it is stored and gzipping it
-		// again would cost CPU to add bytes. It still counts against the budget in full — the
-		// budget is about what crosses the wire, and a byte that cannot be compressed is the most
-		// expensive kind there is.
 		if !compressibleStatic[strings.ToLower(path.Ext(asset))] {
 			if got := rec.Header().Get("Content-Encoding"); got != "" {
 				t.Errorf("GET %s: Content-Encoding = %q, want none — the file is already compressed",
@@ -1000,34 +692,40 @@ func TestStaticIsServedUncompressedWhenTheClientCannotAcceptGzip(t *testing.T) {
 
 // ---------------------------------------------------------------- helpers
 
-// credentialAllSources gives every source a credential and something to watch, so that nothing
-// renders as disabled. The default test options deliberately carry no upstream secret.
-func credentialAllSources(o *Options) {
-	o.Config.Secrets.GitHubToken = "github-token-for-tests"
-}
-
-// dashHandler builds a fully credentialed server over store and returns its handler. A test that
-// needs a different watch list configures one itself with newTestServerWith.
-func dashHandler(t *testing.T, store ports.Store) http.Handler {
+// dashServer builds a fully configured server whose snapshot cache is backed by src, over the
+// repositories these tests expect, in the order they rely on for grouping.
+func dashServer(t *testing.T, src ports.Source) *Server {
 	t.Helper()
 	return newTestServerWith(t, func(o *Options) {
-		credentialAllSources(o)
-		// The one repository ghItem produces, plus the ten representativeStore holds: the
-		// grouping follows configuration order, so a fixture repository nobody is watching would
-		// be listed after the configured ones rather than where the tests expect it.
+		// The one repository ghItem produces, plus the ten representativeItems holds: the
+		// grouping follows configuration order, so a fixture repository nobody is watching
+		// would be listed after the configured ones rather than where the tests expect it.
 		o.Config.GitHub.Repos = append([]string{"org/repo"}, representativeRepos()...)
-		o.Store = store
-	}).Handler()
+		o.Cache = snapshot.New(src, time.Hour, o.Clock)
+	})
 }
 
-// mintSession is the cookie a browser holds after a successful sign-in, made directly from the
-// client secret every test server is built with rather than by walking the OAuth flow. The flow
-// itself is signin_test.go's subject; everywhere else a session is a precondition, and driving
-// three requests through a fixture GitHub to reach it would make every other test depend on it.
+func dashHandler(t *testing.T, src ports.Source) http.Handler {
+	t.Helper()
+	return dashServer(t, src).Handler()
+}
+
+// mintSession is the cookie a browser holds right after signing in: seen is zero, so nothing is
+// NEW until the visitor marks it. It is made directly from the client secret every test server is
+// built with, rather than by walking the OAuth flow, which is signin_test.go's own subject.
 func mintSession() *http.Cookie {
 	return &http.Cookie{
 		Name:  sessionCookieName,
-		Value: newSessionCodec(testClientSecret).mint(testNow.Add(sessionTTL)),
+		Value: newSessionCodec(testClientSecret).mint(session{Expiry: testNow.Add(sessionTTL)}),
+	}
+}
+
+// mintSessionSeenAt is the cookie for a session whose seen-mark is seen, for tests of the NEW
+// boundary itself.
+func mintSessionSeenAt(seen time.Time) *http.Cookie {
+	return &http.Cookie{
+		Name:  sessionCookieName,
+		Value: newSessionCodec(testClientSecret).mint(session{Expiry: testNow.Add(sessionTTL), Seen: seen}),
 	}
 }
 
@@ -1079,24 +777,14 @@ func ghItem(number int, title string, at time.Time) domain.Item {
 		State:      "OPEN",
 		CreatedAt:  at,
 		UpdatedAt:  at,
-		// The store owns FirstSeenAt; here it is the fixture's whole point.
-		FirstSeenAt: at,
 	}
 }
 
-func healthyStates(at time.Time) map[string]domain.SourceState {
-	m := make(map[string]domain.SourceState, 2)
-	for _, s := range []string{"github", "github-builds"} {
-		m[s] = domain.SourceState{Source: s, LastSuccessAt: at}
-	}
-	return m
-}
-
-// representativeStore is QS-2.3's representative configuration: 10 repositories holding 150 open
-// items between them, of both kinds, half of them new — which is the expensive case for the
-// badges, for the grouping and for every filter that has to be counted around.
-func representativeStore() *dashStore {
-	s := &dashStore{lastVisit: testNow.Add(-24 * time.Hour), states: healthyStates(testNow)}
+// representativeItems is QS-2.3's representative configuration: 10 repositories holding 150 open
+// items between them, of both kinds — which is the expensive case for the grouping and for every
+// filter that has to be counted around.
+func representativeItems() []domain.Item {
+	var items []domain.Item
 	for r := range 10 {
 		repo := "org/repository-number-" + strconv.Itoa(r)
 		for i := range 15 {
@@ -1107,7 +795,7 @@ func representativeStore() *dashStore {
 			if i%3 == 0 {
 				kind = domain.KindPR
 			}
-			s.items = append(s.items, domain.Item{
+			items = append(items, domain.Item{
 				Source:     "github",
 				ExternalID: string(kind) + ":" + repo + "#" + strconv.Itoa(n),
 				Kind:       kind,
@@ -1119,22 +807,15 @@ func representativeStore() *dashStore {
 				State:      "OPEN",
 				CreatedAt:  testNow.Add(-time.Duration(n) * time.Hour),
 				UpdatedAt:  testNow.Add(-time.Duration(i) * time.Hour),
-				// Half of them are new, which is the expensive case for the badges.
-				FirstSeenAt: testNow.Add(-time.Duration(2*i) * time.Hour),
 			})
 		}
-		s.builds = append(s.builds, domain.Build{
-			Repo: repo, Workflow: "Continuous integration", Status: "completed", Conclusion: "success",
-			RunURL:     "https://github.com/" + repo + "/actions/runs/" + strconv.Itoa(r),
-			FinishedAt: testNow.Add(-time.Duration(r) * time.Hour),
-		})
 	}
-	return s
+	return items
 }
 
-// representativeRepos is what a server over representativeStore has to be configured to watch, so
+// representativeRepos is what a server over representativeItems has to be configured to watch, so
 // that the groups come out in configuration order and the filter's repository list offers the
-// repositories the store actually holds.
+// repositories the fixture actually holds.
 func representativeRepos() []string {
 	out := make([]string, 0, 10)
 	for r := range 10 {
@@ -1143,54 +824,8 @@ func representativeRepos() []string {
 	return out
 }
 
-// dashStore is a ports.Store holding a fixture in memory. It extends auth_test.go's fakeStore
-// rather than replacing it: the error behaviour the canary test relies on is inherited, and only
-// the read methods the dashboard uses — plus the one write it performs — are overridden.
-type dashStore struct {
-	fakeStore
-	items   []domain.Item
-	builds  []domain.Build
-	states  map[string]domain.SourceState
-	lastRun domain.RefreshRun
-	// lastSuccessfulRun is the store's second answer about runs, and the fixture keeps it
-	// separate from lastRun on purpose: a test that sets only lastRun describes a database whose
-	// latest run is its only one, which is what most of them mean.
-	lastSuccessfulRun domain.RefreshRun
-	lastVisit         time.Time
-	// visits records every SetLastVisit, so a test can assert both that "mark all seen" writes
-	// one and that rendering writes none (FR-1.6 AC2).
-	visits []time.Time
-}
-
-func (s *dashStore) Items(context.Context) ([]domain.Item, error)   { return s.items, s.err }
-func (s *dashStore) Builds(context.Context) ([]domain.Build, error) { return s.builds, s.err }
-
-func (s *dashStore) SourceStates(context.Context) (map[string]domain.SourceState, error) {
-	return s.states, s.err
-}
-
-func (s *dashStore) LastRun(context.Context) (domain.RefreshRun, error) {
-	return s.lastRun, s.err
-}
-
-func (s *dashStore) LastSuccessfulRun(context.Context) (domain.RefreshRun, error) {
-	return s.lastSuccessfulRun, s.err
-}
-
-func (s *dashStore) LastVisit(context.Context) (time.Time, error) { return s.lastVisit, s.err }
-
-func (s *dashStore) SetLastVisit(_ context.Context, t time.Time) error {
-	if s.err != nil {
-		return s.err
-	}
-	s.visits = append(s.visits, t)
-	s.lastVisit = t
-	return nil
-}
-
 // linkedStaticAssets returns every /static/ URL the rendered page references, deduplicated and in
-// a stable order. It is derived from the page rather than hard-coded so that an asset added to the
-// layout is measured against the budget without anyone having to remember to add it here.
+// a stable order.
 func linkedStaticAssets(page string) []string {
 	re := regexp.MustCompile(`/static/[A-Za-z0-9._/-]+`)
 	seen := make(map[string]bool)
@@ -1204,186 +839,6 @@ func linkedStaticAssets(page string) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-// FR-1.1 AC3, the in-flight case. The store returns the most recently *started* run, so during a
-// refresh the run the page reads has no finishing time — the same zero a database with no runs at
-// all returns. Read as a timestamp alone it made the header announce "No refresh has run yet" on a
-// database holding a month of them, for the whole length of every slow run.
-func TestTheHeaderSaysARefreshIsRunningRatherThanThatNoneHasEverRun(t *testing.T) {
-	store := &dashStore{
-		lastRun: domain.RefreshRun{ID: 9, StartedAt: testNow.Add(-90 * time.Second)},
-		states:  healthyStates(testNow),
-	}
-	body := getAuthed(t, dashHandler(t, store), "/").Body.String()
-
-	if strings.Contains(body, "No refresh has run yet") {
-		t.Errorf("the header calls an open run no run at all (FR-1.1 AC3):\n%s",
-			firstLineContaining(body, "topbar-status"))
-	}
-	if !strings.Contains(body, "Refreshing now") {
-		t.Errorf("the header does not say a refresh is under way:\n%s",
-			firstLineContaining(body, "topbar-status"))
-	}
-}
-
-// FR-1.1 AC3 names the last *successful* refresh run, and OK is stored on every run for exactly
-// this. A run in which every upstream was down must not be offered as a refresh that worked; with
-// only the last run to read from, the header says the last one failed and when, which is the
-// truthful half of what the requirement asks for.
-func TestAFailedRunIsNeverPresentedAsASuccessfulRefresh(t *testing.T) {
-	store := &dashStore{
-		lastRun: domain.RefreshRun{
-			ID:         9,
-			StartedAt:  testNow.Add(-21 * time.Minute),
-			FinishedAt: testNow.Add(-20 * time.Minute),
-			OK:         false,
-		},
-		states: healthyStates(testNow),
-	}
-	body := getAuthed(t, dashHandler(t, store), "/").Body.String()
-
-	if strings.Contains(body, "Last successful refresh") {
-		t.Errorf("a failed run is shown as the last successful refresh (FR-1.1 AC3):\n%s",
-			firstLineContaining(body, "topbar-status"))
-	}
-	if !strings.Contains(body, "Last refresh failed") {
-		t.Errorf("the header does not say the last run failed:\n%s",
-			firstLineContaining(body, "topbar-status"))
-	}
-	if !strings.Contains(body, "20 minutes ago") {
-		t.Error("the header drops when the failure happened; the visitor cannot tell how stale the page is")
-	}
-}
-
-// FR-6.1 AC3 + QS-4.3. A Slack failure never fails a refresh, so nothing else on the page changes
-// when the webhook is revoked: the run record's detail is the only signal, and it is worth nothing
-// until it is rendered. It carries upstream error text, so it goes through Redact like every other
-// borrowed string here.
-func TestTheRunDetailIsRenderedAndScrubbed(t *testing.T) {
-	const secret = "https://hooks.slack.example/services/T0/B0/canary-value"
-	store := &dashStore{
-		lastRun: domain.RefreshRun{
-			ID:         9,
-			StartedAt:  testNow.Add(-2 * time.Minute),
-			FinishedAt: testNow.Add(-time.Minute),
-			OK:         true,
-			Detail:     "github: 12; todoist: 4; notify: post to " + secret + ": 404 no_service",
-		},
-		states: healthyStates(testNow),
-	}
-	s := newTestServerWith(t, func(o *Options) {
-		credentialAllSources(o)
-		o.Config.Secrets.SlackWebhook = secret
-		o.Store = store
-	})
-	body := getAuthed(t, s.Handler(), "/").Body.String()
-
-	if !strings.Contains(body, "404 no_service") {
-		t.Error("the run detail is not rendered anywhere, so a revoked webhook has no visible " +
-			"signal at all (FR-6.1 AC3)")
-	}
-	if !strings.Contains(body, "github: 12") {
-		t.Error("the run detail is rendered without its per-source outcome")
-	}
-	if strings.Contains(body, secret) {
-		t.Error("the run detail put the webhook URL on the page (QS-4.3)")
-	}
-	if !strings.Contains(body, "[redacted]") {
-		t.Error("the detail was dropped rather than scrubbed; the operator loses the diagnosis")
-	}
-}
-
-// FR-1.2 AC3 under polling. A poll swaps one tile, and the total count lives in two places outside
-// every tile — the tab title and the summary line. Without them coming back with the fragment the
-// page starts contradicting itself at the first poll: the tile says three new, the tab says none.
-func TestAPolledListBringsTheTotalCountBackWithIt(t *testing.T) {
-	store := &dashStore{
-		lastVisit: testNow.Add(-2 * time.Hour),
-		items: []domain.Item{
-			ghItem(1, "One", testNow.Add(-time.Hour)),
-			ghItem(2, "Two", testNow.Add(-time.Hour)),
-		},
-		states: healthyStates(testNow),
-	}
-	h := dashHandler(t, store)
-	fragment := getAuthed(t, h, "/items").Body.String()
-
-	for _, want := range []string{
-		// htmx lifts a top-level <title> out of the response and writes it into the document's
-		// own, so the title needs no out-of-band marker — see templates/fragments/counts.html.
-		"<title>(2) zorgscope</title>",
-		`id="dash-summary" hx-swap-oob="true"`,
-		"2 new since your last visit",
-	} {
-		if !strings.Contains(fragment, want) {
-			t.Errorf("the polled fragment does not carry %q, so the count goes stale after the "+
-				"first swap (FR-1.2 AC3):\n%s", want, fragment)
-		}
-	}
-	// QS-4.4: the mechanism is markup, not script. The CSP carries no 'unsafe-inline', and the
-	// page has to stay correct for a visitor with JavaScript switched off (FR-1.3 AC3).
-	if strings.Contains(fragment, "<script") || regexp.MustCompile(`\son[a-z]+\s*=`).MatchString(fragment) {
-		t.Errorf("the fragment updates the count with script rather than markup (QS-4.4):\n%s", fragment)
-	}
-
-	// The page itself draws the very same two elements, plainly: an out-of-band marker on a full
-	// page load would ask htmx to swap elements into a document it has just replaced.
-	page := getAuthed(t, h, "/").Body.String()
-	if strings.Contains(page, "hx-swap-oob") {
-		t.Errorf("the page marks its own elements as out-of-band swaps:\n%s",
-			firstLineContaining(page, "hx-swap-oob"))
-	}
-	if !strings.Contains(page, `id="dash-summary"`) {
-		t.Error("the page does not carry the id a swap addresses, so a poll can never find it")
-	}
-}
-
-// GET / used to be registered as the mux's catch-all, so every path no other route claimed —
-// /admin, a typo, a fragment path with a segment too many — answered 200 with the whole dashboard.
-func TestAnUnknownPathIsNotTheDashboard(t *testing.T) {
-	h := dashHandler(t, &dashStore{states: healthyStates(testNow)})
-	c := signIn(t, h)
-
-	for _, path := range []string{"/admin", "/no-such-page", "/items/extra"} {
-		rec := getAs(h, path, c)
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("GET %s = %d, want 404: an unknown path must not render the dashboard",
-				path, rec.Code)
-		}
-		if strings.Contains(rec.Body.String(), `id="items"`) {
-			t.Errorf("GET %s answered with the dashboard", path)
-		}
-	}
-	if rec := getAs(h, "/", c); rec.Code != http.StatusOK {
-		t.Errorf("GET / = %d, want 200: the dashboard itself still has to answer", rec.Code)
-	}
-}
-
-// FR-8.2 AC2 is about the credential. Config.Enabled is false both when the secret is missing and
-// when there is nothing configured to watch, and the page said "no credential is configured" for
-// both — sending an operator who had commented out the repos: list after a Fly secrets problem
-// that did not exist.
-func TestAConfiguredSourceWithNothingToWatchDoesNotBlameTheCredential(t *testing.T) {
-	s := newTestServerWith(t, func(o *Options) {
-		credentialAllSources(o)
-		o.Config.GitHub.Repos = nil // the token is set and correct; the watch list is empty
-		o.Store = &dashStore{states: healthyStates(testNow)}
-	})
-	body := getAuthed(t, s.Handler(), "/").Body.String()
-
-	if strings.Contains(body, "no credential is configured") {
-		t.Error("an empty repos list is reported as a missing credential (FR-8.2 AC2)")
-	}
-	if n := strings.Count(body, "no repositories are configured to watch"); n != 1 {
-		t.Errorf("the list names the empty watch list %d times, want 1", n)
-	}
-	// And the build indicator, which is the other half of what a missing repos list turns off,
-	// says the same thing on its own page rather than blaming the credential either.
-	builds := getAuthed(t, s.Handler(), "/builds").Body.String()
-	if !strings.Contains(builds, "no repositories are configured to watch") {
-		t.Error("the build details page blames something other than the empty watch list")
-	}
 }
 
 // openingTag returns the opening tag that starts with prefix, so an assertion about one element's

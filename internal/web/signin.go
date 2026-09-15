@@ -42,11 +42,11 @@ func (s *Server) oauthConfig() *oauth2.Config {
 // handleLoginForm shows the sign-in page, or sends an already signed-in browser to the dashboard
 // so that a bookmarked /login is not a dead end.
 func (s *Server) handleLoginForm(w http.ResponseWriter, r *http.Request) {
-	if s.signedIn(r) {
+	if _, ok := s.session(r); ok {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	s.render(w, r, http.StatusOK, "login.html", pageData{Title: "Sign in"})
+	s.execute(w, r, http.StatusOK, "login.html", pageData{Title: "Sign in"})
 }
 
 // handleAuthStart begins the flow: a random state in a short-lived cookie, and a redirect to
@@ -108,7 +108,7 @@ func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 		// outbound request to find out. The refusals underneath a burst of 429s each logged their
 		// own why while there was still budget for them.
 		s.log.Warn("sign-in rate-limited", "ip", ip)
-		s.render(w, r, http.StatusTooManyRequests, "login.html", pageData{Title: "Sign in", Error: "Too many attempts. Try again later."})
+		s.execute(w, r, http.StatusTooManyRequests, "login.html", pageData{Title: "Sign in", Error: "Too many attempts. Try again later."})
 		return
 	}
 
@@ -118,7 +118,7 @@ func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	refuse := func(status int, why, msg string) {
 		clearState()
 		s.log.Warn("sign-in refused", "ip", ip, "why", why)
-		s.render(w, r, status, "login.html", pageData{Title: "Sign in", Error: msg})
+		s.execute(w, r, status, "login.html", pageData{Title: "Sign in", Error: msg})
 	}
 
 	c, err := r.Cookie(stateCookieName)
@@ -165,6 +165,7 @@ func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	// The one audit line this product needs: a collaborator signed in, from where. Never a login
 	// name — the visitor did not choose to publish one here — and never the token (FR-8.3 AC5).
 	s.log.Info("sign-in accepted", "ip", ip)
-	s.setSession(w, s.clock.Now())
+	// Seen starts at zero: nothing is NEW until the visitor's first "mark seen" (design §4).
+	s.setSession(w, session{Expiry: s.clock.Now().Add(sessionTTL)})
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

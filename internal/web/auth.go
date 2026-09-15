@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	// sessionCookieName is the only cookie this application sets.
+	// sessionCookieName is the only cookie this application sets to carry authentication.
 	sessionCookieName = "zorgscope_session"
 	// sessionTTL is how long one sign-in lasts. It is deliberately long: the cost of a short
 	// session is a round trip to GitHub on a phone, for a dashboard whose whole purpose is being
@@ -43,15 +43,24 @@ const (
 // sessionEncoding is URL-safe and unpadded, so a cookie value never needs quoting.
 var sessionEncoding = base64.RawURLEncoding
 
+// session is what the cookie proves: when the sign-in expires, and when the visitor last marked
+// the list as seen (zero until they do). Both travel inside the signed payload, so neither can be
+// forged, and neither needs a row anywhere — the stateless design's whole point (design §4).
+type session struct {
+	Expiry time.Time
+	Seen   time.Time
+}
+
 // sessionCodec mints and verifies session cookie values.
 //
-// A cookie value is base64(expiry) + "." + base64(HMAC-SHA256(key, expiry)), where the key is
-// SHA-256 of sessionKeyContext concatenated with GITHUB_OAUTH_CLIENT_SECRET. Two properties fall
-// out of that derivation. The browser never holds a credential — only an expiry and a signature
-// over it, so FR-8.3 AC2 needs no separate store, and neither the visitor's GitHub token nor the
-// client secret is ever in the cookie jar. And rotating the client secret changes the key, which
-// invalidates every signature ever minted under the old one: FR-8.3 AC4 without a session table, a
-// revocation list or anything else that would have to survive the Machine being stopped.
+// A cookie value is base64(expiry:seen) + "." + base64(HMAC-SHA256(key, expiry:seen)), where the
+// key is SHA-256 of sessionKeyContext concatenated with GITHUB_OAUTH_CLIENT_SECRET. Two properties
+// fall out of that derivation. The browser never holds a credential — only an expiry, a seen mark
+// and a signature over them, so FR-8.3 AC2 needs no separate store, and neither the visitor's
+// GitHub token nor the client secret is ever in the cookie jar. And rotating the client secret
+// changes the key, which invalidates every signature ever minted under the old one: FR-8.3 AC4
+// without a session table, a revocation list or anything else that would have to survive the
+// Machine being stopped.
 //
 // The cookie holds no identity on purpose. The product has no per-user state, and "which
 // collaborator is this" is a question it would then have to keep answering correctly.
@@ -61,36 +70,51 @@ func newSessionCodec(secret string) *sessionCodec {
 	return &sessionCodec{key: sha256.Sum256([]byte(sessionKeyContext + secret))}
 }
 
-// mint returns the cookie value for a session expiring at exp.
-func (c *sessionCodec) mint(exp time.Time) string {
-	payload := strconv.FormatInt(exp.Unix(), 10)
+// mint returns the cookie value for s.
+func (c *sessionCodec) mint(s session) string {
+	seen := int64(0)
+	if !s.Seen.IsZero() {
+		seen = s.Seen.Unix()
+	}
+	payload := strconv.FormatInt(s.Expiry.Unix(), 10) + ":" + strconv.FormatInt(seen, 10)
 	return sessionEncoding.EncodeToString([]byte(payload)) + "." +
 		sessionEncoding.EncodeToString(c.sign(payload))
 }
 
-// valid reports whether value is a signature this codec produced over an expiry still in the
-// future at now.
-func (c *sessionCodec) valid(value string, now time.Time) bool {
+// decode returns the session a cookie value proves, and false when the value is not a signature
+// this codec produced over a session still valid at now. A value minted under the pre-reset,
+// single-integer format has no ":" in its payload and is rejected the same way: it proves nothing
+// this codec ever signed.
+func (c *sessionCodec) decode(value string, now time.Time) (session, bool) {
 	encPayload, encSig, ok := strings.Cut(value, ".")
 	if !ok {
-		return false
+		return session{}, false
 	}
 	payload, err := sessionEncoding.DecodeString(encPayload)
 	if err != nil {
-		return false
+		return session{}, false
 	}
 	sig, err := sessionEncoding.DecodeString(encSig)
 	if err != nil {
-		return false
+		return session{}, false
 	}
 	if subtle.ConstantTimeCompare(sig, c.sign(string(payload))) != 1 {
-		return false
+		return session{}, false
 	}
-	exp, err := strconv.ParseInt(string(payload), 10, 64)
-	if err != nil {
-		return false
+	expStr, seenStr, ok := strings.Cut(string(payload), ":")
+	if !ok {
+		return session{}, false
 	}
-	return now.Before(time.Unix(exp, 0))
+	exp, err1 := strconv.ParseInt(expStr, 10, 64)
+	seen, err2 := strconv.ParseInt(seenStr, 10, 64)
+	if err1 != nil || err2 != nil {
+		return session{}, false
+	}
+	s := session{Expiry: time.Unix(exp, 0)}
+	if seen > 0 {
+		s.Seen = time.Unix(seen, 0)
+	}
+	return s, now.Before(s.Expiry)
 }
 
 func (c *sessionCodec) sign(payload string) []byte {
@@ -99,34 +123,33 @@ func (c *sessionCodec) sign(payload string) []byte {
 	return mac.Sum(nil)
 }
 
-// setSession writes the session cookie.
+// setSession writes the session cookie for sess.
 //
 // Secure is unconditional. Fly terminates TLS in front of this process and serves it over HTTPS
 // only, so there is no deployment where the flag would lock the user out — while making it depend
 // on the request's scheme would silently drop it behind exactly that proxy, which is the one place
 // it matters.
-func (s *Server) setSession(w http.ResponseWriter, now time.Time) {
-	exp := now.Add(sessionTTL)
+func (s *Server) setSession(w http.ResponseWriter, sess session) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
-		Value:    s.session.mint(exp),
+		Value:    s.codec.mint(sess),
 		Path:     "/",
-		Expires:  exp,
-		MaxAge:   int(sessionTTL / time.Second),
+		Expires:  sess.Expiry,
+		MaxAge:   int(sess.Expiry.Sub(s.clock.Now()) / time.Second),
 		HttpOnly: true,
 		Secure:   true,
 		SameSite: http.SameSiteLaxMode,
 	})
 }
 
-// signedIn reports whether the request carries a valid session cookie. It looks at nothing else:
-// in particular the refresh bearer does not sign anyone in.
-func (s *Server) signedIn(r *http.Request) bool {
+// session reports the session a request's cookie proves, and whether it is currently valid. It
+// looks at nothing else: in particular the request's path or method never decide it.
+func (s *Server) session(r *http.Request) (session, bool) {
 	c, err := r.Cookie(sessionCookieName)
 	if err != nil {
-		return false
+		return session{}, false
 	}
-	return s.session.valid(c.Value, s.clock.Now())
+	return s.codec.decode(c.Value, s.clock.Now())
 }
 
 // requireSession refuses a request without a valid session cookie.
@@ -138,7 +161,7 @@ func (s *Server) signedIn(r *http.Request) bool {
 // expired session takes the browser to sign-in instead of leaving a silently dead button.
 func (s *Server) requireSession(next http.Handler, redirect bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.signedIn(r) {
+		if _, ok := s.session(r); ok {
 			// Rotating the OAuth client secret is the only sign-out this product has
 			// (FR-8.3 AC4), and a rotation cannot reach a page the browser has already stored.
 			// Without no-store the dashboard — names of repositories, issue titles — stays in
@@ -194,33 +217,6 @@ func (s *Server) unauthorised(w http.ResponseWriter) {
 	_, _ = w.Write([]byte(unauthorisedPage))
 }
 
-// requireBearer refuses a request that does not carry REFRESH_SECRET as a bearer token.
-//
-// It never consults the session cookie. Signing in and triggering a refresh rest on independent
-// credentials on purpose: the cron service that calls this endpoint holds the ability to trigger a
-// refresh and nothing else, and a stolen session must not become a way to hammer the upstream
-// APIs. The comparison is constant-time, and failures are rate-limited per client just as
-// sign-ins are (QS-4.2).
-func (s *Server) requireBearer(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		presented, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if ok && subtle.ConstantTimeCompare([]byte(presented), []byte(s.cfg.Secrets.RefreshSecret)) == 1 {
-			next.ServeHTTP(w, r)
-			return
-		}
-		ip := s.clientIP(r)
-		if !s.bearer.allow(ip, s.clock.Now()) {
-			s.log.Warn("refresh authentication rate-limited", "ip", ip)
-			http.Error(w, "Too many attempts.", http.StatusTooManyRequests)
-			return
-		}
-		// The presented value is never logged: it may be the real secret, mistyped somewhere
-		// else, and a log is not the place for either (QS-4.2, FR-8.3 AC5).
-		s.log.Warn("refresh authentication failed", "ip", ip)
-		http.Error(w, "Not authorised.", http.StatusUnauthorized)
-	})
-}
-
 // clientIP identifies the caller for rate-limiting purposes.
 //
 // Fly-Client-IP is believed only when this process is actually running behind Fly's proxy, which
@@ -228,8 +224,8 @@ func (s *Server) requireBearer(next http.Handler) http.Handler {
 // there: Fly's proxy sets it itself, overwriting whatever the client sent. Anywhere else — the
 // Compose stack, a local `go run`, a Machine reached over Fly's private 6PN network rather than
 // through the proxy — it is just a request header, and believing it would hand every caller a
-// fresh 10-token bucket per request by varying one string. That would remove QS-4.2 from both
-// credentials at once, since the sign-in form and the refresh bearer share this function.
+// fresh 10-token bucket per request by varying one string. That would remove QS-4.2 from the
+// sign-in rate limit, the one credential left that this function guards.
 //
 // X-Forwarded-For is never consulted, under any circumstances: it is appended to rather than
 // replaced, so even behind a trustworthy proxy its left-hand entries are the client's own words.
@@ -257,11 +253,10 @@ func (s *Server) clientIP(r *http.Request) string {
 // rateLimiter is a token bucket per client, refilling at limit tokens per window.
 //
 // It is in memory on purpose (QS-4.2). The Machine stops when nothing is in flight, so a counter
-// in the database would survive a restart the attacker can simply wait out — while adding a write
-// to every failed attempt, which is a denial-of-service amplifier rather than a defence. What the
-// limit is actually for is making the two things worth guessing — the refresh bearer, and a
-// sign-in state — pointless to guess online, and an in-memory bucket does that for exactly as long
-// as the process is up to be attacked.
+// in a database would survive a restart the attacker can simply wait out — while adding a write to
+// every failed attempt, which is a denial-of-service amplifier rather than a defence. What the
+// limit is actually for is making the sign-in state worth guessing pointless to guess online, and
+// an in-memory bucket does that for exactly as long as the process is up to be attacked.
 type rateLimiter struct {
 	mu      sync.Mutex
 	limit   float64

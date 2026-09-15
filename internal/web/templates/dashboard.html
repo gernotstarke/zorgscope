@@ -1,43 +1,21 @@
 {{define "content"}}
-{{/* A notice the page itself has to carry, rather than an error's own text: the only thing that
-     sets it is a refresh that could not start because one was already running (FR-5.2 AC2). */}}
-{{with .Error}}<p class="notice notice-error" role="alert">{{.}}</p>{{end}}
 {{with .Dashboard}}
-{{/* FR-1.4: when an external interface has gone wrong, the page says so in a sentence and hands
-     over a way to read the whole story, rather than leaving the reader to notice a grey line or a
-     list that stopped changing. The box counts errors and warnings only — a source that is simply
-     switched off is a decision, not a fault, and a box that appeared for it would be dismissed
-     unread within a week, which is the failure mode this exists to avoid.
-
-     It is drawn from the shared block, because a polled fragment sends the same block back so that
-     trouble appearing between page loads is not silent until the next one — see
-     templates/fragments/alert.html. */}}
-{{template "dash-alert" .Alert}}
-{{/* Builds are one line here and a page behind it (FR-2.3). The front page is for what needs
-     handling — new and unhandled issues and pull requests — and a row per repository is a report,
-     which would push the things that do need handling below the fold. */}}
-{{template "build-status" .Builds}}
+{{/* FR-1.1: when the snapshot was last fetched, in the configured timezone — "never" before the
+     first fetch has returned anything. */}}
+<p class="fetched-line">Fetched {{.FetchedAt}}</p>
+{{/* FR-1.4: a failed fetch keeps showing the previous list rather than blanking the page, and
+     says so — when GitHub went unreachable and, when there is one, how old the list on screen
+     is. Redacted of every configured secret before it ever reaches this template (QS-4.3). */}}
+{{with .Error}}<p class="notice notice-error" role="alert">{{.}}</p>{{end}}
 <div class="dash-actions">
-  {{/* The summary states the total, which the list itself does not know, so a polled fragment
-       sends this very block back as an out-of-band swap; see templates/fragments/counts.html. */}}
-  {{template "dash-summary" .Summary}}
-  {{/* Both controls are plain form posts, so the page is fully usable with JavaScript disabled
-       (FR-1.3 AC3). htmx only adds the list's polling and the filter's live narrowing on top. */}}
-  {{/* data-orbit-trigger is what static/orbit.js watches: pressing this runs the whole refresh
-       inside the request, so the browser waits — sometimes for a minute — with nothing on the page
-       having changed. The script drives the header's mark into its refreshing state at the moment
-       of the press, which is the one state the server cannot render, because its request has not
-       arrived yet. Without script the form is exactly what it was. */}}
-  <form class="action" method="post" action="/refresh" data-orbit-trigger><button type="submit">Refresh now</button></form>
+  {{/* FR-1.2 AC3: the total new count, stated once above the list — not the filtered count, so
+       narrowing the list with the search box never makes the badge lie about what is new. */}}
+  {{if gt .NewTotal 0}}<span class="badge badge-new">NEW {{.NewTotal}}</span>{{end}}
+  {{/* Three plain form posts, so the page is fully usable with JavaScript disabled (FR-1.3 AC3). */}}
   <form class="action" method="post" action="/seen"><button type="submit">Mark all seen</button></form>
+  <form class="action" method="post" action="/refresh"><button type="submit">Refresh</button></form>
+  <form class="action" method="post" action="/logout"><button type="submit">Log out</button></form>
 </div>
-{{/* The refresh run's own record of what it did, per source, plus the reason the announcement
-     step stopped if it did. It is here rather than nowhere because it is the only signal some
-     failures have: a revoked Slack webhook never fails a run (FR-6.1 AC3) and changes nothing else
-     on this page, so without this line the notifications stop for weeks while every visible
-     surface reports health. It is small and grey when everything is fine, which is what it says
-     most days. */}}
-{{with .LastRunDetail}}<p class="run-detail">Last run: {{.}}</p>{{end}}
 {{/* The filter (FR-1.2). It is a plain GET form whose action is this page, so with JavaScript
      switched off pressing Apply reloads the dashboard narrowed — the whole thing works without a
      single request htmx makes (FR-1.3 AC3).
@@ -45,12 +23,7 @@
      With htmx it fetches this same page rather than the fragment endpoint, selects the list out of
      the response and swaps only that. Fetching the page is what makes hx-push-url honest: what is
      pushed into the address bar is a URL that renders the very page being looked at, so a reload
-     or a bookmark of it shows the same narrowed list. Pointing hx-get at /items instead would push
-     the fragment's own URL, and reloading that would answer with a fragment and no page around it.
-
-     The four blocks that live outside the list — the tab title, the summary, the warning box and
-     the build indicator — need no out-of-band swap here: all four state totals, and a filter never
-     changes a total (FR-1.2). */}}
+     or a bookmark of it shows the same narrowed list. */}}
 <form class="filter" method="get" action="/"
       hx-get="/" hx-select="#items"
       hx-trigger="change, keyup changed delay:400ms from:[name=q], search"

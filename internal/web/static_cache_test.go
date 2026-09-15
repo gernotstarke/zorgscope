@@ -17,7 +17,7 @@ import (
 // Every static URL the page links carries its file's content hash, so a changed file is a
 // different URL and can never be served from a cache that predates the change.
 func TestThePageLinksVersionedAssets(t *testing.T) {
-	h := dashHandler(t, representativeStore())
+	h := dashHandler(t, &fakeSource{items: representativeItems()})
 	page := getAuthed(t, h, "/").Body.String()
 
 	linked := regexp.MustCompile(`/static/[A-Za-z0-9._/-]+\?v=[0-9a-f]+`).FindAllString(page, -1)

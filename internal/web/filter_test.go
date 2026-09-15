@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gernotstarke/zorgscope/internal/domain"
+	"github.com/gernotstarke/zorgscope/internal/snapshot"
 )
 
 func TestParseFilterReadsEveryParameter(t *testing.T) {
@@ -41,14 +42,13 @@ func TestTheSinceDateIsReadInTheConfiguredTimezone(t *testing.T) {
 	// 2026-08-16 23:00 UTC is 2026-08-17 01:00 in Berlin, so it is on the named day there and on
 	// the day before it in UTC.
 	item := ghItem(1, "Opened in the small hours", testNow.Add(-11*time.Hour))
-	store := &dashStore{items: []domain.Item{item}, states: healthyStates(testNow)}
+	src := &fakeSource{items: []domain.Item{item}}
 
 	for zone, want := range map[string]bool{"Europe/Berlin": true, "UTC": false} {
 		t.Run(zone, func(t *testing.T) {
 			h := newTestServerWith(t, func(o *Options) {
-				credentialAllSources(o)
 				o.Config.Timezone = zone
-				o.Store = store
+				o.Cache = snapshot.New(src, time.Hour, o.Clock)
 			}).Handler()
 
 			shown := strings.Contains(

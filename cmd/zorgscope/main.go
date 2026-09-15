@@ -1,11 +1,12 @@
 // Command zorgscope serves the personal status dashboard.
 //
-// The process is deliberately stateless and short-lived: the Fly Machine it runs on is stopped
-// whenever nothing is in flight, so there is no background scheduler here. Upstream data is
-// refreshed by an external cron service calling POST /api/refresh (ADR-0003).
+// The process is stateless: the only thing it remembers between requests is the last fetched item
+// list, held in memory by internal/snapshot and refetched when it is stale. There is no database,
+// no background scheduler and no refresh pipeline — the Fly Machine it runs on is stopped whenever
+// nothing is in flight, and the first page view after a cold start pays the one fetch (design §5).
 //
-// Everything is assembled in one place, run: configuration, the store, the enabled source
-// fetchers, the refresh runner and the HTTP server. Nothing below it reads the environment.
+// Everything is assembled in one place, run: configuration, the GitHub source, the snapshot cache
+// and the HTTP server. Nothing below it reads the environment.
 package main
 
 import (
@@ -20,17 +21,21 @@ import (
 	"time"
 
 	"github.com/gernotstarke/zorgscope/internal/adapters/github"
-	"github.com/gernotstarke/zorgscope/internal/adapters/libsql"
-	"github.com/gernotstarke/zorgscope/internal/adapters/slack"
 	"github.com/gernotstarke/zorgscope/internal/config"
+	"github.com/gernotstarke/zorgscope/internal/domain"
 	"github.com/gernotstarke/zorgscope/internal/ports"
-	"github.com/gernotstarke/zorgscope/internal/refresh"
+	"github.com/gernotstarke/zorgscope/internal/snapshot"
 	"github.com/gernotstarke/zorgscope/internal/web"
 )
 
-// upstreamTimeout bounds one HTTP call to a source. It is shorter than the Machine's own patience
-// so that a hanging upstream fails a refresh rather than holding the lease until it expires.
+// upstreamTimeout bounds one HTTP call to GitHub. It is shorter than the Machine's own patience so
+// that a hanging upstream fails a fetch rather than holding a page view open indefinitely.
 const upstreamTimeout = 20 * time.Second
+
+// defaultCacheTTL is how old the snapshot may be before a page view refetches it, used when the
+// configuration names none. Task 4 renames the config field this is read from
+// (cfg.Refresh.Interval) to github.cache_ttl; until then this is where the default lives.
+const defaultCacheTTL = 5 * time.Minute
 
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel()}))
@@ -38,50 +43,41 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// stop is handed to run so the dashboard's own stop control can end this process the same way
-	// a SIGTERM does: signal.NotifyContext cancels ctx when stop is called, and serve shuts the
-	// listener down on that cancellation. One shutdown path, whoever asks for it.
-	if err := run(ctx, stop, log); err != nil {
+	if err := run(ctx, log); err != nil {
 		// Every error reaching here has already been scrubbed of secrets where it could carry
-		// one; see openStore (QS-4.3).
+		// one (QS-4.3).
 		log.Error("zorgscope stopped", "err", err.Error())
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, stop func(), log *slog.Logger) error {
+func run(ctx context.Context, log *slog.Logger) error {
 	cfg, err := config.Load(envOr("CONFIG_PATH", "config/zorgscope.yaml"), os.Getenv)
 	if err != nil {
 		// config.Load names the offending field and never quotes a secret's value.
 		return fmt.Errorf("configuration: %w", err)
 	}
 
-	store, err := openStore(ctx, cfg)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = store.Close() }()
-
-	clock := ports.SystemClock{}
 	hc := &http.Client{Timeout: upstreamTimeout}
-	fetchers := buildFetchers(cfg, hc)
-	for _, f := range fetchers {
-		log.Info("source enabled", "source", f.Name())
-	}
+	fetcher := github.NewIssueFetcher(githubConfig(cfg), hc)
+	src := ports.SourceFunc(func(ctx context.Context) ([]domain.Item, error) {
+		r, err := fetcher.Fetch(ctx)
+		return r.Items, err
+	})
 
-	notifier := buildNotifier(cfg, hc, log)
-	runner := refresh.New(store, fetchers, clock, notifier, log)
+	ttl := cfg.Refresh.Interval
+	if ttl <= 0 {
+		ttl = defaultCacheTTL
+	}
+	cache := snapshot.New(src, ttl, ports.SystemClock{})
 
 	srv, err := web.New(web.Options{
 		Config: cfg,
-		Store:  store,
-		Runner: runner,
-		Clock:  clock,
+		Cache:  cache,
+		Clock:  ports.SystemClock{},
 		Log:    log,
-		Stop:   stop,
-		// Who may sign in is decided by GitHub, against the repository named in the configuration
-		// file (FR-8.3). The REST root is the same setting the build fetcher uses, so a deployment
-		// pointed at the fixture server signs people in against fixtures too.
+		// Who may sign in is decided by GitHub, against the repository named in the
+		// configuration file (FR-8.3).
 		Access:     github.NewAccessChecker(cfg.GitHub.BaseURL, cfg.GitHub.AuthRepo, hc),
 		HTTPClient: hc,
 	})
@@ -92,84 +88,17 @@ func run(ctx context.Context, stop func(), log *slog.Logger) error {
 	return serve(ctx, log, srv.Handler())
 }
 
-// openStore opens the libSQL store and brings its schema up to date.
-//
-// The error from the driver is scrubbed before it is returned: the DSN carries the Turso auth
-// token, and a connection failure quotes the DSN (QS-4.3). That is also why the returned error is
-// built from a redacted string rather than wrapping the original — a wrapped error would carry the
-// token to whatever prints it next.
-func openStore(ctx context.Context, cfg config.Config) (*libsql.Store, error) {
-	store, err := libsql.Open(cfg.Secrets.TursoURL, cfg.Secrets.TursoAuthToken)
-	if err != nil {
-		return nil, errors.New("opening the database: " + web.Redact(cfg.Secrets, err.Error()))
-	}
-
-	migrateCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	if err := store.Migrate(migrateCtx); err != nil {
-		_ = store.Close()
-		return nil, errors.New("migrating the database: " + web.Redact(cfg.Secrets, err.Error()))
-	}
-	return store, nil
-}
-
-// buildFetchers builds one fetcher per enabled source (FR-8.2 AC2). A source whose credential is
-// missing — or that has nothing configured to watch — is simply absent from the refresh, rather
-// than present and failing every run.
-func buildFetchers(cfg config.Config, hc *http.Client) []ports.SourceFetcher {
-	var fetchers []ports.SourceFetcher
-	if cfg.Enabled("github") {
-		gh := githubConfig(cfg)
-		// Issues and builds are two fetchers over one credential: they use different GitHub APIs
-		// and one failing must not hide the other's result.
-		fetchers = append(fetchers, github.NewIssueFetcher(gh, hc), github.NewBuildFetcher(gh, hc))
-	}
-	return fetchers
-}
-
-// buildNotifier builds the Slack notifier, or returns nil when nothing should be announced —
-// which the runner reads as "announce nothing" (FR-8.2 AC2, as for a source).
-//
-// Both halves have to be there: notifications switched on in the configuration file, and a webhook
-// URL in the environment. A webhook without the switch is a credential the operator has not asked
-// to use; the switch without a webhook would post nowhere and log a failure on every refresh.
-//
-// The return type is ports.Notifier and the nil is untyped on purpose. Returning a (*slack.Notifier)
-// (nil) through an interface produces a non-nil interface holding a nil pointer, and the runner's
-// "no notifier" check would miss it and dereference it on the first refresh.
-//
-// The shared HTTP client is reused deliberately: its timeout is only a ceiling here, because the
-// runner gives the whole announcement step a shorter budget of its own.
-func buildNotifier(cfg config.Config, hc *http.Client, log *slog.Logger) ports.Notifier {
-	if !cfg.Notifications.Slack.Enabled {
-		log.Info("slack notifications disabled")
-		return nil
-	}
-	if cfg.Secrets.SlackWebhook == "" {
-		// Never log the value, only its absence (QS-4.3).
-		log.Warn("slack notifications enabled but SLACK_WEBHOOK_URL is not set; announcing nothing")
-		return nil
-	}
-	log.Info("slack notifications enabled")
-	return slack.New(cfg.Secrets.SlackWebhook, hc)
-}
-
 // githubConfig derives the GitHub adapter's configuration from one setting, GITHUB_BASE_URL, which
 // names an API root such as the fake sources server.
 //
-// The two base URLs are not interchangeable: BaseURL is the GraphQL *endpoint* the issue fetcher
-// posts to, RESTBaseURL is the REST *root* the build fetcher appends paths to. An empty setting
-// must leave both empty so that each adapter falls back to its own real GitHub default —
-// concatenating "/graphql" onto "" would point production traffic at a relative path.
+// BaseURL is the GraphQL *endpoint* the issue fetcher posts to. An empty setting must leave it
+// empty so the adapter falls back to its own real GitHub default — concatenating "/graphql" onto
+// "" would point production traffic at a relative path.
 func githubConfig(cfg config.Config) github.Config {
 	gh := github.Config{
 		Token:       cfg.Secrets.GitHubToken,
 		RESTBaseURL: cfg.GitHub.BaseURL,
 		Repos:       cfg.GitHub.Repos,
-		// A deployment pointed at a fake GitHub gets its badges from the same place, so that
-		// running against fixtures reaches nothing on the real internet. Left empty it is
-		// shields.io, which is where badges actually come from.
-		BadgeBaseURL: cfg.GitHub.BadgeBaseURL,
 	}
 	if cfg.GitHub.BaseURL != "" {
 		gh.BaseURL = cfg.GitHub.BaseURL + "/graphql"

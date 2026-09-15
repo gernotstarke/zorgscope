@@ -1,6 +1,0 @@
-{{define "content"}}
-{{/* The document supplies its own h1; the page adds only the way back to the index. Doc.Body is
-     template.HTML because goldmark rendered it with raw HTML disabled — see newDocMarkdown. */}}
-<nav class="doc-nav"><a href="/docs">Documentation</a></nav>
-<article class="doc">{{.Doc.Body}}</article>
-{{end}}

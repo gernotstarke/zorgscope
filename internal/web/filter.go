@@ -37,8 +37,8 @@ func parseFilter(q url.Values, loc *time.Location) domain.Filter {
 const dateLayout = "2006-01-02"
 
 // queryString renders f as the canonical query string the page's own URL carries — "?kind=pr&q=x"
-// — or "" when nothing is set. It is what the polled fragment re-fetches itself with, so a tab
-// left open keeps polling the list it is actually showing rather than the unfiltered one.
+// — or "" when nothing is set. It is what the "items" fragment carries as its own query, so
+// GET /items answers with the same filter the page was drawn with rather than the unfiltered one.
 func queryString(f domain.Filter) string {
 	q := url.Values{}
 	if f.Repo != "" {

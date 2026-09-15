@@ -90,33 +90,38 @@ func TestACollaboratorIsSignedIn(t *testing.T) {
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
 		t.Fatalf("callback = %d %s", rec.Code, rec.Header().Get("Location"))
 	}
-	session := cookieNamed(rec, sessionCookieName)
-	if session == nil || !s.session.valid(session.Value, testNow) {
+	sessionCookie := cookieNamed(rec, sessionCookieName)
+	if sessionCookie == nil {
+		t.Fatal("no session cookie")
+	}
+	if sess, ok := s.codec.decode(sessionCookie.Value, testNow); !ok {
 		t.Fatal("no valid session cookie")
+	} else if !sess.Seen.IsZero() {
+		t.Errorf("a fresh sign-in has seen = %v, want zero: nothing is NEW until the first mark", sess.Seen)
 	}
 	// FR-8.3 AC2: the cookie is hardened, and it carries an expiry and a signature rather than
 	// anything the visitor presented.
-	if !session.HttpOnly || !session.Secure || session.SameSite != http.SameSiteLaxMode {
-		t.Errorf("session cookie = %+v, want HttpOnly, Secure, SameSite=Lax", session)
+	if !sessionCookie.HttpOnly || !sessionCookie.Secure || sessionCookie.SameSite != http.SameSiteLaxMode {
+		t.Errorf("session cookie = %+v, want HttpOnly, Secure, SameSite=Lax", sessionCookie)
 	}
 	for _, forbidden := range []string{"fake-token", "fake-code", testClientSecret} {
-		if strings.Contains(session.Value, forbidden) {
+		if strings.Contains(sessionCookie.Value, forbidden) {
 			t.Errorf("the session cookie carries %q", forbidden)
 		}
 	}
 	if c := cookieNamed(rec, stateCookieName); c == nil || c.MaxAge >= 0 {
 		t.Fatal("the state cookie was not cleared")
 	}
-	if dash := getAs(s.Handler(), "/", session); dash.Code != http.StatusOK {
+	if dash := getAs(s.Handler(), "/", sessionCookie); dash.Code != http.StatusOK {
 		t.Fatalf("dashboard with the new session = %d", dash.Code)
 	}
 }
 
 // FR-8.3 AC2, in the form the old token sign-in was pinned in: not merely "no credential appears
 // verbatim" — a cookie carrying base64(secret) would pass that and still hand the credential to
-// anything that reads the cookie jar — but "the value is an expiry and a signature over it, and
-// nothing else".
-func TestTheSessionCookieCarriesOnlyAnExpiryAndASignature(t *testing.T) {
+// anything that reads the cookie jar — but "the value is an expiry, a seen mark and a signature
+// over them, and nothing else".
+func TestTheSessionCookieCarriesOnlyAnExpirySeenMarkAndASignature(t *testing.T) {
 	s := newTestServerWith(t, func(o *Options) { startFakeGitHub(t, o) })
 	c := cookieNamed(signInThroughGitHub(t, s.Handler()), sessionCookieName)
 	if c == nil {
@@ -143,9 +148,16 @@ func TestTheSessionCookieCarriesOnlyAnExpiryAndASignature(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the cookie payload is not base64url: %v", err)
 	}
-	exp, err := strconv.ParseInt(string(payload), 10, 64)
+	expStr, seenStr, ok := strings.Cut(string(payload), ":")
+	if !ok {
+		t.Fatalf("the cookie payload is not \"expiry:seen\": %q", payload)
+	}
+	exp, err := strconv.ParseInt(expStr, 10, 64)
 	if err != nil {
-		t.Fatalf("the cookie payload is not an expiry timestamp: %q", payload)
+		t.Fatalf("the cookie payload's expiry is not a timestamp: %q", payload)
+	}
+	if seen, err := strconv.ParseInt(seenStr, 10, 64); err != nil || seen != 0 {
+		t.Errorf("cookie seen mark = %q, want 0: nothing is NEW until the first mark", seenStr)
 	}
 	if want := testNow.Add(sessionTTL).Unix(); exp != want {
 		t.Errorf("cookie expiry = %d, want %d", exp, want)
