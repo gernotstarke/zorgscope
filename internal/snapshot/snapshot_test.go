@@ -25,7 +25,7 @@ type countingSource struct {
 	block chan struct{} // when non-nil, Fetch waits on it before returning
 }
 
-func (s *countingSource) Fetch(ctx context.Context) ([]domain.Item, error) {
+func (s *countingSource) Fetch(_ context.Context) ([]domain.Item, error) {
 	s.mu.Lock()
 	s.calls++
 	items, err, block := s.items, s.err, s.block

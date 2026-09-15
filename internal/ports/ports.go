@@ -56,4 +56,5 @@ type Source interface {
 // SourceFunc adapts a function to Source.
 type SourceFunc func(ctx context.Context) ([]domain.Item, error)
 
+// Fetch calls f.
 func (f SourceFunc) Fetch(ctx context.Context) ([]domain.Item, error) { return f(ctx) }
