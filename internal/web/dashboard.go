@@ -77,15 +77,49 @@ func shimFirstSeen(items []domain.Item) []domain.Item {
 	return out
 }
 
-// handleSeen re-mints the cookie with seen = now and goes back to the page (FR-1.2).
+// handleSeen re-mints the cookie with seen = the fetched-at of the snapshot the visitor was shown
+// and goes back to the page (FR-1.2).
 //
 // It is a plain form post and a redirect, so the badges clear whether or not JavaScript is running
 // (FR-1.3 AC3).
 func (s *Server) handleSeen(w http.ResponseWriter, r *http.Request) {
 	sess, _ := s.session(r)
-	sess.Seen = s.clock.Now()
+	sess.Seen = s.seenAt(r)
 	s.setSession(w, sess)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// seenAt is the moment "Mark all seen" stamps as seen: the "seen_at" field the form carries,
+// which dashboard.html fills in with the fetched-at of the snapshot that was actually on the page
+// (see dashboardView.FetchedAtUnix) — not the moment of the click.
+//
+// The two differ by up to the cache TTL: a visitor can click the button seconds after an item was
+// fetched that they never had the chance to see, or minutes after one that arrived in a fetch they
+// never asked for. Stamping seen at the click would mark such an item seen sight unseen, and it
+// would never show as NEW at all. Stamping it at the fetch instead means only what was actually on
+// the page counts as acknowledged.
+//
+// A missing, unparsable, non-positive or future value falls back to now — a visitor must never end
+// up with a seen-mark later than the moment they clicked, and a field this handler did not itself
+// produce is not trusted blindly. This is safe to get wrong: seen_at only ever narrows what counts
+// as NEW for this one visitor's own next view, and it travels inside the signed cookie only after
+// this function has validated it, so a tampered form field can do no more than move the visitor's
+// own watermark within these bounds.
+func (s *Server) seenAt(r *http.Request) time.Time {
+	now := s.clock.Now()
+	raw := r.FormValue("seen_at")
+	if raw == "" {
+		return now
+	}
+	unix, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || unix <= 0 {
+		return now
+	}
+	at := time.Unix(unix, 0)
+	if at.After(now) {
+		return now
+	}
+	return at
 }
 
 // handleRefresh throws the snapshot away so the redirected GET fetches (FR-1.3).
@@ -130,6 +164,11 @@ type dashboardView struct {
 	// FetchedAt is when the snapshot's items were fetched, in the configured timezone, as
 	// "15:04" — or "never" before the first fetch has returned anything.
 	FetchedAt string
+	// FetchedAtUnix is the same moment as FetchedAt, in Unix seconds, and zero before the first
+	// fetch has returned anything. The "Mark all seen" form carries it as a hidden field so
+	// POST /seen can stamp seen at the fetch the visitor actually saw rather than at the click —
+	// see handleSeen's seenAt. The template omits the field entirely when it is zero.
+	FetchedAtUnix int64
 	// Error is the notice shown when the most recent fetch failed: what went wrong, scrubbed of
 	// every configured secret (QS-4.3), and when — empty when the last fetch succeeded. A failed
 	// fetch never discards the previous items (see internal/snapshot), so the list below it is
@@ -239,15 +278,20 @@ func errorNotice(secrets config.Secrets, snap snapshot.Snapshot, loc *time.Locat
 // dashboardView turns the assembled domain dashboard and the snapshot it was built from into the
 // page's presentation data.
 func (s *Server) dashboardView(d domain.Dashboard, snap snapshot.Snapshot, now time.Time) dashboardView {
+	var fetchedAtUnix int64
+	if !snap.FetchedAt.IsZero() {
+		fetchedAtUnix = snap.FetchedAt.Unix()
+	}
 	return dashboardView{
-		FetchedAt: clockLabel(snap.FetchedAt, s.loc),
-		Error:     errorNotice(s.cfg.Secrets, snap, s.loc),
-		NewTotal:  d.NewTotal,
-		Total:     d.Total,
-		Shown:     d.Shown,
-		Filter:    newFilterView(d.Filter),
-		Repos:     filterRepos(s.cfg.GitHub.Repos, d.Filter.Repo),
-		Items:     s.itemsView(d, now),
+		FetchedAt:     clockLabel(snap.FetchedAt, s.loc),
+		FetchedAtUnix: fetchedAtUnix,
+		Error:         errorNotice(s.cfg.Secrets, snap, s.loc),
+		NewTotal:      d.NewTotal,
+		Total:         d.Total,
+		Shown:         d.Shown,
+		Filter:        newFilterView(d.Filter),
+		Repos:         filterRepos(s.cfg.GitHub.Repos, d.Filter.Repo),
+		Items:         s.itemsView(d, now),
 	}
 }
 

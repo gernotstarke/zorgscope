@@ -78,10 +78,12 @@ const strictTransportSecurity = "max-age=31536000; includeSubDomains"
 // enforces form-action on the redirect that follows a *form submission*, which is exactly why
 // starting the flow is a link navigation rather than a POST (design 2026-09-14 §2).
 //
-// img-src names no external host and carries no data: either: every image this page ever draws —
-// the logo, the icons — is a file this process serves itself under /static (QS-4.4). A page that
-// waits on no third party should not be able to talk to one either.
-const contentSecurityPolicy = "default-src 'self'; img-src 'self'; style-src 'self'; " +
+// img-src allows data: and nothing external. The build badges are someone else's artwork, and they
+// used to be someone else's *request*: the policy named img.shields.io so the browser could fetch
+// them while the page was being read. They are now fetched by the refresh run and carried in the
+// page as data URIs (FR-2.3 AC5), so the host came back out — a page that waits on no third party
+// should not be able to talk to one either.
+const contentSecurityPolicy = "default-src 'self'; img-src 'self' data:; style-src 'self'; " +
 	"script-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'"
 
 // Options are the dependencies of a Server. Clock, Log and BehindFlyProxy are optional; the rest

@@ -181,6 +181,58 @@ func TestACookieFromTheOldSingleIntegerFormatIsRejected(t *testing.T) {
 	}
 }
 
+// Step 1's round trip, directly against the codec: what mint writes for a session, decode reads
+// back unchanged — both Expiry and Seen, not only the field the pre-reset codec had.
+func TestSessionCodecRoundTripsExpiryAndSeen(t *testing.T) {
+	codec := newSessionCodec(testClientSecret)
+	want := session{Expiry: testNow.Add(sessionTTL), Seen: testNow.Add(-3 * time.Hour)}
+	got, ok := codec.decode(codec.mint(want), testNow)
+	if !ok {
+		t.Fatal("decode of a freshly minted session = false")
+	}
+	if !got.Expiry.Equal(want.Expiry) {
+		t.Errorf("decoded Expiry = %v, want %v", got.Expiry, want.Expiry)
+	}
+	if !got.Seen.Equal(want.Seen) {
+		t.Errorf("decoded Seen = %v, want %v", got.Seen, want.Seen)
+	}
+}
+
+// Seen sits inside the signed payload precisely so it cannot be moved independently of expiry: a
+// cookie whose seen digits are altered by one character, with the signature left exactly as it
+// was minted, must fail to decode — not merely disagree with what was minted.
+func TestACookieWithSeenAlteredByOneCharacterFails(t *testing.T) {
+	codec := newSessionCodec(testClientSecret)
+	value := codec.mint(session{Expiry: testNow.Add(sessionTTL), Seen: testNow.Add(-time.Hour)})
+
+	encPayload, encSig, ok := strings.Cut(value, ".")
+	if !ok {
+		t.Fatalf("cookie value %q is not payload.signature", value)
+	}
+	payload, err := sessionEncoding.DecodeString(encPayload)
+	if err != nil {
+		t.Fatalf("decoding payload: %v", err)
+	}
+	expStr, seenStr, ok := strings.Cut(string(payload), ":")
+	if !ok {
+		t.Fatalf("payload %q is not \"expiry:seen\"", payload)
+	}
+
+	// Flip the last digit of the seen half only; expiry and the signature are untouched.
+	seenDigits := []byte(seenStr)
+	last := len(seenDigits) - 1
+	if seenDigits[last] == '1' {
+		seenDigits[last] = '2'
+	} else {
+		seenDigits[last] = '1'
+	}
+	tampered := sessionEncoding.EncodeToString([]byte(expStr+":"+string(seenDigits))) + "." + encSig
+
+	if _, ok := codec.decode(tampered, testNow); ok {
+		t.Error("decode accepted a cookie whose seen mark was altered by one character without re-signing")
+	}
+}
+
 func TestExpiredCookieIsRejected(t *testing.T) {
 	clock := &ports.FixedClock{T: testNow}
 	s := newTestServerWith(t, func(o *Options) { o.Clock = clock })
@@ -341,10 +393,6 @@ func TestSecurityHeaders(t *testing.T) {
 		if !strings.Contains(csp, directive) {
 			t.Errorf("CSP = %q, want it to carry %q (QS-4.4)", csp, directive)
 		}
-	}
-	// The badges are gone, so nothing on this page needs a data: image any more (QS-4.4).
-	if strings.Contains(csp, "https://") || strings.Contains(csp, "data:") {
-		t.Errorf("CSP = %q, want it to name no external host and no data: scheme", csp)
 	}
 }
 

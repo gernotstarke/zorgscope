@@ -336,16 +336,15 @@ func wantEqual(t *testing.T, got, want string) {
 	}
 }
 
-// QS-4.4: with no badges left to carry, the policy names no external host and no data: scheme at
-// all — a page that waits on no third party should not be able to talk to one either.
+// QS-4.4: the policy names no external host at all.
 func TestTheContentSecurityPolicyNamesNoExternalHost(t *testing.T) {
 	rec := getAuthed(t, dashHandler(t, &fakeSource{items: representativeItems()}), "/")
 
 	csp := rec.Header().Get("Content-Security-Policy")
-	if !strings.Contains(csp, "img-src 'self';") {
-		t.Errorf("img-src is not self alone: %s", csp)
+	if !strings.Contains(csp, "img-src 'self' data:;") {
+		t.Errorf("img-src is not self and data: alone: %s", csp)
 	}
-	if strings.Contains(csp, "shields.io") || strings.Contains(csp, "https://") || strings.Contains(csp, "data:") {
-		t.Errorf("the policy names an external host or a data: scheme: %s", csp)
+	if strings.Contains(csp, "shields.io") || strings.Contains(csp, "https://") {
+		t.Errorf("the policy still names an external host: %s", csp)
 	}
 }

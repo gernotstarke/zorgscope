@@ -115,6 +115,125 @@ func TestMarkSeenClearsTheNewBadgeOnTheNextGet(t *testing.T) {
 	}
 }
 
+// Controller ruling on FR-1.2: "Mark all seen" stamps seen at the fetch the visitor was actually
+// shown, not at the moment of the click. An item created between that fetch and the click was
+// never on the page being acknowledged, so it must still read as NEW once it does appear.
+func TestMarkSeenUsesTheFetchedAtOfTheSnapshotShownNotTheClick(t *testing.T) {
+	clock := &ports.FixedClock{T: testNow}
+	src := &fakeSource{items: []domain.Item{ghItem(1, "Present at the first fetch", testNow.Add(-time.Hour))}}
+	o := testOptions()
+	o.Config.GitHub.Repos = append([]string{"org/repo"}, representativeRepos()...)
+	o.Clock = clock
+	o.Cache = snapshot.New(src, time.Hour, clock)
+	s, err := New(o)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	h := s.Handler()
+	c := signIn(t, h)
+
+	// T: the first view, fetched now.
+	fetchedAt := clock.Now()
+	getAs(h, "/", c)
+
+	// T+2m: an item created after that fetch, but before the click, turns up in a later fetch.
+	clock.Advance(2 * time.Minute)
+	late := ghItem(2, "Created after the fetch, before the click", clock.Now())
+	src.setItems([]domain.Item{ghItem(1, "Present at the first fetch", testNow.Add(-time.Hour)), late})
+
+	// T+4m: "Mark all seen" is pressed. Its form named the fetch the visitor actually saw (T),
+	// exactly as dashboard.html's hidden seen_at field does.
+	clock.Advance(2 * time.Minute)
+	form := url.Values{"seen_at": {strconv.FormatInt(fetchedAt.Unix(), 10)}}
+	rec := postAs(h, "/seen", form, c)
+	reminted := cookieNamed(rec, sessionCookieName)
+	if reminted == nil {
+		t.Fatal("POST /seen set no cookie")
+	}
+
+	postAs(h, "/refresh", nil, reminted)
+	body := getAs(h, "/", reminted).Body.String()
+	if !strings.Contains(body, "Created after the fetch, before the click") {
+		t.Fatal("the fixture is wrong: the late item is missing from the refreshed list")
+	}
+	if !strings.Contains(body, `<span class="badge badge-new">NEW</span>`) {
+		t.Error("an item created between the snapshot fetch and the click is not NEW: seen was " +
+			"stamped at the click rather than at the fetch the visitor was shown")
+	}
+}
+
+// The rendered "Mark all seen" form actually carries the wiring the test above exercises by hand:
+// the snapshot's own fetched-at, as dashboardView.FetchedAtUnix.
+func TestTheMarkSeenFormCarriesTheSnapshotsFetchedAt(t *testing.T) {
+	clock := &ports.FixedClock{T: testNow}
+	src := &fakeSource{items: []domain.Item{ghItem(1, "One", testNow.Add(-time.Hour))}}
+	o := testOptions()
+	o.Config.GitHub.Repos = append([]string{"org/repo"}, representativeRepos()...)
+	o.Clock = clock
+	o.Cache = snapshot.New(src, time.Hour, clock)
+	s, err := New(o)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	h := s.Handler()
+	body := getAs(h, "/", signIn(t, h)).Body.String()
+
+	want := `<input type="hidden" name="seen_at" value="` + strconv.FormatInt(testNow.Unix(), 10) + `">`
+	if !strings.Contains(body, want) {
+		t.Errorf("the Mark all seen form does not carry the snapshot's fetched-at:\nwant: %s\ngot:  %s",
+			want, firstLineContaining(body, `action="/seen"`))
+	}
+}
+
+// Before the first fetch has ever returned anything there is no fetched-at to carry, and the form
+// must not send a fabricated one — the field is simply absent, and handleSeen falls back to now.
+func TestTheMarkSeenFormOmitsSeenAtBeforeTheFirstFetch(t *testing.T) {
+	src := &fakeSource{err: errors.New("github: unreachable")}
+	body := getAuthed(t, dashHandler(t, src), "/").Body.String()
+
+	form := firstLineContaining(body, `action="/seen"`)
+	if strings.Contains(form, "seen_at") {
+		t.Errorf("the Mark all seen form names a fetch that never happened: %s", form)
+	}
+}
+
+// Controller ruling on FR-1.2: a seen_at that is missing, unparsable, not positive, or in the
+// future must never be trusted as is — handleSeen falls back to now in every such case.
+func TestSeenAtFallsBackToNowWhenMissingInvalidOrFuture(t *testing.T) {
+	tests := []struct {
+		name string
+		form url.Values
+	}{
+		{"missing entirely", url.Values{}},
+		{"present but empty", url.Values{"seen_at": {""}}},
+		{"not a number", url.Values{"seen_at": {"not-a-number"}}},
+		{"zero", url.Values{"seen_at": {"0"}}},
+		{"negative", url.Values{"seen_at": {"-5"}}},
+		{"in the future", url.Values{"seen_at": {strconv.FormatInt(testNow.Add(time.Hour).Unix(), 10)}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			clock := &ports.FixedClock{T: testNow}
+			s := newTestServerWith(t, func(o *Options) { o.Clock = clock })
+			h := s.Handler()
+			c := signIn(t, h)
+
+			rec := postAs(h, "/seen", tc.form, c)
+			reminted := cookieNamed(rec, sessionCookieName)
+			if reminted == nil {
+				t.Fatal("POST /seen set no cookie")
+			}
+			sess, ok := s.codec.decode(reminted.Value, testNow)
+			if !ok {
+				t.Fatal("the re-minted cookie does not decode")
+			}
+			if !sess.Seen.Equal(testNow) {
+				t.Errorf("seen = %v, want now (%v): %s must fall back to now", sess.Seen, testNow, tc.name)
+			}
+		})
+	}
+}
+
 // design §5: POST /refresh invalidates the cache, so the next GET fetches again.
 func TestRefreshInvalidatesTheCacheSoTheNextGetFetches(t *testing.T) {
 	src := &fakeSource{items: []domain.Item{ghItem(1, "One", testNow.Add(-time.Hour))}}

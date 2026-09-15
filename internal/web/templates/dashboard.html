@@ -12,7 +12,11 @@
        narrowing the list with the search box never makes the badge lie about what is new. */}}
   {{if gt .NewTotal 0}}<span class="badge badge-new">NEW {{.NewTotal}}</span>{{end}}
   {{/* Three plain form posts, so the page is fully usable with JavaScript disabled (FR-1.3 AC3). */}}
-  <form class="action" method="post" action="/seen"><button type="submit">Mark all seen</button></form>
+  {{/* seen_at names the fetch this page actually shows, so POST /seen (handleSeen's seenAt) can
+       stamp seen at that moment rather than at the click — an item that arrived in a fetch made
+       after this page was drawn was never on the page being acknowledged. Omitted before the
+       first fetch has ever returned anything, in which case the handler falls back to now. */}}
+  <form class="action" method="post" action="/seen">{{if .FetchedAtUnix}}<input type="hidden" name="seen_at" value="{{.FetchedAtUnix}}">{{end}}<button type="submit">Mark all seen</button></form>
   <form class="action" method="post" action="/refresh"><button type="submit">Refresh</button></form>
   <form class="action" method="post" action="/logout"><button type="submit">Log out</button></form>
 </div>
