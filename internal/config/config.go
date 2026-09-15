@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"regexp"
 	"time"
@@ -171,11 +173,52 @@ func Load(path string, env func(string) string) (Config, error) {
 	if cfg.Secrets.OAuthClientSecret == "" {
 		return Config{}, errors.New("GITHUB_OAUTH_CLIENT_SECRET is not set")
 	}
+	if err := checkOAuthBaseURL(cfg.GitHub.OAuthBaseURL); err != nil {
+		return Config{}, err
+	}
 	if len(cfg.Secrets.RefreshSecret) < minSecretLen {
 		return Config{}, errors.New("REFRESH_SECRET must be at least 32 characters")
 	}
 
 	return cfg, nil
+}
+
+// checkOAuthBaseURL validates GITHUB_OAUTH_BASE_URL, which is empty in every real deployment.
+//
+// The variable exists so that `make fakes` and the tests can point the sign-in flow at a fixture
+// server on this machine; it is not a general redirect. Left unvalidated it would be one: the value
+// becomes the authorize URL the visitor's browser is sent to and the token URL this process posts
+// the client secret to, so a typo — or an environment somebody else can write — would hand both to
+// a host of their choosing. Anything but https is therefore refused unless it is talking to this
+// machine, where there is no network to intercept and no TLS certificate to have.
+func checkOAuthBaseURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	// The error is never included: the value is not a secret, but it is attacker-influenceable
+	// text, and the name of the variable is what the operator needs (FR-8.1 AC3, QS-4.3).
+	if err != nil || u.Host == "" {
+		return errors.New("GITHUB_OAUTH_BASE_URL is not a URL")
+	}
+	if u.Scheme == "https" {
+		return nil
+	}
+	if u.Scheme == "http" && isLoopbackHost(u.Hostname()) {
+		return nil
+	}
+	return errors.New("GITHUB_OAUTH_BASE_URL must be https, unless it points at this machine")
+}
+
+// isLoopbackHost reports whether host is this machine. host.docker.internal is included because
+// that is how a container reaches `make fakes` running on the host, which is the whole reason the
+// variable exists.
+func isLoopbackHost(host string) bool {
+	if host == "localhost" || host == "host.docker.internal" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // Enabled reports whether the named source has its credential (FR-8.2 AC2). An unknown source

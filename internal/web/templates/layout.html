@@ -11,7 +11,7 @@
 {{/* FR-1.2 AC3: the tab title is prefixed with the total new count, and only when it is greater
      than zero. The dashboard leaves Title empty, because the dashboard is the site. It is drawn
      from the shared block, because a polled tile sends the same block back to keep the count
-     true — see templates/tiles/counts.html. */}}
+     true — see templates/fragments/counts.html. */}}
 {{template "tab-title" .TitleView}}
 {{/* Every static URL carries its file's content hash. Without it the browser holds a stylesheet
      for as long as its max-age allows while the HTML around it changes on every deploy, and new

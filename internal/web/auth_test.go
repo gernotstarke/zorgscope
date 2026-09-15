@@ -785,7 +785,7 @@ func TestARouteWithNoDeclaredCredentialFailsClosed(t *testing.T) {
 	}
 }
 
-// Rotating the OAuth client secret is this product's only sign-out (FR-8.3 AC3), and it cannot
+// Rotating the OAuth client secret is this product's only sign-out (FR-8.3 AC4), and it cannot
 // reach a page the browser has already stored. Authenticated responses therefore say no-store.
 func TestAuthenticatedResponsesAreNotStoredByTheBrowser(t *testing.T) {
 	s := newTestServer(t)
@@ -803,7 +803,7 @@ func TestAuthenticatedResponsesAreNotStoredByTheBrowser(t *testing.T) {
 			h.ServeHTTP(rec, req)
 			if got := rec.Header().Get("Cache-Control"); !strings.Contains(got, "no-store") {
 				t.Errorf("Cache-Control = %q, want no-store: a rotated token cannot evict a "+
-					"page the browser kept (FR-8.3 AC3)", got)
+					"page the browser kept (FR-8.3 AC4)", got)
 			}
 		})
 	}

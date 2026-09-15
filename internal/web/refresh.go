@@ -42,23 +42,25 @@ import (
 // # The value: what it has to cover
 //
 // Sources are fetched sequentially, each HTTP call is bounded by main.go's 20-second
-// upstreamTimeout, and two of the fetchers fan out inside one Fetch. The worst case a run can take
-// is therefore, in whole seconds:
+// upstreamTimeout, and the build fetcher fans out inside its own Fetch. The worst case a run can
+// take is therefore, in whole seconds:
 //
-//	20 × (2×repos + 2×sites + 1) + 10
+//	20 × (2×repos + 1) + 10
 //
-// — GitHub's issue and build fetchers make one call per configured repository each, Plausible
-// makes one per site per window and there are two windows (FR-3.1), Todoist makes one, and the
-// announcement step is bounded by the runner's own 10-second notifyBudget. One repository and one
-// site is 110 s; two repositories and one site is 150 s, which is why this is four minutes and not
-// two — the smaller ceiling fired on a configuration this size.
+// — GitHub's issue and build fetchers make one call per configured repository each, the build
+// badges of a whole run are fetched at once and so cost one bounded step however many there are
+// (see attachBadges), and the announcement step is bounded by the runner's own 10-second
+// notifyBudget. One repository is 70 s; the two this deployment watches are 110 s. Four minutes is
+// the ceiling those figures were given room under, and it stays where it is: the value is not a
+// consequence of the source count, and lowering it would only move the failure from "a dead
+// upstream keeps the Machine awake" to "a slow one loses a run".
 //
 // # What this ceiling deliberately does not cover
 //
 // It does not stretch to the pathological worst case at the representative configuration, and it
-// cannot. Ten repositories and four sites is 29 upstream calls, some 590 s if every one of them
-// times out — past leaseTTL, so no ceiling that keeps the invariant above can accommodate it. That
-// is the right outcome rather than a gap: if every upstream is dead, cutting the run short is what
+// cannot. Ten repositories is 21 upstream calls, some 430 s if every one of them times out — past
+// leaseTTL, so no ceiling that keeps the invariant above can accommodate it. That is the right
+// outcome rather than a gap: if every upstream is dead, cutting the run short is what
 // should happen. The sources record their errors, the dashboard shows them as failing (FR-1.4 AC3)
 // and the next trigger tries again. This ceiling exists to bound how long the Machine stays awake,
 // not to give total upstream failure room to finish. QS-2.5's ≤30 s figure is about normal
@@ -78,12 +80,12 @@ import (
 //
 //	(len(fetchers) + 2) × cleanupTimeout
 //
-// which at the four production fetchers (github, github-builds, plausible, todoist) is 6 × 5 s =
-// 30 s of the 60 s available — half the headroom, not a quarter of it. It stays inside the lease
-// up to eleven fetchers (13 × 5 s = 65 s > 60 s), so adding fetchers is not free: past that, a run
-// whose ceiling fired can still be writing when its lease is handed to the next trigger, which is
-// the concurrency the ceiling exists to prevent. Re-derive both constants if a fifth source is
-// wired.
+// which at the two production fetchers (github, github-builds) is 4 × 5 s = 20 s of the 60 s
+// available — a third of the headroom. It stays inside the lease up to ten fetchers; an eleventh
+// is 13 × 5 s = 65 s > 60 s, and past that a run whose ceiling fired can still be writing when its
+// lease is handed to the next trigger, which is the concurrency the ceiling exists to prevent.
+// Adding fetchers is therefore not free, and both constants want re-deriving well before the tenth
+// (QS-5.5).
 const refreshCeiling = 4 * time.Minute
 
 // busyNotice is what a visitor is told when another refresh already holds the lease. The API says

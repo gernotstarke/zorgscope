@@ -13,9 +13,11 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/gernotstarke/zorgscope/internal/fakesources"
 	"github.com/gernotstarke/zorgscope/internal/ports"
 )
 
@@ -297,7 +299,83 @@ func TestASignInLockoutRecoversAsTheClockAdvances(t *testing.T) {
 	}
 }
 
-// FR-8.3 AC3: rotating the client secret is this product's only sign-out, and it works because the
+// startCountingFakeGitHub is startFakeGitHub with a counter around the fixture's token endpoint.
+// It exists so that a test can assert what the callback did *not* do: an outbound POST leaves no
+// trace in the response, so counting it at the fake is the only way to see it.
+func startCountingFakeGitHub(t *testing.T, o *Options) *atomic.Int64 {
+	t.Helper()
+	var exchanges atomic.Int64
+	fixture := fakesources.NewServer()
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/login/oauth/access_token" {
+			exchanges.Add(1)
+		}
+		fixture.ServeHTTP(w, r)
+	}))
+	t.Cleanup(fake.Close)
+	o.Config.GitHub.OAuthBaseURL = fake.URL
+	o.HTTPClient = fake.Client()
+	resp, err := http.Post(fake.URL+"/_control/oauth-callback?url=http://zorgscope.test/auth/callback", "", nil) //nolint:noctx // a test helper against a local fixture server
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	return &exchanges
+}
+
+// QS-4.2: the budget has to be charged before zorgscope talks to GitHub, not after. If the limiter
+// only decided what the visitor is shown, an anonymous caller could loop the callback for as long
+// as it liked and still make this process POST to GitHub once per attempt — which spends an
+// upstream quota it does not own and holds a Machine that scales to zero awake for the whole loop.
+func TestASignInBeyondTheBudgetNeverReachesGitHub(t *testing.T) {
+	var exchanges *atomic.Int64
+	s := newTestServerWith(t, func(o *Options) {
+		exchanges = startCountingFakeGitHub(t, o)
+		o.Access = &stubAccess{allow: map[string]bool{}}
+	})
+	h := s.Handler()
+
+	for i := range signInAttempts {
+		if rec := signInThroughGitHub(t, h); rec.Code != http.StatusForbidden {
+			t.Fatalf("attempt %d = %d, want 403", i+1, rec.Code)
+		}
+	}
+	spent := exchanges.Load()
+	if rec := signInThroughGitHub(t, h); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("after the budget: %d, want 429", rec.Code)
+	}
+	if got := exchanges.Load() - spent; got != 0 {
+		t.Errorf("a callback beyond the budget made %d call(s) to GitHub's token endpoint, want 0", got)
+	}
+}
+
+// QS-4.2 again, from the legitimate visitor's side: the budget is ten attempts and the tenth is
+// still one of them. Charging the limiter earlier must not quietly turn the limit into nine.
+func TestTheLastAttemptInTheBudgetCanStillSignIn(t *testing.T) {
+	access := &stubAccess{allow: map[string]bool{}}
+	s := newTestServerWith(t, func(o *Options) {
+		startFakeGitHub(t, o)
+		o.Access = access
+	})
+	h := s.Handler()
+
+	for i := range signInAttempts - 1 {
+		if rec := signInThroughGitHub(t, h); rec.Code != http.StatusForbidden {
+			t.Fatalf("attempt %d = %d, want 403", i+1, rec.Code)
+		}
+	}
+	// The visitor finally signs in as themselves rather than as somebody with no push access.
+	access.allow = map[string]bool{"fake-token": true}
+	rec := signInThroughGitHub(t, h)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("the tenth attempt = %d, want 303: nine failures must not cost the tenth", rec.Code)
+	}
+	if cookieNamed(rec, sessionCookieName) == nil {
+		t.Error("the tenth attempt set no session cookie")
+	}
+}
+
+// FR-8.3 AC4: rotating the client secret is this product's only sign-out, and it works because the
 // session key is derived from that secret (design 2026-09-14 §2).
 func TestRotatingTheClientSecretInvalidatesExistingSessions(t *testing.T) {
 	old := newTestServerWith(t, func(o *Options) { startFakeGitHub(t, o) })
@@ -332,7 +410,7 @@ func TestNoSignInResponseOrLogLineCarriesACodeStateTokenOrSecret(t *testing.T) {
 		}
 	}
 	if logs.Len() == 0 {
-		t.Error("a refused sign-in was not logged at all (FR-8.3 AC4)")
+		t.Error("a refused sign-in was not logged at all (FR-8.3 AC5)")
 	}
 }
 

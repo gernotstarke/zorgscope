@@ -269,7 +269,7 @@ func (s *Server) pollSeconds() int {
 // The view types below exist so that the templates can stay free of logic. Every string a
 // template prints is computed here, in Go, where it is testable and where html/template's
 // contextual escaping is the only thing left between upstream text and the page. In particular
-// nothing is ever a template.HTML: issue titles, repository names, Todoist content and upstream
+// nothing is ever a template.HTML: issue titles, repository names, summaries and upstream
 // error text are all attacker-influenceable in principle (QS-4.3, QS-4.4).
 
 // dashboardView is the whole page.
@@ -363,7 +363,7 @@ func (v dashboardView) Summary() summaryView {
 // Both are outside every tile and both state the *total*, so a poll that swapped a tile without
 // them would leave the page disagreeing with itself. The fragment therefore carries both — the
 // title as a plain <title>, which htmx lifts out of any response and applies to the document, the
-// summary as an out-of-band swap, which is what OOB marks. See templates/tiles/counts.html.
+// summary as an out-of-band swap, which is what OOB marks. See templates/fragments/counts.html.
 type titleView struct {
 	Title    string
 	NewCount int

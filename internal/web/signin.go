@@ -81,26 +81,42 @@ func stateCookie(value string, maxAge int) *http.Cookie {
 	}
 }
 
-// handleAuthCallback finishes the flow. Every refusal clears the state cookie, sets no session,
-// counts against the sign-in rate limit and is logged without the code, the state or the token.
+// handleAuthCallback finishes the flow. Every attempt — admitted or refused — spends one token of
+// the sign-in rate limit, every refusal clears the state cookie and sets no session, and nothing
+// here is logged with the code, the state or the token.
 //
 // The visitor's access token lives for exactly one question — may this person push to the
 // repository? — and is never stored, logged or rendered (design 2026-09-14 §2).
 func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	clearState := func() { http.SetCookie(w, stateCookie("", -1)) }
+	ip := s.clientIP(r)
+
+	// The token is spent first, before this handler can be made to do anything that costs
+	// something outside the process (QS-4.2, FR-8.3 AC5). Charging it at the exit instead would
+	// decide only what the visitor is shown: an anonymous caller could loop /auth/github and
+	// /auth/callback and still make zorgscope POST to GitHub's token endpoint once per attempt,
+	// spending a quota it does not own and keeping a Machine that scales to zero awake for as long
+	// as the loop runs. It is charged here rather than after the state check for the same reason a
+	// bad state is a refusal at all: the design says a mismatched state counts against this bucket,
+	// and an attempt that never presents a plausible state is exactly the attempt worth throttling.
+	//
+	// Nothing below charges again, so one attempt costs one token on every path, and a visitor who
+	// gets it right on the tenth try is still admitted.
+	if !s.signIn.allow(ip, s.clock.Now()) {
+		clearState()
+		// The reason this attempt would have failed on is not known yet — it is not worth an
+		// outbound request to find out. The refusals underneath a burst of 429s each logged their
+		// own why while there was still budget for them.
+		s.log.Warn("sign-in rate-limited", "ip", ip)
+		s.render(w, r, http.StatusTooManyRequests, "login.html", pageData{Title: "Sign in", Error: "Too many attempts. Try again later."})
+		return
+	}
+
 	// refuse is the single exit for everything that is not a signed-in collaborator. why goes to
 	// the log beside the client address and nothing else; msg is what the visitor is shown, and it
 	// is a fixed sentence rather than an upstream error's own words (QS-4.3).
 	refuse := func(status int, why, msg string) {
 		clearState()
-		ip := s.clientIP(r)
-		if !s.signIn.allow(ip, s.clock.Now()) {
-			// why goes into this line too: an operator reading a burst of 429s still wants to
-			// know what the attempts underneath them were failing on.
-			s.log.Warn("sign-in rate-limited", "ip", ip, "why", why)
-			s.render(w, r, http.StatusTooManyRequests, "login.html", pageData{Title: "Sign in", Error: "Too many attempts. Try again later."})
-			return
-		}
 		s.log.Warn("sign-in refused", "ip", ip, "why", why)
 		s.render(w, r, status, "login.html", pageData{Title: "Sign in", Error: msg})
 	}
@@ -121,14 +137,16 @@ func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := context.WithValue(r.Context(), oauth2.HTTPClient, s.httpClient)
-	tok, err := s.oauthConfig().Exchange(ctx, q.Get("code"))
+	tok, err := s.oauthConfig().Exchange(context.WithValue(r.Context(), oauth2.HTTPClient, s.httpClient), q.Get("code"))
 	if err != nil {
 		refuse(http.StatusBadGateway, "exchange failed", "GitHub did not accept the sign-in. Try again.")
 		return
 	}
 	notACollaborator := "This dashboard is for collaborators of " + s.cfg.GitHub.AuthRepo + "."
-	ok, err := s.access.HasPushAccess(ctx, tok.AccessToken)
+	// The request's own context, not the one carrying oauth2.HTTPClient: the access checker holds
+	// the client it should use, and handing it a context that names another one would quietly
+	// decide for it.
+	ok, err := s.access.HasPushAccess(r.Context(), tok.AccessToken)
 	switch {
 	// GitHub answered without saying what the visitor may do. The visitor is refused exactly as a
 	// stranger is — the check fails closed — but the log says which of the two happened, because
@@ -145,8 +163,8 @@ func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	clearState()
 	// The one audit line this product needs: a collaborator signed in, from where. Never a login
-	// name — the visitor did not choose to publish one here — and never the token (FR-8.3 AC4).
-	s.log.Info("sign-in accepted", "ip", s.clientIP(r))
+	// name — the visitor did not choose to publish one here — and never the token (FR-8.3 AC5).
+	s.log.Info("sign-in accepted", "ip", ip)
 	s.setSession(w, s.clock.Now())
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

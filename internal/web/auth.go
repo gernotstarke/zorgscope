@@ -33,7 +33,9 @@ const (
 	stateCookieName = "zorgscope_oauth_state"
 	stateTTL        = 10 * time.Minute
 
-	// signInAttempts and signInWindow are the rate limit on refused sign-ins (QS-4.2).
+	// signInAttempts and signInWindow are the rate limit on sign-in attempts (QS-4.2). Every
+	// callback spends a token, admitted or refused, because the budget has to be charged before
+	// the outbound token exchange rather than after it — see handleAuthCallback.
 	signInAttempts = 10
 	signInWindow   = 15 * time.Minute
 )
@@ -48,7 +50,7 @@ var sessionEncoding = base64.RawURLEncoding
 // out of that derivation. The browser never holds a credential — only an expiry and a signature
 // over it, so FR-8.3 AC2 needs no separate store, and neither the visitor's GitHub token nor the
 // client secret is ever in the cookie jar. And rotating the client secret changes the key, which
-// invalidates every signature ever minted under the old one: FR-8.3 AC3 without a session table, a
+// invalidates every signature ever minted under the old one: FR-8.3 AC4 without a session table, a
 // revocation list or anything else that would have to survive the Machine being stopped.
 //
 // The cookie holds no identity on purpose. The product has no per-user state, and "which
@@ -138,7 +140,7 @@ func (s *Server) requireSession(next http.Handler, redirect bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.signedIn(r) {
 			// Rotating the OAuth client secret is the only sign-out this product has
-			// (FR-8.3 AC3), and a rotation cannot reach a page the browser has already stored.
+			// (FR-8.3 AC4), and a rotation cannot reach a page the browser has already stored.
 			// Without no-store the dashboard — names of repositories, issue titles — stays in
 			// the back-forward cache and in any disk cache after the secret is rotated, which is
 			// precisely the state the rotation was performed to end.
@@ -213,7 +215,7 @@ func (s *Server) requireBearer(next http.Handler) http.Handler {
 			return
 		}
 		// The presented value is never logged: it may be the real secret, mistyped somewhere
-		// else, and a log is not the place for either (QS-4.2, FR-8.3 AC4).
+		// else, and a log is not the place for either (QS-4.2, FR-8.3 AC5).
 		s.log.Warn("refresh authentication failed", "ip", ip)
 		http.Error(w, "Not authorised.", http.StatusUnauthorized)
 	})

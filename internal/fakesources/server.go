@@ -1,8 +1,7 @@
 // Package fakesources implements a fixture-backed stand-in for the upstream service zorgscope
 // reads from — GitHub (GraphQL and REST) — plus a set of control routes an adapter's tests use to
-// inject failures and added items. It exists so that Tasks 7-10 can develop and test their
-// adapters against a real HTTP server instead of a live network dependency and a real credential
-// (FR-9.2).
+// inject failures and added items. It exists so that the adapters can be developed and tested
+// against a real HTTP server instead of a live network dependency and a real credential (FR-9.2).
 //
 // This package imitates upstream services; it deliberately does not know the shapes zorgscope
 // maps them to. It imports only the standard library, and never internal/domain or
