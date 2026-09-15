@@ -234,6 +234,73 @@ func TestSeenAtFallsBackToNowWhenMissingInvalidOrFuture(t *testing.T) {
 	}
 }
 
+// FR-1.2: "Mark all seen" from an old tab, showing an older fetch than the one already acknowledged,
+// must not move the seen mark backwards — that would turn items already seen back into NEW ones.
+func TestMarkSeenNeverMovesTheSeenMarkBackwards(t *testing.T) {
+	clock := &ports.FixedClock{T: testNow}
+	s := newTestServerWith(t, func(o *Options) { o.Clock = clock })
+	h := s.Handler()
+
+	later := testNow                   // T2, already acknowledged
+	earlier := testNow.Add(-time.Hour) // T1, what the old tab shows
+	c := mintSessionSeenAt(later)
+	form := url.Values{"seen_at": {strconv.FormatInt(earlier.Unix(), 10)}}
+
+	reminted := cookieNamed(postAs(h, "/seen", form, c), sessionCookieName)
+	if reminted == nil {
+		t.Fatal("POST /seen set no cookie")
+	}
+	sess, ok := s.codec.decode(reminted.Value, testNow)
+	if !ok {
+		t.Fatal("the re-minted cookie does not decode")
+	}
+	if !sess.Seen.Equal(later) {
+		t.Errorf("seen = %v, want it kept at %v: an older seen_at moved the mark backwards", sess.Seen, later)
+	}
+}
+
+// FR-1.4 AC1/AC4 and FR-1.2 AC3: after a fetch in which one repository failed, the page still lists
+// that repository's previous items, and "Mark all seen" names no moment later than the last fetch
+// whose items were all current — otherwise it would acknowledge items that were never on the page.
+func TestAPartialFetchKeepsTheFailingRepositoryAndTheSeenAtOfTheGoodFetch(t *testing.T) {
+	clock := &ports.FixedClock{T: testNow}
+	other := ghItem(2, "From the repository that later fails", testNow.Add(-time.Hour))
+	other.Repo = "org/repository-number-0"
+	src := &fakeSource{items: []domain.Item{ghItem(1, "Before", testNow.Add(-time.Hour)), other}}
+	o := testOptions()
+	o.Config.GitHub.Repos = append([]string{"org/repo"}, representativeRepos()...)
+	o.Clock = clock
+	o.Cache = snapshot.New(src, time.Hour, clock)
+	s, err := New(o)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	h := s.Handler()
+	c := signIn(t, h)
+	getAs(h, "/", c) // the good fetch, at testNow
+
+	clock.Advance(2 * time.Minute)
+	src.setItems([]domain.Item{ghItem(1, "After", testNow.Add(-time.Hour))})
+	src.setErr(errors.New("github: org/repository-number-0: unexpected status 502"))
+	postAs(h, "/refresh", nil, c)
+	body := getAs(h, "/", c).Body.String()
+
+	if !strings.Contains(body, "From the repository that later fails") {
+		t.Error("a partial fetch dropped the failing repository's items (FR-1.4 AC1)")
+	}
+	if !strings.Contains(body, "After") {
+		t.Fatal("the fixture is wrong: the repository that did fetch is not current")
+	}
+	m := regexp.MustCompile(`name="seen_at" value="(\d+)"`).FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("no seen_at on the page: %s", firstLineContaining(body, `action="/seen"`))
+	}
+	seenAt, _ := strconv.ParseInt(m[1], 10, 64)
+	if seenAt > testNow.Unix() {
+		t.Errorf("seen_at = %d, later than the good fetch at %d: it would acknowledge items never shown", seenAt, testNow.Unix())
+	}
+}
+
 // design §5: POST /refresh invalidates the cache, so the next GET fetches again.
 func TestRefreshInvalidatesTheCacheSoTheNextGetFetches(t *testing.T) {
 	src := &fakeSource{items: []domain.Item{ghItem(1, "One", testNow.Add(-time.Hour))}}

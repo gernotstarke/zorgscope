@@ -140,4 +140,89 @@ func TestConcurrentGetsShareOneFetch(t *testing.T) {
 	}
 }
 
+// ctxSource starts a fetch, then waits for either its release channel or its context. It checks
+// its context once more after being released, so a fetch whose context was cancelled while it
+// waited fails deterministically rather than on whichever select case the runtime happens to pick.
+type ctxSource struct {
+	started, release chan struct{}
+	items            []domain.Item
+}
+
+func (s *ctxSource) Fetch(ctx context.Context) ([]domain.Item, error) {
+	close(s.started)
+	select {
+	case <-s.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return s.items, nil
+}
+
+// A fetch is shared by every caller waiting on the mutex, so the visitor who happened to trigger it
+// must not be able to cancel it by going away: the error would be served to everyone for a TTL.
+func TestACallerThatGoesAwayDoesNotCancelTheSharedFetch(t *testing.T) {
+	clock := &fakeClock{t: time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)}
+	src := &ctxSource{started: make(chan struct{}), release: make(chan struct{}), items: one("x")}
+	c := snapshot.New(src, time.Minute, clock)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan snapshot.Snapshot, 1)
+	go func() { done <- c.Get(ctx) }()
+
+	<-src.started
+	cancel() // the visitor closes the tab mid-fetch
+	close(src.release)
+
+	s := <-done
+	if s.Err != nil || len(s.Items) != 1 || s.FetchedAt != clock.t {
+		t.Fatalf("a cancelled caller poisoned the shared fetch: %+v", s)
+	}
+}
+
+// FR-1.4 AC1 and AC4: when one repository fails and another does not, the page keeps the failing
+// repository's previous items, and FetchedAt stays at the last fetch whose items are all current —
+// it is what "Mark all seen" acknowledges, and the failing repository's list is not current.
+func TestAPartialFetchKeepsTheFailingRepositorysItemsAndTheOldFetchedAt(t *testing.T) {
+	clock := &fakeClock{t: time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)}
+	src := &countingSource{items: []domain.Item{
+		{Repo: "a/b", Number: 1, Title: "a/b before"},
+		{Repo: "c/d", Number: 2, Title: "c/d two"},
+		{Repo: "c/d", Number: 3, Title: "c/d three"},
+	}}
+	c := snapshot.New(src, time.Minute, clock)
+	good := c.Get(context.Background())
+
+	clock.t = clock.t.Add(2 * time.Minute)
+	src.items = []domain.Item{{Repo: "a/b", Number: 1, Title: "a/b after"}}
+	src.err = errors.New("c/d: unexpected status 502")
+	s := c.Get(context.Background())
+
+	if s.Err == nil || s.ErrAt != clock.t {
+		t.Errorf("error not reported: %+v", s)
+	}
+	if s.FetchedAt != good.FetchedAt {
+		t.Errorf("FetchedAt = %v, want the good fetch's %v: the c/d list is not current", s.FetchedAt, good.FetchedAt)
+	}
+	got := map[string]bool{}
+	for _, it := range s.Items {
+		got[it.Title] = true
+	}
+	want := map[string]bool{"a/b after": true, "c/d two": true, "c/d three": true}
+	if len(s.Items) != len(want) {
+		t.Errorf("items = %+v, want exactly %v", s.Items, want)
+	}
+	for title := range want {
+		if !got[title] {
+			t.Errorf("items lack %q: %+v", title, s.Items)
+		}
+	}
+	// The previous slice is shared with renders that may still be running; it must be untouched.
+	if good.Items[0].Title != "a/b before" || len(good.Items) != 3 {
+		t.Errorf("the previous snapshot's slice was mutated: %+v", good.Items)
+	}
+}
+
 var _ ports.Source = (*countingSource)(nil)

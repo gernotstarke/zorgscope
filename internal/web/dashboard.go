@@ -61,9 +61,16 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, tmpl string) {
 //
 // It is a plain form post and a redirect, so the badges clear whether or not JavaScript is running
 // (FR-1.2 AC4).
+//
+// The mark only ever moves forwards. A tab left open on an older fetch still carries that fetch's
+// seen_at, and pressing its button after a newer one was acknowledged elsewhere would otherwise turn
+// items already seen back into NEW ones. Keeping the later of the two is still never later than the
+// click, since the session's own mark was itself validated when it was set.
 func (s *Server) handleSeen(w http.ResponseWriter, r *http.Request) {
 	sess, _ := s.session(r)
-	sess.Seen = s.seenAt(r)
+	if at := s.seenAt(r); at.After(sess.Seen) {
+		sess.Seen = at
+	}
 	s.setSession(w, sess)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
