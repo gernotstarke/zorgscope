@@ -1,6 +1,6 @@
-// Package config loads zorgscope's non-secret YAML configuration (FR-8.1) and overlays it with
-// secrets read from the environment (FR-8.2). Config values, once loaded, are validated so that a
-// bad configuration fails at start-up rather than mid-request.
+// Package config loads zorgscope's non-secret YAML configuration and overlays it with secrets
+// read from the environment (FR-8.1). Config values, once loaded, are validated so that a bad
+// configuration fails at start-up rather than mid-request.
 package config
 
 import (
@@ -190,7 +190,7 @@ func isLoopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// Enabled reports whether the named source has its credential (FR-8.2 AC2). An unknown source
+// Enabled reports whether the named source has its credential (FR-8.1). An unknown source
 // name reports false. A source with a credential but nothing configured to watch (no repos) also
 // reports false: there would be nothing for it to do.
 func (c Config) Enabled(source string) bool {

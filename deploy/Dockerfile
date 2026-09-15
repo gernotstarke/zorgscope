@@ -1,5 +1,5 @@
-# Static, non-root, scratch-family image. QS-3.4 budgets it at 25 MB: a small image is what makes
-# the cold start after auto-stop cheap enough for an interactive page.
+# Static, non-root, scratch-family image, kept small so the cold start after auto-stop stays
+# cheap enough for an interactive page.
 FROM golang:1.26 AS build
 
 WORKDIR /src

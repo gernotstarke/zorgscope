@@ -697,7 +697,7 @@ func TestAuthenticatedResponsesAreNotStoredByTheBrowser(t *testing.T) {
 	}
 }
 
-// FR-1.3 AC3: "Mark all seen" is a plain form, so a visitor with JavaScript disabled and an
+// FR-1.2 AC4: "Mark all seen" is a plain form, so a visitor with JavaScript disabled and an
 // expired session sees this 401 body itself. It has to lead somewhere.
 func TestTheUnauthorisedFragmentBodyLeadsBackToSignIn(t *testing.T) {
 	h := newTestServer(t).Handler()

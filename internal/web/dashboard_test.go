@@ -64,7 +64,7 @@ func TestNewMarkerAppearsOnlyForItemsCreatedAfterSeen(t *testing.T) {
 	}
 }
 
-// FR-1.2 AC3.
+// FR-1.2 AC2.
 func TestTabTitleCarriesTheNewCount(t *testing.T) {
 	src := &fakeSource{items: []domain.Item{ghItem(1, "Fresh", testNow.Add(-time.Hour))}}
 	h := dashHandler(t, src)
@@ -74,7 +74,7 @@ func TestTabTitleCarriesTheNewCount(t *testing.T) {
 	}
 }
 
-// FR-1.2 AC3: "when it is greater than zero" — nothing new means no prefix at all.
+// FR-1.2 AC2: "when it is greater than zero" — nothing new means no prefix at all.
 func TestTabTitleHasNoPrefixWhenNothingIsNew(t *testing.T) {
 	src := &fakeSource{items: []domain.Item{ghItem(1, "Old news", testNow.Add(-72*time.Hour))}}
 	h := dashHandler(t, src)
@@ -84,7 +84,7 @@ func TestTabTitleHasNoPrefixWhenNothingIsNew(t *testing.T) {
 	}
 }
 
-// FR-1.3: POST /seen re-mints the cookie with seen = now, and the next GET shows no NEW.
+// FR-1.2: POST /seen re-mints the cookie with seen = now, and the next GET shows no NEW.
 func TestMarkSeenClearsTheNewBadgeOnTheNextGet(t *testing.T) {
 	src := &fakeSource{items: []domain.Item{ghItem(1, "Fresh", testNow.Add(-time.Hour))}}
 	h := dashHandler(t, src)
@@ -97,9 +97,9 @@ func TestMarkSeenClearsTheNewBadgeOnTheNextGet(t *testing.T) {
 	}
 
 	rec := postAs(h, "/seen", nil, c)
-	// A plain form post, so the action works with JavaScript disabled (FR-1.3 AC3).
+	// A plain form post, so the action works with JavaScript disabled (FR-1.2 AC4).
 	if rec.Code != http.StatusSeeOther {
-		t.Errorf("POST /seen = %d, want %d: a no-JavaScript form post needs a redirect (FR-1.3 AC3)",
+		t.Errorf("POST /seen = %d, want %d: a no-JavaScript form post needs a redirect (FR-1.2 AC4)",
 			rec.Code, http.StatusSeeOther)
 	}
 	if got := rec.Header().Get("Location"); got != "/" {
@@ -111,7 +111,7 @@ func TestMarkSeenClearsTheNewBadgeOnTheNextGet(t *testing.T) {
 	}
 
 	if body := getAs(h, "/", reminted).Body.String(); strings.Contains(body, "badge-new") {
-		t.Error("an item still carries NEW after mark all seen (FR-1.3 AC2)")
+		t.Error("an item still carries NEW after mark all seen (FR-1.2 AC4)")
 	}
 }
 
@@ -316,7 +316,7 @@ func TestErrorNoticeNeverContainsASecret(t *testing.T) {
 	}
 }
 
-// FR-1.6: GET /items narrows by the same filter as the page, and answers with the fragment alone.
+// FR-2.1 AC2: GET /items narrows by the same filter as the page, and answers with the fragment alone.
 func TestItemsFragmentNarrowsByRepoAndIsFragmentOnly(t *testing.T) {
 	inRepo := ghItem(1, "In org/repo", testNow.Add(-time.Hour))
 	inOther := domain.Item{
@@ -338,7 +338,7 @@ func TestItemsFragmentNarrowsByRepoAndIsFragmentOnly(t *testing.T) {
 		t.Fatalf("GET /items?repo=org/repo = %d, want 200", rec.Code)
 	}
 	if strings.Contains(body, "<html") {
-		t.Error("the list fragment must be a fragment, not a page (FR-1.6 AC1)")
+		t.Error("the list fragment must be a fragment, not a page (FR-2.1 AC2)")
 	}
 	if !strings.Contains(body, "In org/repo") {
 		t.Error("the fragment does not show the matching item")
@@ -348,7 +348,7 @@ func TestItemsFragmentNarrowsByRepoAndIsFragmentOnly(t *testing.T) {
 	}
 }
 
-// FR-1.6 AC1.
+// FR-2.1 AC2.
 func TestTheItemsFragmentRendersWithoutTheLayout(t *testing.T) {
 	src := &fakeSource{items: []domain.Item{ghItem(1, "An issue", testNow.Add(-time.Hour))}}
 	rec := getAuthed(t, dashHandler(t, src), "/items")
@@ -358,10 +358,10 @@ func TestTheItemsFragmentRendersWithoutTheLayout(t *testing.T) {
 		t.Fatalf("GET /items = %d, want 200", rec.Code)
 	}
 	if strings.Contains(body, "<html") {
-		t.Error("the list fragment must be a fragment, not a page (FR-1.6 AC1)")
+		t.Error("the list fragment must be a fragment, not a page (FR-2.1 AC2)")
 	}
 	if !strings.Contains(body, `id="items"`) {
-		t.Error("the fragment does not replace the list it came from (FR-1.6 AC1)")
+		t.Error("the fragment does not replace the list it came from (FR-2.1 AC2)")
 	}
 	if !strings.Contains(body, "An issue") {
 		t.Error("the fragment carries no content")
@@ -426,7 +426,7 @@ func TestTheFilterEchoesARepositoryConfigurationNoLongerNames(t *testing.T) {
 	}
 }
 
-// FR-1.3 AC3: the filter is a plain GET form with htmx on top, never a form that only works with
+// FR-2.1 AC2: the filter is a plain GET form with htmx on top, never a form that only works with
 // script.
 func TestTheFilterFormIsAPlainGetFormWithHtmxOnTop(t *testing.T) {
 	h := dashHandler(t, &fakeSource{items: representativeItems()})
@@ -448,7 +448,7 @@ func TestTheFilterFormIsAPlainGetFormWithHtmxOnTop(t *testing.T) {
 		}
 	}
 	if !strings.Contains(body, "<noscript><button type=\"submit\">Apply</button></noscript>") {
-		t.Error("the form cannot be applied with JavaScript switched off (FR-1.3 AC3)")
+		t.Error("the form cannot be applied with JavaScript switched off (FR-2.1 AC2)")
 	}
 }
 
@@ -488,7 +488,7 @@ func TestRenderingNeverReMintsTheSessionCookie(t *testing.T) {
 			t.Fatalf("GET %s = %d, want 200", p, rec.Code)
 		}
 		if cookieNamed(rec, sessionCookieName) != nil {
-			t.Errorf("GET %s re-minted the session cookie; only POST /seen may move the seen-mark (FR-1.3 AC2)", p)
+			t.Errorf("GET %s re-minted the session cookie; only POST /seen may move the seen-mark (FR-1.2 AC3)", p)
 		}
 	}
 }
@@ -590,8 +590,9 @@ func TestRenderedPageStaysInsideItsBudget(t *testing.T) {
 	}
 }
 
-// QS-2.2: the server-side share of the 200 ms budget. The cache is warm here, so what this
-// measures is assembly and rendering alone.
+// BenchmarkDashboard measures the server-side render cost with a warm cache, i.e. assembly and
+// rendering alone rather than any upstream fetch. It has no asserted threshold — `go test -bench`
+// reports a number for a human to read, it does not fail a build on its own.
 func BenchmarkDashboard(b *testing.B) {
 	src := &fakeSource{items: representativeItems()}
 	o := testOptions()
@@ -643,7 +644,7 @@ func TestHumanise(t *testing.T) {
 	}
 }
 
-// FR-2.2 AC1: a stored row whose created_at is zero must read as unknown, not render an empty
+// FR-1.1 AC3: a stored row whose created_at is zero must read as unknown, not render an empty
 // <time datetime="">, which is invalid HTML and shows the word "opened" followed by nothing.
 func TestAnItemWithoutACreationTimeSaysSo(t *testing.T) {
 	item := ghItem(1, "An issue whose creation time did not survive", testNow.Add(-time.Hour))
@@ -655,7 +656,7 @@ func TestAnItemWithoutACreationTimeSaysSo(t *testing.T) {
 		t.Error("a zero timestamp rendered as an empty <time datetime=\"\">")
 	}
 	if !strings.Contains(body, "opened at an unknown time") {
-		t.Error("an item with no creation time does not say so (FR-2.2 AC1)")
+		t.Error("an item with no creation time does not say so (FR-1.1 AC3)")
 	}
 	if !strings.Contains(body, "updated <time") {
 		t.Error("the update time went missing along with the creation time")

@@ -25,7 +25,7 @@ func getWithCookies(h http.Handler, path string, cookies ...*http.Cookie) *httpt
 }
 
 // The header carries the mark and the settings control. The control is inert for the whole of v1 —
-// configuration is a YAML file and Fly secrets (C-9) — and saying so is the point: a cog that led
+// configuration is a YAML file and Fly secrets (FR-8.1) — and saying so is the point: a cog that led
 // to a 404 would be worse than no cog at all.
 func TestTheHeaderCarriesTheLogoAndAnInertSettingsControl(t *testing.T) {
 	body := getAuthed(t, dashHandler(t, &fakeSource{items: representativeItems()}), "/").Body.String()
@@ -105,7 +105,7 @@ func TestTheFooterReadsInTheOrderItIsDrawn(t *testing.T) {
 }
 
 // The appearance switch (FR-1.5). It is a form post, not a script: the CSP carries no
-// 'unsafe-inline' (QS-4.4) and the page has to work with JavaScript switched off (FR-1.3 AC3).
+// 'unsafe-inline' (QS-4.4) and the page has to work with JavaScript switched off (FR-1.5 AC1).
 func TestTheThemeSwitchCyclesThroughTheThreeAppearances(t *testing.T) {
 	h := dashHandler(t, &fakeSource{items: representativeItems()})
 

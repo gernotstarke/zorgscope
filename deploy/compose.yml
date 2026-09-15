@@ -1,4 +1,4 @@
-# Local development runs the same image Fly runs (C-4). The process is stateless, so there is
+# Local development runs the same image Fly runs. The process is stateless, so there is
 # nothing else to bring up: no database, no volume.
 services:
   app:

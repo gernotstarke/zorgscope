@@ -8,7 +8,7 @@
 #     terminal 2:  make client     the browser, pointed at that backend
 #
 # Add `make fakes` in a third terminal to develop against a fixture GitHub instead of the real
-# one (FR-9.2). `make check` runs what CI runs, plus markdownlint and fly.toml validation;
+# one. `make check` runs what CI runs, plus markdownlint and fly.toml validation;
 # `make deploy` deploys from this laptop; `make clean` resets.
 
 SHELL          := /bin/sh

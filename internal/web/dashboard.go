@@ -30,11 +30,11 @@ func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
 }
 
 // render assembles the dashboard from the in-memory snapshot and the visitor's session, and
-// executes tmpl with it. It contacts no upstream service itself (FR-1.1 AC2): the only thing it
+// executes tmpl with it. It contacts no upstream service itself (FR-1.1): the only thing it
 // reaches for is the cache, which fetches on its own schedule — see internal/snapshot.
 //
 // It is not a visit: only POST /seen moves the seen-mark, so rendering the page never clears a
-// badge on its own (FR-1.3 AC2 in its stateless form).
+// badge on its own (FR-1.2 AC4).
 func (s *Server) render(w http.ResponseWriter, r *http.Request, tmpl string) {
 	sess, _ := s.session(r) // requireSession already admitted the request
 	snap := s.cache.Get(r.Context())
@@ -60,7 +60,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, tmpl string) {
 // and goes back to the page (FR-1.2).
 //
 // It is a plain form post and a redirect, so the badges clear whether or not JavaScript is running
-// (FR-1.3 AC3).
+// (FR-1.2 AC4).
 func (s *Server) handleSeen(w http.ResponseWriter, r *http.Request) {
 	sess, _ := s.session(r)
 	sess.Seen = s.seenAt(r)

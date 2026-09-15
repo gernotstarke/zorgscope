@@ -78,9 +78,9 @@ func themeOf(r *http.Request) theme {
 // on.
 //
 // It is a form post and a redirect rather than a script toggling a class, for the same reason
-// every other control on this site is (FR-1.3 AC3): the Content-Security-Policy carries no
-// 'unsafe-inline' (QS-4.4), so there is no inline handler to write, and a visitor with JavaScript
-// switched off gets a working switch instead of a dead button. The consequence is that the
+// every other control on this site is: the Content-Security-Policy carries no 'unsafe-inline'
+// (QS-4.4), so there is no inline handler to write, and a visitor with JavaScript switched off
+// gets a working switch instead of a dead button (FR-1.5). The consequence is that the
 // appearance is decided on the server, before a byte of HTML is written — which also means there
 // is no flash of the wrong theme on load, because the document never starts in one theme and
 // changes to the other.

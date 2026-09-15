@@ -42,7 +42,7 @@ func TestFetchReturnsIssuesAndPRs(t *testing.T) {
 			t.Errorf("incomplete item: %+v", it)
 		}
 		if it.CreatedAt.IsZero() || it.UpdatedAt.IsZero() {
-			t.Errorf("item %+v has no timestamps; FR-2.2 needs them", it)
+			t.Errorf("item %+v has no timestamps; FR-1.1 AC3 needs them", it)
 		}
 	}
 }

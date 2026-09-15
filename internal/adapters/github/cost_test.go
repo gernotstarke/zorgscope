@@ -16,8 +16,8 @@ import (
 // 15-minute interval stays under 2 % of GitHub's hourly limit.
 const graphQLBudget = 20
 
-// representativeRepos is the repository half of the representative configuration QS-2.3, QS-2.5
-// and QS-3.2 all name: 10 repositories. org/repo is the fixture-backed one; the other nine are
+// representativeRepos is the repository half of the representative configuration QS-2.3 and
+// QS-2.5 both name: 10 repositories. org/repo is the fixture-backed one; the other nine are
 // unconfigured in internal/fakesources and are served as empty connections, which costs the same
 // one request per connection as a real single-page repository — the requests are what QS-3.5
 // counts, not the nodes they return.

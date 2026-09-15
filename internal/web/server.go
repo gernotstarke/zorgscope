@@ -78,11 +78,11 @@ const strictTransportSecurity = "max-age=31536000; includeSubDomains"
 // enforces form-action on the redirect that follows a *form submission*, which is exactly why
 // starting the flow is a link navigation rather than a POST (design 2026-09-14 §2).
 //
-// img-src allows data: and nothing external. The build badges are someone else's artwork, and they
-// used to be someone else's *request*: the policy named img.shields.io so the browser could fetch
-// them while the page was being read. They are now fetched by the refresh run and carried in the
-// page as data URIs (FR-2.3 AC5), so the host came back out — a page that waits on no third party
-// should not be able to talk to one either.
+// img-src allows data: and nothing external, because every image this page shows — the logo, the
+// vendored static icons — is served from this origin. There is no per-repository build status or
+// build badge in the stateless design (ADR‑0010), so there is no third-party image host to allow
+// in the first place; a page that waits on no third party should not be able to talk to one
+// either.
 const contentSecurityPolicy = "default-src 'self'; img-src 'self' data:; style-src 'self'; " +
 	"script-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'"
 
@@ -450,8 +450,9 @@ func securityHeaders(next http.Handler) http.Handler {
 
 // ---------------------------------------------------------------- handlers
 
-// handleHealthz answers liveness without authentication and without touching an upstream (FR-9.4
-// AC2): it must stay answerable while GitHub is down.
+// handleHealthz answers liveness without authentication and without touching an upstream: it must
+// stay answerable while GitHub is down, since Fly's health check is what decides whether this
+// Machine is judged healthy enough to keep serving traffic.
 func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = w.Write([]byte("ok"))
@@ -695,7 +696,7 @@ type pageData struct {
 	// Title is the page's own name, joined to the site name in the tab title. The dashboard
 	// leaves it empty, because the dashboard is the site rather than a page within it.
 	Title string
-	// NewCount prefixes the tab title when it is greater than zero (FR-1.2 AC3).
+	// NewCount prefixes the tab title when it is greater than zero (FR-1.2 AC2).
 	NewCount int
 	// Dashboard is set only by handleDashboard. dashboard.html reads it for the header's fetched
 	// time, the error notice and the list; every other page leaves it nil.

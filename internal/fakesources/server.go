@@ -2,7 +2,7 @@
 // reads from — GitHub's GraphQL API and its OAuth sign-in flow — plus one control route,
 // POST /_control/oauth-user, that a sign-in test uses to steer which permissions the fixture
 // answers with. It exists so that the adapters and the sign-in flow can be developed and tested
-// against a real HTTP server instead of a live network dependency and a real credential (FR-9.2).
+// against a real HTTP server instead of a live network dependency and a real credential.
 //
 // This package imitates upstream services; it deliberately does not know the shapes zorgscope
 // maps them to. It imports only the standard library, and never internal/domain or

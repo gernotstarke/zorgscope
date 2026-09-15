@@ -186,7 +186,7 @@ func (s *Server) requireSession(next http.Handler, redirect bool) http.Handler {
 //
 // The status has to stay 401: QS-4.1's table says so, and /items is swapped into the page by
 // htmx, which must not paint a sign-in form into the list. But POST /seen is a plain browser
-// form (FR-1.3 AC3), so with JavaScript disabled the HX-Redirect above is never read and the
+// form (FR-1.2 AC4), so with JavaScript disabled the HX-Redirect above is never read and the
 // visitor is left looking at whatever this body says. A sentence and a link is the difference
 // between an expired session and a dead end.
 const unauthorisedPage = `<!doctype html>

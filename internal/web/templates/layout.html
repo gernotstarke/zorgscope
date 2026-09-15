@@ -8,7 +8,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-{{/* FR-1.2 AC3: the tab title is prefixed with the total new count, and only when it is greater
+{{/* FR-1.2 AC2: the tab title is prefixed with the total new count, and only when it is greater
      than zero. The dashboard leaves Title empty, because the dashboard is the site. */}}
 <title>{{if gt .NewCount 0}}({{.NewCount}}) {{end}}{{with .Title}}{{.}} · {{end}}zorgscope</title>
 {{/* Every static URL carries its file's content hash. Without it the browser holds a stylesheet
@@ -37,7 +37,7 @@
   </a>
   <nav class="topbar-nav">
     {{/* The appearance switch: a plain form post, so it works with JavaScript switched off
-         (FR-1.3 AC3) and needs no inline handler the CSP would forbid. It cycles
+         (FR-1.5) and needs no inline handler the CSP would forbid. It cycles
          follow-system → light → dark → follow-system; "follow system" stays in the cycle because
          without it a visitor who ever pressed the control could never get back to the behaviour
          the site had before it existed. The return field carries the page to come back to, and is
@@ -73,7 +73,7 @@
       </button>
     </form>
     {{/* The settings control, deliberately inert: there is no configuration page in v1 —
-         configuration is a YAML file and Fly secrets (C-9) — and the button says so rather than
+         configuration is a YAML file and Fly secrets (FR-8.1) — and the button says so rather than
          leading to a 404. It is a disabled <button> rather than a styled <span> so that the
          browser gives it the right semantics for free: it is not focusable, it is announced as an
          unavailable button, and nothing has to be scripted, which the Content-Security-Policy

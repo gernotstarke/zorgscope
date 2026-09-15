@@ -24,9 +24,10 @@ const defaultGraphQLURL = "https://api.github.com/graphql"
 // 100 nodes per page is 10,000 items — far beyond anything real — so this is a backstop against
 // a misbehaving upstream, not a limit anything legitimate should ever hit. Without it, an
 // upstream that returns hasNextPage: true forever (with a stuck or empty endCursor) would loop
-// without bound: on a scale-to-zero Fly Machine that holds the machine awake and burns the
-// refresh budget (QS-2.5) for as long as the process runs, since nothing today imposes a
-// deadline on Fetch (Task 15 adds one later).
+// without bound: on a scale-to-zero Fly Machine that holds the machine awake for as long as the
+// process runs (QS-2.5). The caller's http.Client timeout (cmd/zorgscope/main.go's
+// upstreamTimeout) bounds each individual request, but not a sequence of individually-prompt
+// requests that never stops asking for another page — this cap is what bounds that.
 const maxPages = 100
 
 // Config configures access to GitHub for IssueFetcher.
@@ -37,7 +38,7 @@ type Config struct {
 }
 
 // IssueFetcher fetches open issues and open pull requests for the repositories in Config, over
-// the GitHub GraphQL API (FR-2.1, FR-2.2).
+// the GitHub GraphQL API (FR-1.1).
 type IssueFetcher struct {
 	client *githubv4.Client
 	repos  []string
@@ -255,9 +256,9 @@ func (f *IssueFetcher) fetchPullRequests(ctx context.Context, owner, name string
 // just sent to fetch the page pageInfo came from. It reports done = true when there is no next
 // page. When the upstream claims another page exists but the cursor has not actually moved —
 // empty, or identical to what was just sent — it returns an error naming repo instead of
-// looping: an unmoving cursor with hasNextPage true is the one shape of misbehaviour that would
-// otherwise loop forever, since nothing today imposes a deadline on Fetch (QS-2.5; Task 15 adds
-// one later).
+// looping: an unmoving cursor with hasNextPage true is the one shape of misbehaviour maxPages
+// above does not catch on its own, since each request it makes looks individually well-formed
+// (QS-2.5).
 func nextAfter(prev *githubv4.String, pageInfo ghPageInfo, repo string) (after *githubv4.String, done bool, err error) {
 	if !bool(pageInfo.HasNextPage) {
 		return nil, true, nil
