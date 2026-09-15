@@ -15,14 +15,15 @@ import (
 )
 
 // With no redirect_uri on the request — the shape of the backend's own request (design 2026-09-14
-// §2) — the fake falls back to its one fixed default callback, standing in for the callback a
-// real GitHub App would have registered.
+// §2) — the fake falls back to its one fixed default callback, matching the local OAuth App's
+// registered callback: `make fakes`'s local interactive sign-in (spec §7) runs the backend on
+// localhost:8080, and without this the offline flow has nowhere to land.
 func TestAuthorizeRedirectsToTheDefaultCallbackWithTheState(t *testing.T) {
 	rec := get(t, fakesources.NewServer(), "/login/oauth/authorize?client_id=abc&state=xyz")
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("code = %d", rec.Code)
 	}
-	if got := rec.Header().Get("Location"); got != "http://zorgscope.test/auth/callback?code=fake-code&state=xyz" {
+	if got := rec.Header().Get("Location"); got != "http://localhost:8080/auth/callback?code=fake-code&state=xyz" {
 		t.Fatalf("Location = %q", got)
 	}
 }
