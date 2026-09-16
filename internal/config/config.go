@@ -234,7 +234,7 @@ func loadSites(in []fileSite, repos []string) ([]Site, error) {
 		if utf8.RuneCountInString(s.Tag) > maxTagLen {
 			return nil, fmt.Errorf("%s: %q is longer than %d characters", field("tag"), s.Tag, maxTagLen)
 		}
-		out = append(out, Site{Name: s.Name, URL: s.URL, Repo: s.Repo, Hue: s.Hue, Tag: s.Tag})
+		out = append(out, Site(s))
 	}
 	return out, nil
 }

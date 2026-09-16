@@ -21,7 +21,13 @@ github:
   repos:
     - arc42/arc42.org-site
     - arc42/arc42.de-site
-    # … eight in total
+    # … nine in total
+  sites:                              # the Sites view: one tile per entry, in this order
+    - name: quality.arc42.org
+      url: https://quality.arc42.org
+      repo: arc42/quality.arc42.org-site
+      hue: plum
+    # … seven in total
 ```
 
 `github.auth_repo` is the one field that is not about what is watched: it names the repository whose
@@ -43,7 +49,7 @@ process environment to test start-up failures.
 
 | Comes from YAML | Comes from environment |
 |---|---|
-| `timezone`, `github.auth_repo`, `github.cache_ttl`, `github.repos` | `GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET`, `GITHUB_TOKEN` |
+| `timezone`, `github.auth_repo`, `github.cache_ttl`, `github.repos`, `github.sites` | `GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET`, `GITHUB_TOKEN` |
 | | `GITHUB_BASE_URL`, `GITHUB_OAUTH_BASE_URL` (optional, fakes only) |
 
 The last row is not a secret at all: `Load` reads those two from the environment purely so
@@ -57,6 +63,26 @@ to anything but `https`, unless the host is this machine (`localhost`, `127.0.0.
 where this process sends `GITHUB_TOKEN` and every visitor's token; `GITHUB_OAUTH_BASE_URL` decides
 where the visitor's browser is sent and where this process posts the client secret. An unvalidated
 one would be a redirect to somebody else's host wearing a debugging switch's clothes.
+
+## Sites and their colours
+
+`github.sites` is what the Sites view draws (FR‑1.8): one tile per entry, in the order written. Each
+site names exactly one repository that `github.repos` watches; the repositories no site names share a
+last tile called Other, so the Sites view never hides something the list shows. The list is optional —
+without it the Sites view is the one Other tile.
+
+`hue` is not a colour but a key into a fixed palette: `navy`, `blue`, `plum`, `teal`, `umber`, `rose`,
+`slate`. The colours behind the keys live in `internal/web/static/app.css` as `--hue-<key>` custom
+properties, taken from the arc42 brand registry (`arc42/meta.arc42.org`, `wiki/concepts/brand.md`),
+because the Content-Security-Policy forbids inline styles and a colour can therefore reach the page
+only as a class the stylesheet defines. Choosing among the keys is a YAML edit; adding a colour means a
+new token and a new key in `config.HueKeys`, and `TestTileColoursKeepTextReadable` holds every key to a
+contrast of 4.5:1 in both appearances. `tag` (at most three characters) tells apart two sites that share
+a colour, as arc42.de does beside arc42.org.
+
+`Load` refuses a site with an empty or duplicate name, an address that is not an absolute `https` URL,
+a repository not in `owner/name` form, not watched or claimed twice, an unknown `hue`, or a longer
+`tag`, and names the field — `github.sites[2].hue` — as it does for every other setting.
 
 ## `.env` for local development
 

@@ -63,6 +63,7 @@ func TestContrastRatioMatchesWCAGReferenceValues(t *testing.T) {
 		t.Errorf("#767676 on white = %.2f:1, want 4.54:1", r)
 	}
 	if got := mixSRGB(rgb{0, 0, 0}, rgb{255, 255, 255}, 0.5); got != (rgb{127.5, 127.5, 127.5}) {
+		//nolint:misspell // color-mix is the CSS function's own name, not prose to be normalised
 		t.Errorf("color-mix(in srgb, black 50%%, white) = %+v, want 127.5 per channel", got)
 	}
 
@@ -134,6 +135,7 @@ func parseHexColour(h string) rgb {
 
 // mixSRGB is CSS `color-mix(in srgb, a p, b)`: a linear interpolation of the gamma-encoded
 // channels, p of a and the rest of b.
+//nolint:misspell // color-mix is the CSS function's own name, not prose to be normalised
 func mixSRGB(a, b rgb, p float64) rgb {
 	return rgb{a.r*p + b.r*(1-p), a.g*p + b.g*(1-p), a.b*p + b.b*(1-p)}
 }
