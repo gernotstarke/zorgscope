@@ -70,9 +70,12 @@ func BuildSiteTiles(in SiteTilesInput) []SiteTile {
 				case KindPR:
 					prs = append(prs, it)
 					count.PRs++
-				default:
+				case KindIssue:
 					issues = append(issues, it)
 					count.Issues++
+				default:
+					// Kind is a closed two-value type today; a future third kind is left out of
+					// both lists rather than silently counted as an issue.
 				}
 			}
 			tile.Counts = append(tile.Counts, count)

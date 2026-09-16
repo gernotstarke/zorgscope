@@ -79,7 +79,7 @@ func (s *Server) handleSeen(w http.ResponseWriter, r *http.Request) {
 
 // seenAt is the moment "Mark all seen" stamps as seen: the "seen_at" field the form carries,
 // which the header template (templates/fragments/header.html) fills in with the fetched-at of
-// the snapshot that was actually on the page (see dashboardView.FetchedAtUnix) — not the moment
+// the snapshot that was actually on the page (see headerView.FetchedAtUnix) — not the moment
 // of the click.
 //
 // The two differ by up to the cache TTL: a visitor can click the button seconds after an item was

@@ -21,22 +21,40 @@ func TestTileColoursKeepTextReadable(t *testing.T) {
 		t.Fatalf("reading the embedded app.css: %v", err)
 	}
 	css := string(raw)
-	surface := lightDarkToken(t, css, "surface")
-	foregrounds := map[string][2]rgb{
-		"--text":   lightDarkToken(t, css, "text"),
-		"--muted":  lightDarkToken(t, css, "muted"),
-		"--accent": lightDarkToken(t, css, "accent"),
+	surface, ok := lightDarkToken(t, css, "surface")
+	if !ok {
+		t.Fatal("no --surface token: every wash below is measured against it")
 	}
-	washLight := percentToken(t, css, "tile-wash-light")
-	washDark := percentToken(t, css, "tile-wash-dark")
+	foregrounds := map[string][2]rgb{}
+	for _, name := range []string{"text", "muted", "accent"} {
+		v, ok := lightDarkToken(t, css, name)
+		if !ok {
+			t.Fatalf("no --%s token: every wash below is measured against it", name)
+		}
+		foregrounds["--"+name] = v
+	}
+	washLight, ok := percentToken(t, css, "tile-wash-light")
+	if !ok {
+		t.Fatal("no --tile-wash-light token")
+	}
+	washDark, ok := percentToken(t, css, "tile-wash-dark")
+	if !ok {
+		t.Fatal("no --tile-wash-dark token")
+	}
 	white := rgb{255, 255, 255}
 
 	for _, key := range config.HueKeys {
 		if !strings.Contains(css, ".hue-"+key+" {") {
 			t.Errorf("app.css defines no .hue-%s class", key)
 		}
-		band := hexToken(t, css, "hue-"+key)
-		sig := hexToken(t, css, "hue-"+key+"-sig")
+		band, ok := hexToken(t, css, "hue-"+key)
+		if !ok {
+			continue
+		}
+		sig, ok := hexToken(t, css, "hue-"+key+"-sig")
+		if !ok {
+			continue
+		}
 		if r := contrastRatio(white, band); r < 4.5 {
 			t.Errorf("white on the %s band = %.2f:1, want at least 4.5:1", key, r)
 		}
@@ -50,6 +68,94 @@ func TestTileColoursKeepTextReadable(t *testing.T) {
 				t.Errorf("%s on the dark %s wash = %.2f:1, want at least 4.5:1", name, key, r)
 			}
 		}
+	}
+}
+
+// FR-1.8 AC5: each .hue-<key> class must feed --tile-hue and --tile-sig from its OWN key's
+// tokens, not another key's. This is the seam between the tile markup (Task 4) and the token
+// values (Task 5) that TestTileColoursKeepTextReadable cannot see, because it reads the
+// --hue-<key> tokens directly rather than through the class: a transposition such as
+//
+//	.hue-teal { --tile-hue: var(--hue-plum); --tile-sig: var(--hue-plum-sig); }
+//
+// would keep every other test in this file green.
+func TestHueClassBindsItsOwnTokens(t *testing.T) {
+	raw, err := fs.ReadFile(embedded, "static/app.css")
+	if err != nil {
+		t.Fatalf("reading the embedded app.css: %v", err)
+	}
+	css := string(raw)
+	for _, key := range config.HueKeys {
+		body := hueClassBody(t, css, key)
+		if body == "" {
+			continue
+		}
+		hue := regexp.MustCompile(`--tile-hue:\s*var\(--hue-` + regexp.QuoteMeta(key) + `\)`)
+		sig := regexp.MustCompile(`--tile-sig:\s*var\(--hue-` + regexp.QuoteMeta(key) + `-sig\)`)
+		if !hue.MatchString(body) {
+			t.Errorf(".hue-%s does not set --tile-hue from var(--hue-%s): %q", key, key, body)
+		}
+		if !sig.MatchString(body) {
+			t.Errorf(".hue-%s does not set --tile-sig from var(--hue-%s-sig): %q", key, key, body)
+		}
+	}
+}
+
+// hueClassBody returns the declaration block of `.hue-<key> { ... }` in css, or "" (having
+// reported it) when app.css defines no such rule. Tolerant of whitespace, since the rule is
+// written on one line today but need not stay that way.
+func hueClassBody(t *testing.T, css, key string) string {
+	t.Helper()
+	m := regexp.MustCompile(`\.hue-` + regexp.QuoteMeta(key) + `\s*\{([^}]*)\}`).FindStringSubmatch(css)
+	if m == nil {
+		t.Errorf("app.css defines no .hue-%s rule", key)
+		return ""
+	}
+	return m[1]
+}
+
+// FR-1.8 AC5: the wash's light-dark() must put --tile-hue with --tile-wash-light in the light
+// slot and --tile-sig with --tile-wash-dark in the dark slot. Both orderings happen to clear
+// 4.5:1 today (TestTileColoursKeepTextReadable passes either way), so only this test tells them
+// apart; swapping the slots would lose design intent, not accessibility.
+func TestTileWashUsesHueForLightAndSigForDark(t *testing.T) {
+	raw, err := fs.ReadFile(embedded, "static/app.css")
+	if err != nil {
+		t.Fatalf("reading the embedded app.css: %v", err)
+	}
+	css := string(raw)
+	//nolint:misspell // color-mix is the CSS function's own name, not prose to be normalised
+	want := regexp.MustCompile(
+		`light-dark\(\s*color-mix\(in srgb,\s*var\(--tile-hue\)\s*var\(--tile-wash-light\)\s*,\s*var\(--surface\)\s*\)\s*,\s*` +
+			`color-mix\(in srgb,\s*var\(--tile-sig\)\s*var\(--tile-wash-dark\)\s*,\s*var\(--surface\)\s*\)\s*\)`)
+	if !want.MatchString(css) {
+		t.Error(".tile-body's light-dark() does not put --tile-hue with --tile-wash-light in the " +
+			"light slot and --tile-sig with --tile-wash-dark in the dark slot")
+	}
+}
+
+// FR-1.8 AC4: the view switch's current segment paints its background from --accent and its text
+// from --bg — the one new colour pair on this branch no other test here covers. The final review
+// measured 5.70:1 light and 7.21:1 dark; this pins it so it stays that way.
+func TestViewSwitchCurrentSegmentKeepsTextReadable(t *testing.T) {
+	raw, err := fs.ReadFile(embedded, "static/app.css")
+	if err != nil {
+		t.Fatalf("reading the embedded app.css: %v", err)
+	}
+	css := string(raw)
+	bg, ok := lightDarkToken(t, css, "bg")
+	if !ok {
+		t.Fatal("no --bg token")
+	}
+	accent, ok := lightDarkToken(t, css, "accent")
+	if !ok {
+		t.Fatal("no --accent token")
+	}
+	if r := contrastRatio(bg[0], accent[0]); r < 4.5 {
+		t.Errorf("--bg on --accent in light = %.2f:1, want at least 4.5:1", r)
+	}
+	if r := contrastRatio(bg[1], accent[1]); r < 4.5 {
+		t.Errorf("--bg on --accent in dark = %.2f:1, want at least 4.5:1", r)
 	}
 }
 
@@ -94,38 +200,46 @@ type rgb struct{ r, g, b float64 }
 
 const hexColour = `#([0-9a-fA-F]{6})`
 
-// hexToken reads `--name: #rrggbb;` from css.
-func hexToken(t *testing.T, css, name string) rgb {
+// hexToken reads `--name: #rrggbb;` from css. On a miss it reports and returns false rather than
+// aborting the test, so a stylesheet missing several tokens is reported in full rather than one at
+// a time.
+func hexToken(t *testing.T, css, name string) (rgb, bool) {
 	t.Helper()
 	m := regexp.MustCompile(`--` + regexp.QuoteMeta(name) + `:\s*` + hexColour + `\s*;`).FindStringSubmatch(css)
 	if m == nil {
-		t.Fatalf("app.css declares no --%s: #rrggbb;", name)
+		t.Errorf("app.css declares no --%s: #rrggbb;", name)
+		return rgb{}, false
 	}
-	return parseHexColour(m[1])
+	return parseHexColour(m[1]), true
 }
 
 // lightDarkToken reads `--name: light-dark(#light, #dark)` from css: the light and the dark value.
-func lightDarkToken(t *testing.T, css, name string) [2]rgb {
+// On a miss it reports and returns false rather than aborting the test.
+func lightDarkToken(t *testing.T, css, name string) ([2]rgb, bool) {
 	t.Helper()
 	m := regexp.MustCompile(`--` + regexp.QuoteMeta(name) + `:\s*light-dark\(\s*` + hexColour + `\s*,\s*` + hexColour + `\s*\)`).FindStringSubmatch(css)
 	if m == nil {
-		t.Fatalf("app.css declares no --%s: light-dark(#rrggbb, #rrggbb)", name)
+		t.Errorf("app.css declares no --%s: light-dark(#rrggbb, #rrggbb)", name)
+		return [2]rgb{}, false
 	}
-	return [2]rgb{parseHexColour(m[1]), parseHexColour(m[2])}
+	return [2]rgb{parseHexColour(m[1]), parseHexColour(m[2])}, true
 }
 
-// percentToken reads `--name: 7%;` from css as a fraction.
-func percentToken(t *testing.T, css, name string) float64 {
+// percentToken reads `--name: 7%;` from css as a fraction. On a miss it reports and returns false
+// rather than aborting the test.
+func percentToken(t *testing.T, css, name string) (float64, bool) {
 	t.Helper()
 	m := regexp.MustCompile(`--` + regexp.QuoteMeta(name) + `:\s*([0-9.]+)%\s*;`).FindStringSubmatch(css)
 	if m == nil {
-		t.Fatalf("app.css declares no --%s: N%%;", name)
+		t.Errorf("app.css declares no --%s: N%%;", name)
+		return 0, false
 	}
 	v, err := strconv.ParseFloat(m[1], 64)
 	if err != nil {
-		t.Fatalf("--%s: %v", name, err)
+		t.Errorf("--%s: %v", name, err)
+		return 0, false
 	}
-	return v / 100
+	return v / 100, true
 }
 
 func parseHexColour(h string) rgb {

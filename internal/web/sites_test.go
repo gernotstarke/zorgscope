@@ -222,6 +222,60 @@ func TestSitesWithoutConfiguredSitesShowsOnlyOther(t *testing.T) {
 	}
 }
 
+// FR-1.8 AC1: when every watched repository is claimed by a configured site, the Sites view
+// carries no Other tile at all.
+func TestSitesOmitsOtherWhenEveryRepositoryIsClaimed(t *testing.T) {
+	h := newTestServerWith(t, func(o *Options) {
+		o.Config.GitHub.Repos = []string{"arc42/org", "arc42/quality"}
+		o.Config.GitHub.Sites = []config.Site{
+			{Name: "arc42.org", URL: "https://arc42.org", Repo: "arc42/org", Hue: "navy"},
+			{Name: "quality.arc42.org", URL: "https://quality.arc42.org", Repo: "arc42/quality", Hue: "plum"},
+		}
+		o.Cache = snapshot.New(&fakeSource{}, time.Hour, o.Clock)
+	}).Handler()
+	body := getAuthed(t, h, "/sites").Body.String()
+
+	if n := strings.Count(body, `class="tile `); n != 2 {
+		t.Errorf("tiles = %d, want 2 (len(Sites), no Other)", n)
+	}
+	if strings.Contains(body, "hue-slate") {
+		t.Error("every repository is claimed, but the page still carries the slate Other class")
+	}
+	if regexp.MustCompile(`id="tile-\d+-title">\s*Other\s*<`).MatchString(body) {
+		t.Error("every repository is claimed, but the page still carries a tile named Other")
+	}
+}
+
+// Spec §2 ("Filters on the Sites view: None") and §5.4 (a tile row carries no summary and no
+// author, which is what tells a tile row from a list row): two things the Sites view deliberately
+// omits, with no coverage before this test.
+func TestSitesViewCarriesNoFilterAndTileRowsCarryNoSummaryOrAuthor(t *testing.T) {
+	src := &fakeSource{items: []domain.Item{siteItem("arc42/quality", domain.KindIssue, 1, testNow)}}
+	h := sitesHandler(t, src)
+	c := signIn(t, h)
+
+	list := getAs(h, "/", c).Body.String()
+	if !strings.Contains(list, `class="filter"`) || !strings.Contains(list, `action="/"`) {
+		t.Fatal(`the list page itself carries no class="filter" form with action="/"; the assertions below about what the Sites view omits would prove nothing`)
+	}
+
+	body := getAs(h, "/sites", c).Body.String()
+	if strings.Contains(body, `class="filter"`) {
+		t.Error("the Sites view carries a filter form; spec §2 says it has none")
+	}
+	if strings.Contains(body, `action="/"`) {
+		t.Error("the Sites view carries a GET form back to the list; spec §2 says it has no filters")
+	}
+
+	tile := tileSection(t, body, 3)
+	if strings.Contains(tile, `class="item-summary"`) {
+		t.Error("a tile row carries a summary; spec §5.4 says a tile row has none")
+	}
+	if strings.Contains(tile, `class="item-meta"`) {
+		t.Error("a tile row carries item-meta, the class the list uses to print an item's author; spec §5.4 says a tile row has none")
+	}
+}
+
 // The template draws hue-<key> from whatever the Config says. config.Load refuses an unknown key;
 // this is the second lock, for a Config built in code.
 func TestTileHueFallsBackToSlateForAnUnknownKey(t *testing.T) {

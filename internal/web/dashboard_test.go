@@ -908,7 +908,10 @@ func TestSeenAndRefreshReturnToThePageTheyWerePressedOn(t *testing.T) {
 }
 
 // FR-1.8 AC4: the header's two forms carry the page they sit on, query included, so a filtered list
-// comes back filtered.
+// comes back filtered — true of a request rendered whole, without JavaScript. Under an htmx-driven
+// filter change, hx-push-url updates the address bar but the header sits outside the swapped
+// #items fragment, so its forms keep carrying the return value from the last full page load, not
+// the filter now showing.
 func TestHeaderFormsCarryTheCurrentPageAsTheirReturn(t *testing.T) {
 	h := dashHandler(t, &fakeSource{items: []domain.Item{ghItem(1, "Anything", testNow)}})
 	body := getAuthed(t, h, "/?kind=pr").Body.String()
