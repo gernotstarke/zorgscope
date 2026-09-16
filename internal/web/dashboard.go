@@ -44,7 +44,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, tmpl string) {
 		Now: now, LastVisitAt: sess.Seen, Items: snap.Items,
 		Repos: s.cfg.GitHub.Repos, Filter: parseFilter(r.URL.Query(), s.loc),
 	})
-	view := s.dashboardView(d, snap, now)
+	view := s.dashboardView(d, snap, now, r)
 
 	if tmpl == fragmentItemsTemplate {
 		s.writeFragment(w, r, view.Items)
@@ -72,12 +72,15 @@ func (s *Server) handleSeen(w http.ResponseWriter, r *http.Request) {
 		sess.Seen = at
 	}
 	s.setSession(w, sess)
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	// safeReturn is the sanitiser between the form field and the Location header; see handleTheme
+	// for why the annotation is a trailing comment.
+	http.Redirect(w, r, safeReturn(r.FormValue("return")), http.StatusSeeOther) // #nosec G710 -- sanitised by safeReturn
 }
 
 // seenAt is the moment "Mark all seen" stamps as seen: the "seen_at" field the form carries,
-// which dashboard.html fills in with the fetched-at of the snapshot that was actually on the page
-// (see dashboardView.FetchedAtUnix) — not the moment of the click.
+// which the header template (templates/fragments/header.html) fills in with the fetched-at of
+// the snapshot that was actually on the page (see dashboardView.FetchedAtUnix) — not the moment
+// of the click.
 //
 // The two differ by up to the cache TTL: a visitor can click the button seconds after an item was
 // fetched that they never had the chance to see, or minutes after one that arrived in a fetch they
@@ -108,10 +111,11 @@ func (s *Server) seenAt(r *http.Request) time.Time {
 	return at
 }
 
-// handleRefresh throws the snapshot away so the redirected GET fetches (FR-1.3).
+// handleRefresh throws the snapshot away so the redirected GET fetches (FR-1.3), and goes back to
+// the page it was pressed on (FR-1.8 AC4).
 func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	s.cache.Invalidate()
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, safeReturn(r.FormValue("return")), http.StatusSeeOther) // #nosec G710 -- sanitised by safeReturn
 }
 
 // handleLogout clears the session cookie. It is this product's only other sign-out beyond
@@ -145,8 +149,8 @@ func (s *Server) writeFragment(w http.ResponseWriter, r *http.Request, items ite
 // nothing is ever a template.HTML: issue titles, repository names, summaries and upstream error
 // text are all attacker-influenceable in principle (QS-4.3, QS-4.4).
 
-// dashboardView is the whole page.
-type dashboardView struct {
+// headerView is what the header both pages share needs (templates/fragments/header.html).
+type headerView struct {
 	// FetchedAt is when the snapshot's items were fetched, in the configured timezone, as
 	// "15:04" — or "never" before the first fetch has returned anything.
 	FetchedAt string
@@ -157,14 +161,26 @@ type dashboardView struct {
 	FetchedAtUnix int64
 	// Error is the notice shown when the most recent fetch failed: what went wrong, scrubbed of
 	// every configured secret (QS-4.3), and when — empty when the last fetch succeeded. A failed
-	// fetch never discards the previous items (see internal/snapshot), so the list below it is
+	// fetch never discards the previous items (see internal/snapshot), so the page below it is
 	// still whatever was fetched last.
 	Error string
-	// NewTotal, Total and Shown are counted at three different points: NewTotal and Total over
-	// every item regardless of the filter, Shown over what the filter actually let through. A
-	// filter that also moved the NEW total would make the dashboard lie about what is new the
-	// moment somebody typed into the search box.
-	NewTotal, Total, Shown int
+	// NewTotal is counted over every item regardless of any filter. A filter that also moved the
+	// NEW total would make the page lie about what is new the moment somebody typed into the
+	// search box.
+	NewTotal int
+	// Return is the page the header sits on, as a path with its query — "/?kind=pr", "/sites" —
+	// which the "Mark all seen" and "Refresh" forms carry so each action comes back to where it was
+	// pressed (FR-1.8 AC4). It is what the browser asked for, so the handlers only ever use it
+	// through safeReturn.
+	Return string
+}
+
+// dashboardView is the whole list page.
+type dashboardView struct {
+	headerView
+	// Total and Shown are counted at two different points: Total over every item regardless of
+	// the filter, Shown over what the filter actually let through.
+	Total, Shown int
 	// Filter is the filter that was applied, echoed back so the page can render it as the
 	// visitor left it, and Repos is what its repository list offers — configuration order,
 	// followed by the applied filter's own repository when configuration no longer names it.
@@ -261,23 +277,32 @@ func errorNotice(secrets config.Secrets, snap snapshot.Snapshot, loc *time.Locat
 	return sentence
 }
 
-// dashboardView turns the assembled domain dashboard and the snapshot it was built from into the
-// page's presentation data.
-func (s *Server) dashboardView(d domain.Dashboard, snap snapshot.Snapshot, now time.Time) dashboardView {
+// headerView builds the shared header from the snapshot on screen, the visitor's NEW total and the
+// request the page answers.
+func (s *Server) headerView(snap snapshot.Snapshot, newTotal int, r *http.Request) headerView {
 	var fetchedAtUnix int64
 	if !snap.FetchedAt.IsZero() {
 		fetchedAtUnix = snap.FetchedAt.Unix()
 	}
-	return dashboardView{
+	return headerView{
 		FetchedAt:     clockLabel(snap.FetchedAt, s.loc),
 		FetchedAtUnix: fetchedAtUnix,
 		Error:         errorNotice(s.cfg.Secrets, snap, s.loc),
-		NewTotal:      d.NewTotal,
-		Total:         d.Total,
-		Shown:         d.Shown,
-		Filter:        newFilterView(d.Filter),
-		Repos:         filterRepos(s.cfg.GitHub.Repos, d.Filter.Repo),
-		Items:         s.itemsView(d, now),
+		NewTotal:      newTotal,
+		Return:        r.URL.RequestURI(),
+	}
+}
+
+// dashboardView turns the assembled domain dashboard and the snapshot it was built from into the
+// page's presentation data.
+func (s *Server) dashboardView(d domain.Dashboard, snap snapshot.Snapshot, now time.Time, r *http.Request) dashboardView {
+	return dashboardView{
+		headerView: s.headerView(snap, d.NewTotal, r),
+		Total:      d.Total,
+		Shown:      d.Shown,
+		Filter:     newFilterView(d.Filter),
+		Repos:      filterRepos(s.cfg.GitHub.Repos, d.Filter.Repo),
+		Items:      s.itemsView(d, now),
 	}
 }
 

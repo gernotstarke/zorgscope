@@ -877,6 +877,49 @@ func TestStaticIsServedUncompressedWhenTheClientCannotAcceptGzip(t *testing.T) {
 	}
 }
 
+// FR-1.8 AC4: "Mark all seen" and "Refresh" go back to the page they were pressed on — and only ever
+// to a page of this site, since the return field is the browser's to send.
+func TestSeenAndRefreshReturnToThePageTheyWerePressedOn(t *testing.T) {
+	h := dashHandler(t, &fakeSource{})
+	c := signIn(t, h)
+	for _, action := range []string{"/seen", "/refresh"} {
+		for _, tc := range []struct{ ret, want string }{
+			{"", "/"},
+			{"/sites", "/sites"},
+			{"/?repo=org%2Frepo&kind=pr", "/?repo=org%2Frepo&kind=pr"},
+			{"https://evil.example/", "/"},
+			{"//evil.example/", "/"},
+		} {
+			t.Run(action+" return="+tc.ret, func(t *testing.T) {
+				form := url.Values{}
+				if tc.ret != "" {
+					form.Set("return", tc.ret)
+				}
+				rec := postAs(h, action, form, c)
+				if rec.Code != http.StatusSeeOther {
+					t.Fatalf("POST %s = %d, want %d", action, rec.Code, http.StatusSeeOther)
+				}
+				if got := rec.Header().Get("Location"); got != tc.want {
+					t.Errorf("POST %s with return %q redirects to %q, want %q", action, tc.ret, got, tc.want)
+				}
+			})
+		}
+	}
+}
+
+// FR-1.8 AC4: the header's two forms carry the page they sit on, query included, so a filtered list
+// comes back filtered.
+func TestHeaderFormsCarryTheCurrentPageAsTheirReturn(t *testing.T) {
+	h := dashHandler(t, &fakeSource{items: []domain.Item{ghItem(1, "Anything", testNow)}})
+	body := getAuthed(t, h, "/?kind=pr").Body.String()
+	const want = `<input type="hidden" name="return" value="/?kind=pr">`
+	for _, action := range []string{`action="/seen"`, `action="/refresh"`} {
+		if line := firstLineContaining(body, action); !strings.Contains(line, want) {
+			t.Errorf("the %s form does not carry its page as return:\n%s", action, line)
+		}
+	}
+}
+
 // ---------------------------------------------------------------- helpers
 
 // dashServer builds a fully configured server whose snapshot cache is backed by src, over the
