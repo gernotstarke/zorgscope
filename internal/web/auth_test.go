@@ -43,7 +43,8 @@ func TestEveryProtectedRouteRefusesAnonymousAccess(t *testing.T) {
 		method, path string
 		wantStatus   int
 	}{
-		{http.MethodGet, "/", http.StatusSeeOther}, // FR-8.3 AC1: redirect, not 401
+		{http.MethodGet, "/", http.StatusSeeOther},      // FR-8.3 AC1: redirect, not 401
+		{http.MethodGet, "/sites", http.StatusSeeOther}, // a page, so a redirect like / (FR-8.3 AC1)
 		{http.MethodGet, "/items", http.StatusUnauthorized},
 		{http.MethodPost, "/seen", http.StatusUnauthorized},
 		{http.MethodPost, "/refresh", http.StatusUnauthorized},

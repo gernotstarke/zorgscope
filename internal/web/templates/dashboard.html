@@ -1,6 +1,7 @@
 {{define "content"}}
 {{with .Dashboard}}
 {{template "header" .}}
+{{template "viewswitch" "list"}}
 {{/* The filter (FR-2.1). It is a plain GET form whose action is this page, so with JavaScript
      switched off pressing Apply reloads the dashboard narrowed — the whole thing works without a
      single request htmx makes (FR-2.1 AC2).

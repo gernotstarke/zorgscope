@@ -1,0 +1,42 @@
+{{define "content"}}
+{{with .Sites}}
+{{template "header" .}}
+{{template "viewswitch" "sites"}}
+{{/* One tile per site (FR-1.8). The colour is a class the stylesheet defines, never a style
+     attribute (QS-4.4), and never the only thing that tells a site apart: its name is always
+     written out, and arc42.de carries a tag (FR-1.8 AC5). */}}
+<div class="tiles">
+  {{range .Tiles}}
+  <section class="tile hue-{{.Hue}}" aria-labelledby="{{.ID}}">
+    <h2 class="tile-title" id="{{.ID}}">
+      {{if .URL}}<a href="{{.URL}}" target="_blank" rel="noopener noreferrer">{{.Name}}</a>{{else}}{{.Name}}{{end}}
+      {{with .Tag}}<span class="tile-tag">{{.}}</span>{{end}}
+      {{if gt .NewCount 0}}<span class="tile-new">{{.NewCount}} new</span>{{end}}
+      <span class="tile-count">{{.CountLine}}</span>
+    </h2>
+    <div class="tile-body">
+      <h3 class="tile-kind">Pull requests</h3>
+      {{if .PRs}}<ul class="tile-items">{{range .PRs}}{{template "tileitem" .}}{{end}}</ul>{{else}}<p class="tile-empty">no open pull requests</p>{{end}}
+      <h3 class="tile-kind">Issues</h3>
+      {{if .Issues}}<ul class="tile-items">{{range .Issues}}{{template "tileitem" .}}{{end}}</ul>{{else}}<p class="tile-empty">no open issues</p>{{end}}
+      {{/* FR-1.8 AC3: only a tile that cut something links on, and it links to the list filtered
+           to the repository — the list is the detail page. */}}
+      {{if .Links}}<p class="tile-more">{{range .Links}}<a href="{{.Href}}">{{with .Repo}}{{.}}: {{end}}{{.Label}} →<span class="visually-hidden"> of {{.Site}}</span></a>{{end}}</p>{{end}}
+    </div>
+  </section>
+  {{end}}
+</div>
+{{end}}
+{{end}}
+
+{{/* One row of a tile: the NEW badge, the number, the title linking to GitHub, and when it last
+     moved. No summary and no author — a tile is for a glance, the list is for reading. The
+     timestamp is guarded by Known exactly as the list guards its own. */}}
+{{define "tileitem"}}
+<li class="tile-item{{if .New}} is-new{{end}}">
+  {{if .New}}<span class="badge badge-new">NEW</span>{{end}}
+  {{if .Number}}<span class="item-number">#{{.Number}}</span>{{end}}
+  <a class="item-title" href="{{.URL}}" target="_blank" rel="noopener noreferrer">{{.Title}}</a>
+  <span class="tile-updated">{{if .Updated.Known}}updated <time datetime="{{.Updated.Absolute}}">{{.Updated.Relative}}</time>{{else}}updated at an unknown time{{end}}</span>
+</li>
+{{end}}

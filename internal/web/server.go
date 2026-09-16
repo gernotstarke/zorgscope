@@ -47,7 +47,7 @@ var embedded embed.FS
 // pageFiles are the page templates, each of which supplies the "content" block that layout.html
 // wraps. They are parsed one page at a time — layout plus that page — because every page defines a
 // block of the same name, so a single template set would have them overwrite each other.
-var pageFiles = []string{"login.html", "dashboard.html"}
+var pageFiles = []string{"login.html", "dashboard.html", "sites.html"}
 
 // fragmentGlob matches the templates that are both part of a page and answerable on their own.
 // They are parsed twice on purpose: into every page set, so that dashboard.html can compose the
@@ -305,6 +305,9 @@ func (s *Server) routes() []route {
 		// handler and therefore before any credential is even considered. The probe is what the
 		// tests that drive every route request, since the pattern is not itself a path.
 		{http.MethodGet, "/{$}", authSessionPage, s.handleDashboard, "/"},
+		// The Sites view (FR-1.8): the same snapshot and session as the list, drawn as one tile per
+		// site. A page, so an anonymous visitor is redirected to sign in like at /.
+		{http.MethodGet, "/sites", authSessionPage, s.handleSites, ""},
 		{http.MethodGet, "/items", authSessionFragment, s.handleItems, ""},
 		{http.MethodPost, "/seen", authSessionFragment, s.handleSeen, ""},
 		{http.MethodPost, "/refresh", authSessionFragment, s.handleRefresh, ""},
@@ -703,6 +706,9 @@ type pageData struct {
 	// Dashboard is set only by handleDashboard. dashboard.html reads it for the header's fetched
 	// time, the error notice and the list; every other page leaves it nil.
 	Dashboard *dashboardView
+	// Sites is set only by handleSites. sites.html reads it for the header and the tiles; every
+	// other page leaves it nil.
+	Sites *sitesView
 	// Error is a message written for the visitor. It is never an error's own text: those can
 	// carry a token (QS-4.3).
 	Error string
