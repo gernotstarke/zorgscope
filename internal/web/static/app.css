@@ -389,3 +389,170 @@ button:hover,
   overflow-wrap: anywhere;
 }
 
+/* ---------------------------------------------------------------- the view switch (FR-1.8 AC4)
+
+   Two links drawn as one control. The current view is filled with the accent, its text in the
+   page background so it reads in both appearances. */
+.view-switch {
+  display: inline-flex;
+  margin: 0 0 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.view-switch a {
+  padding: 0.35rem 0.9rem;
+  color: var(--text);
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+
+.view-switch a + a { border-left: 1px solid var(--border); }
+.view-switch a:hover { color: var(--accent); }
+.view-switch a[aria-current="page"] { background: var(--accent); color: var(--bg); font-weight: 600; }
+
+/* ---------------------------------------------------------------- the sites view (FR-1.8)
+
+   One tile per arc42 site. The colours are the arc42 brand registry's
+   (arc42/meta.arc42.org, wiki/concepts/brand.md): each band is a site's masthead fill, and each
+   -sig is its signature hue, which tints the tile in the dark appearance, where a masthead fill
+   would vanish into the page. They are plain values rather than light-dark() pairs, because a
+   site's colour is its identity and stays the same in both appearances; examples owns no hue in
+   the registry, only a ground, so its ground serves as both. The palette keys match
+   config.HueKeys, and TestTileColoursKeepTextReadable holds every one of them to 4.5:1. */
+:root {
+  --hue-navy: #2b3a57;
+  --hue-navy-sig: #374769;
+  --hue-blue: #0e4f80;
+  --hue-blue-sig: #1675b9;
+  --hue-plum: #682d63;
+  --hue-plum-sig: #682d63;
+  --hue-teal: #1b5648;
+  --hue-teal-sig: #5fb49c;
+  --hue-umber: #3a332b;
+  --hue-umber-sig: #3a332b;
+  --hue-rose: #a04c5e;
+  --hue-rose-sig: #a04c5e;
+  --hue-slate: #414a56;
+  --hue-slate-sig: #6f777d;
+
+  /* How much of a site's colour washes over its tile. Lower one when the contrast test fails;
+     raise one when a wash is too faint to see, as long as the test still passes. */
+  --tile-wash-light: 7%;
+  --tile-wash-dark: 12%;
+}
+
+.hue-navy { --tile-hue: var(--hue-navy); --tile-sig: var(--hue-navy-sig); }
+.hue-blue { --tile-hue: var(--hue-blue); --tile-sig: var(--hue-blue-sig); }
+.hue-plum { --tile-hue: var(--hue-plum); --tile-sig: var(--hue-plum-sig); }
+.hue-teal { --tile-hue: var(--hue-teal); --tile-sig: var(--hue-teal-sig); }
+.hue-umber { --tile-hue: var(--hue-umber); --tile-sig: var(--hue-umber-sig); }
+.hue-rose { --tile-hue: var(--hue-rose); --tile-sig: var(--hue-rose-sig); }
+.hue-slate { --tile-hue: var(--hue-slate); --tile-sig: var(--hue-slate-sig); }
+
+/* One column on a phone, two or three on a desktop. */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
+  gap: var(--gap);
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+/* The band: the site's masthead colour, white text on it in both appearances. */
+.tile-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.6rem 0.8rem;
+  background: var(--tile-hue, var(--hue-slate));
+  color: #ffffff;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.tile-title a { color: #ffffff; text-decoration: none; }
+.tile-title a:hover { text-decoration: underline; }
+
+.tile-tag {
+  padding: 0 0.35rem;
+  border: 1px solid #ffffff;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+}
+
+.tile-new { font-size: 0.8rem; }
+.tile-count { margin-left: auto; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+
+.tile-body { flex: 1; padding: 0.4rem 0.8rem 0.7rem; }
+
+/* The wash exists only where the browser can compute it; everywhere else the body stays the plain
+   surface the rule above gives the whole tile. light-dark() picks the light or the dark mix by the
+   document's colour scheme, like every other colour on the page. */
+@supports (color: light-dark(#000000, #ffffff)) and (color: color-mix(in srgb, #000000 50%, #ffffff)) {
+  .tile-body {
+    background: light-dark(
+      color-mix(in srgb, var(--tile-hue) var(--tile-wash-light), var(--surface)),
+      color-mix(in srgb, var(--tile-sig) var(--tile-wash-dark), var(--surface))
+    );
+  }
+}
+
+.tile-kind {
+  margin: 0.5rem 0 0.2rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.tile-items { list-style: none; margin: 0; padding: 0; }
+
+.tile-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem;
+  padding: 0.2rem 0;
+  font-size: 0.9rem;
+}
+
+.tile-updated { width: 100%; color: var(--muted); font-size: 0.75rem; }
+.tile-empty { margin: 0; color: var(--muted); font-size: 0.85rem; }
+
+.tile-more {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.25rem 0.75rem;
+  margin: 0.6rem 0 0;
+  font-size: 0.85rem;
+}
+
+.tile-more a { color: var(--accent); }
+
+/* Read aloud, not drawn: the site name a link says to a screen reader. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
