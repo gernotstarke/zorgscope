@@ -15,7 +15,7 @@ github:
   #
   # QS-3.5 budgets 20 GraphQL queries per page view and the issue fetcher spends two per repository
   # (issues and pull requests paginate independently), so this list may hold at most ten entries.
-  # It holds eight.
+  # It holds nine.
   repos:
     - arc42/arc42.org-site
     - arc42/arc42.de-site
@@ -24,4 +24,40 @@ github:
     - arc42/quality.arc42.org-site
     - arc42/faq.arc42.org-site
     - arc42/examples.arc42.org-site
+    - arc42/trainings.arc42.org-site
     - gernotstarke/zorgscope
+  # The Sites view (FR-1.8): one tile per entry, in this order. Each site names exactly one of the
+  # repositories above; the ones no site names share a tile of their own. hue is a key of the
+  # palette app.css defines from the arc42 brand registry (arc42/meta.arc42.org,
+  # wiki/concepts/brand.md): navy, blue, plum, teal, umber, rose or slate. tag tells apart two sites
+  # that share a hue, at most three characters.
+  sites:
+    - name: arc42.org
+      url: https://arc42.org
+      repo: arc42/arc42.org-site
+      hue: navy
+    - name: arc42.de
+      url: https://arc42.de
+      repo: arc42/arc42.de-site
+      hue: navy
+      tag: DE
+    - name: quality.arc42.org
+      url: https://quality.arc42.org
+      repo: arc42/quality.arc42.org-site
+      hue: plum
+    - name: docs.arc42.org
+      url: https://docs.arc42.org
+      repo: arc42/docs.arc42.org-site
+      hue: blue
+    - name: faq.arc42.org
+      url: https://faq.arc42.org
+      repo: arc42/faq.arc42.org-site
+      hue: teal
+    - name: examples.arc42.org
+      url: https://examples.arc42.org
+      repo: arc42/examples.arc42.org-site
+      hue: umber
+    - name: trainings.arc42.org
+      url: https://trainings.arc42.org
+      repo: arc42/trainings.arc42.org-site
+      hue: rose

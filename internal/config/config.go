@@ -11,14 +11,34 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
+	"strings"
 	"time"
 	_ "time/tzdata" // the distroless runtime image (deploy/Dockerfile) ships no /usr/share/zoneinfo
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
 
 // defaultCacheTTL is used when github.cache_ttl names none.
 const defaultCacheTTL = 5 * time.Minute
+
+// maxTagLen is the longest tag a site may carry. A tag sits beside the site's name in its tile's
+// heading, where anything longer than a language code stops being a tag and starts being a name.
+const maxTagLen = 3
+
+// HueKeys are the site colours the stylesheet defines, each as a `hue-<key>` class over
+// `--hue-<key>` tokens taken from the arc42 brand registry (per-site tiles design §6). A colour can
+// reach the page only as one of these classes: the Content-Security-Policy forbids inline styles,
+// so a hex value in the YAML would have nowhere to go.
+var HueKeys = []string{"navy", "blue", "plum", "teal", "umber", "rose", "slate"}
+
+// Site is one arc42 web property drawn as a tile on the Sites view (FR-1.8): its name, its address,
+// the one watched repository behind it, its colour key, and an optional short tag that tells apart
+// two sites sharing a colour.
+type Site struct {
+	Name, URL, Repo, Hue, Tag string
+}
 
 // Config is the fully validated, ready-to-use application configuration.
 type Config struct {
@@ -35,6 +55,10 @@ type GitHub struct {
 	// dashboard is a security decision that should change only when someone means it to.
 	AuthRepo string
 	Repos    []string
+	// Sites are the tiles of the Sites view, in the order they are drawn (FR-1.8). Each names one
+	// repository of Repos; the repositories no site names share a tile of their own. Empty is valid:
+	// the Sites view then shows that one shared tile.
+	Sites []Site
 	// CacheTTL is how old the fetched item list may be before a page view refetches it. It
 	// defaults to 5 minutes when the configuration names none.
 	CacheTTL time.Duration
@@ -62,10 +86,20 @@ type Secrets struct {
 type fileConfig struct {
 	Timezone string `yaml:"timezone"`
 	GitHub   struct {
-		AuthRepo string   `yaml:"auth_repo"`
-		CacheTTL string   `yaml:"cache_ttl"`
-		Repos    []string `yaml:"repos"`
+		AuthRepo string     `yaml:"auth_repo"`
+		CacheTTL string     `yaml:"cache_ttl"`
+		Repos    []string   `yaml:"repos"`
+		Sites    []fileSite `yaml:"sites"`
 	} `yaml:"github"`
+}
+
+// fileSite is one entry of github.sites as the YAML file spells it.
+type fileSite struct {
+	Name string `yaml:"name"`
+	URL  string `yaml:"url"`
+	Repo string `yaml:"repo"`
+	Hue  string `yaml:"hue"`
+	Tag  string `yaml:"tag"`
 }
 
 // repoPattern matches a GitHub "owner/name" repository reference.
@@ -101,6 +135,11 @@ func Load(path string, env func(string) string) (Config, error) {
 		}
 	}
 
+	sites, err := loadSites(fc.GitHub.Sites, fc.GitHub.Repos)
+	if err != nil {
+		return Config{}, err
+	}
+
 	cacheTTL := defaultCacheTTL
 	if fc.GitHub.CacheTTL != "" {
 		d, err := time.ParseDuration(fc.GitHub.CacheTTL)
@@ -118,6 +157,7 @@ func Load(path string, env func(string) string) (Config, error) {
 		GitHub: GitHub{
 			AuthRepo:     fc.GitHub.AuthRepo,
 			Repos:        fc.GitHub.Repos,
+			Sites:        sites,
 			CacheTTL:     cacheTTL,
 			BaseURL:      env("GITHUB_BASE_URL"),
 			OAuthBaseURL: env("GITHUB_OAUTH_BASE_URL"),
@@ -153,6 +193,50 @@ func Load(path string, env func(string) string) (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// loadSites validates github.sites against the watched repositories and turns it into Sites. Every
+// error names the offending field, as `github.sites[2].hue`, and quotes no value that could be a
+// secret — nothing in this list is one.
+func loadSites(in []fileSite, repos []string) ([]Site, error) {
+	watched := make(map[string]bool, len(repos))
+	for _, r := range repos {
+		watched[r] = true
+	}
+	names := make(map[string]bool, len(in))
+	claimed := make(map[string]bool, len(in))
+	out := make([]Site, 0, len(in))
+	for i, s := range in {
+		field := func(name string) string { return fmt.Sprintf("github.sites[%d].%s", i, name) }
+		if s.Name == "" {
+			return nil, errors.New(field("name") + ": is required")
+		}
+		if names[s.Name] {
+			return nil, fmt.Errorf("%s: %q names a second site", field("name"), s.Name)
+		}
+		names[s.Name] = true
+		if u, err := url.Parse(s.URL); err != nil || u.Scheme != "https" || u.Host == "" {
+			return nil, errors.New(field("url") + ": must be an absolute https URL")
+		}
+		if !repoPattern.MatchString(s.Repo) {
+			return nil, fmt.Errorf("%s: %q is not in owner/name form", field("repo"), s.Repo)
+		}
+		if !watched[s.Repo] {
+			return nil, fmt.Errorf("%s: %q is not listed in github.repos", field("repo"), s.Repo)
+		}
+		if claimed[s.Repo] {
+			return nil, fmt.Errorf("%s: %q is already claimed by another site", field("repo"), s.Repo)
+		}
+		claimed[s.Repo] = true
+		if !slices.Contains(HueKeys, s.Hue) {
+			return nil, fmt.Errorf("%s: %q is not one of %s", field("hue"), s.Hue, strings.Join(HueKeys, ", "))
+		}
+		if utf8.RuneCountInString(s.Tag) > maxTagLen {
+			return nil, fmt.Errorf("%s: %q is longer than %d characters", field("tag"), s.Tag, maxTagLen)
+		}
+		out = append(out, Site{Name: s.Name, URL: s.URL, Repo: s.Repo, Hue: s.Hue, Tag: s.Tag})
+	}
+	return out, nil
 }
 
 // checkBaseURL validates GITHUB_BASE_URL or GITHUB_OAUTH_BASE_URL, named by name, both of which

@@ -2,6 +2,9 @@ package config_test
 
 import (
 	"maps"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -238,5 +241,111 @@ func TestErrorNeverContainsSecretValues(t *testing.T) {
 				t.Errorf("a secret value leaked into %q (QS-4.3)", err)
 			}
 		})
+	}
+}
+
+// FR-8.1 AC5: github.sites loads in configuration order with every field.
+func TestLoadSites(t *testing.T) {
+	cfg, err := config.Load("testdata/sites.yaml", env(fullEnv()))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []config.Site{
+		{Name: "one.example", URL: "https://one.example", Repo: "org/one", Hue: "navy"},
+		{Name: "two.example", URL: "https://two.example", Repo: "org/two", Hue: "rose", Tag: "DE"},
+	}
+	if !slices.Equal(cfg.GitHub.Sites, want) {
+		t.Errorf("sites = %+v, want %+v", cfg.GitHub.Sites, want)
+	}
+}
+
+// FR-8.1 AC5: github.sites is optional.
+func TestLoadWithoutSitesHasNone(t *testing.T) {
+	cfg, err := config.Load("testdata/valid.yaml", env(fullEnv()))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.GitHub.Sites) != 0 {
+		t.Errorf("sites = %+v, want none", cfg.GitHub.Sites)
+	}
+}
+
+// FR-8.1 AC5: every rule a site breaks aborts start-up with an error naming the field.
+func TestLoadRejectsBadSites(t *testing.T) {
+	const head = "timezone: Europe/Berlin\n" +
+		"github:\n" +
+		"  auth_repo: gernotstarke/zorgscope\n" +
+		"  repos: [org/one, org/two]\n" +
+		"  sites:\n"
+	cases := []struct {
+		name, sites, field string
+	}{
+		{"missing name",
+			`    - {url: "https://one.example", repo: org/one, hue: navy}`,
+			"github.sites[0].name"},
+		{"duplicate name",
+			`    - {name: one.example, url: "https://one.example", repo: org/one, hue: navy}` + "\n" +
+				`    - {name: one.example, url: "https://two.example", repo: org/two, hue: navy}`,
+			"github.sites[1].name"},
+		{"http url",
+			`    - {name: one.example, url: "http://one.example", repo: org/one, hue: navy}`,
+			"github.sites[0].url"},
+		{"relative url",
+			`    - {name: one.example, url: "/one", repo: org/one, hue: navy}`,
+			"github.sites[0].url"},
+		{"repo not in owner/name form",
+			`    - {name: one.example, url: "https://one.example", repo: one, hue: navy}`,
+			"github.sites[0].repo"},
+		{"repo not watched",
+			`    - {name: one.example, url: "https://one.example", repo: org/three, hue: navy}`,
+			"github.sites[0].repo"},
+		{"repo claimed twice",
+			`    - {name: one.example, url: "https://one.example", repo: org/one, hue: navy}` + "\n" +
+				`    - {name: two.example, url: "https://two.example", repo: org/one, hue: rose}`,
+			"github.sites[1].repo"},
+		{"unknown hue",
+			`    - {name: one.example, url: "https://one.example", repo: org/one, hue: lime}`,
+			"github.sites[0].hue"},
+		{"tag too long",
+			`    - {name: one.example, url: "https://one.example", repo: org/one, hue: navy, tag: DEUT}`,
+			"github.sites[0].tag"},
+		{"unknown field",
+			`    - {name: one.example, url: "https://one.example", repo: org/one, hue: navy, colour: navy}`,
+			"colour"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "zorgscope.yaml")
+			if err := os.WriteFile(path, []byte(head+tc.sites+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := config.Load(path, env(fullEnv()))
+			if err == nil {
+				t.Fatalf("want an error naming %s (FR-8.1 AC5)", tc.field)
+			}
+			if !strings.Contains(err.Error(), tc.field) {
+				t.Errorf("error %q must name %s (FR-8.1 AC5)", err, tc.field)
+			}
+		})
+	}
+}
+
+// FR-1.8 AC1: the committed configuration names the seven arc42 sites, in the order their tiles
+// are drawn.
+func TestTheRealConfigNamesTheSevenSitesInOrder(t *testing.T) {
+	cfg, err := config.Load("../../config/zorgscope.yaml", env(fullEnv()))
+	if err != nil {
+		t.Fatalf("Load(config/zorgscope.yaml): %v", err)
+	}
+	var names []string
+	for _, s := range cfg.GitHub.Sites {
+		names = append(names, s.Name)
+	}
+	want := []string{
+		"arc42.org", "arc42.de", "quality.arc42.org", "docs.arc42.org",
+		"faq.arc42.org", "examples.arc42.org", "trainings.arc42.org",
+	}
+	if !slices.Equal(names, want) {
+		t.Errorf("sites = %v, want %v", names, want)
 	}
 }

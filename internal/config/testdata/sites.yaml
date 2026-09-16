@@ -1,0 +1,14 @@
+timezone: Europe/Berlin
+github:
+  auth_repo: gernotstarke/zorgscope
+  repos: [org/one, org/two, org/three]
+  sites:
+    - name: one.example
+      url: https://one.example
+      repo: org/one
+      hue: navy
+    - name: two.example
+      url: https://two.example
+      repo: org/two
+      hue: rose
+      tag: DE
