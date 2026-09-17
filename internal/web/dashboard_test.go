@@ -622,6 +622,11 @@ func TestNoRenderedHTMLNeedsUnsafeInline(t *testing.T) {
 	// with no state cookie is the refusal anyone who did not start here is answered with.
 	pages["GET /auth/callback (refused)"] = get(h, "/auth/callback?code=x&state=y").Body.String()
 
+	// The wait page (FR-1.9) is swept too: it is the one page a cold start shows.
+	wh, release := coldServer(t)
+	pages["GET / (waiting)"] = getAs(wh, "/", signIn(t, wh)).Body.String()
+	close(release)
+
 	for name, body := range pages {
 		t.Run(name, func(t *testing.T) {
 			if body == "" {

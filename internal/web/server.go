@@ -47,7 +47,7 @@ var embedded embed.FS
 // pageFiles are the page templates, each of which supplies the "content" block that layout.html
 // wraps. They are parsed one page at a time — layout plus that page — because every page defines a
 // block of the same name, so a single template set would have them overwrite each other.
-var pageFiles = []string{"login.html", "dashboard.html", "sites.html"}
+var pageFiles = []string{"login.html", "dashboard.html", "sites.html", "waiting.html"}
 
 // fragmentGlob matches the templates that are both part of a page and answerable on their own.
 // They are parsed twice on purpose: into every page set, so that dashboard.html can compose the
@@ -710,6 +710,9 @@ type pageData struct {
 	// Sites is set only by handleSites. sites.html reads it for the header and the tiles; every
 	// other page leaves it nil.
 	Sites *sitesView
+	// Waiting is set only by answeredWaiting. waiting.html reads it for the repository count and
+	// the path to poll; every other page leaves it nil.
+	Waiting *waitingView
 	// Error is a message written for the visitor. It is never an error's own text: those can
 	// carry a token (QS-4.3).
 	Error string

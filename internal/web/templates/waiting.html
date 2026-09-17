@@ -1,0 +1,23 @@
+{{define "head"}}<noscript><meta http-equiv="refresh" content="2"></noscript>{{end}}
+{{define "content"}}
+{{with .Waiting}}
+{{/* The wait page (FR-1.9): shown in place of the list or the tiles while a fetch runs. The
+     mark, large, with the scanning orbit and the heartbeat drawn by app.css alone (QS-4.4); a
+     status line, so the signal is never only colour or motion (AC4); and a poll that asks for
+     this page again every half second and swaps main in once the fetch has ended (AC2). While
+     the fetch still runs the poll is answered 204, so nothing is swapped and the animation never
+     restarts. The polling element sits inside main, so the swap that brings the page removes it. */}}
+<section class="waiting" aria-busy="true">
+  <div class="orbit-stage" data-state="refreshing">
+    <img class="orbit-mark" src="{{$.Asset "logo-large.jpg"}}" width="512" height="512" alt="" decoding="async">
+    <svg class="orbit-ring" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+      <circle class="orbit-track" cx="50" cy="50" r="46.5" pathLength="100"></circle>
+      <circle class="orbit-beam" cx="50" cy="50" r="46.5" pathLength="100"></circle>
+    </svg>
+    <span class="polling-pulse" aria-hidden="true"></span>
+  </div>
+  <p class="waiting-status" role="status" aria-live="polite">Asking GitHub about {{.Repos}} repositories…</p>
+  <div id="waiting" hx-get="{{.Path}}" hx-trigger="every 500ms" hx-target="main" hx-swap="outerHTML" hx-select="main"></div>
+</section>
+{{end}}
+{{end}}

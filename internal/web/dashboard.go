@@ -18,11 +18,57 @@ import (
 // to answer with the bare "items" fragment rather than a whole page.
 const fragmentItemsTemplate = "fragments/items.html"
 
+// waitingPollID is the id of the wait page's polling element. htmx sends it as the HX-Trigger
+// header of every poll, which is how a poll is told from the filter form's own htmx request:
+// the poll is answered 204 while the fetch runs, the filter is answered from the snapshot.
+const waitingPollID = "waiting"
+
+// waitingView is what waiting.html renders: how many repositories are being asked, and the
+// page's own path and query, which the poll asks for again.
+type waitingView struct {
+	Repos int
+	Path  string
+}
+
+// answeredWaiting is the first thing a page handler does (FR-1.9). It asks the cache — which
+// starts a fetch when one is due and never waits for it (QS-2.6) — and, while a fetch is in
+// flight, answers the request itself and reports so:
+//
+//   - an ordinary page view gets the wait page;
+//   - the wait page's own poll gets 204, so htmx swaps nothing and the animation keeps running;
+//   - any other htmx request — the filter form — is not answered here at all, and the caller
+//     renders it from the current snapshot (AC5), since a wait page selected for #items would
+//     empty the list.
+//
+// When no fetch is in flight it answers nothing and the caller renders as it always has.
+func (s *Server) answeredWaiting(w http.ResponseWriter, r *http.Request) bool {
+	snap := s.cache.Get(r.Context())
+	if !snap.Fetching {
+		return false
+	}
+	if r.Header.Get("HX-Request") != "true" {
+		// A wait page must never come back out of a browser cache: it is only ever right now.
+		w.Header().Set("Cache-Control", "no-store")
+		s.execute(w, r, http.StatusOK, "waiting.html", pageData{
+			Waiting: &waitingView{Repos: len(s.cfg.GitHub.Repos), Path: r.URL.RequestURI()},
+		})
+		return true
+	}
+	if r.Header.Get("HX-Trigger") == waitingPollID {
+		w.WriteHeader(http.StatusNoContent)
+		return true
+	}
+	return false
+}
+
 // ---------------------------------------------------------------- handlers
 
 // handleDashboard renders the whole page; handleItems renders only the #items fragment for the
 // htmx filter form. Both read the same snapshot and the same session.
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	if s.answeredWaiting(w, r) {
+		return
+	}
 	s.render(w, r, "dashboard.html")
 }
 func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
@@ -31,7 +77,9 @@ func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
 
 // render assembles the dashboard from the in-memory snapshot and the visitor's session, and
 // executes tmpl with it. It contacts no upstream service itself (FR-1.1): the only thing it
-// reaches for is the cache, which fetches on its own schedule — see internal/snapshot.
+// reaches for is the cache, which fetches on its own schedule — see internal/snapshot — and never
+// waits for that fetch; answeredWaiting has already dealt with a fetch in flight before render
+// runs.
 //
 // It is not a visit: only POST /seen moves the seen-mark, so rendering the page never clears a
 // badge on its own (FR-1.2 AC4).
