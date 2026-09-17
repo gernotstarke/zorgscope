@@ -70,7 +70,9 @@ one would be a redirect to somebody else's host wearing a debugging switch's clo
 `github.sites` is what the Sites view draws (FR‑1.8): one tile per entry, in the order written. Each
 site names exactly one repository that `github.repos` watches; the repositories no site names share a
 last tile called Other, so the Sites view never hides an item of a watched repository. The list is optional —
-without it the Sites view is the one Other tile.
+without it the Sites view is the one Other tile. The list borrows the same colours: each repository group
+is striped in the hue of the site that claims it, slate when none does (FR‑1.10). The label palette is
+not configured; it is fixed in the stylesheet.
 
 `hue` is not a colour but a key into a fixed palette: `navy`, `blue`, `plum`, `teal`, `umber`, `rose`,
 `slate`. The colours behind the keys live in `internal/web/static/app.css` as `--hue-<key>` custom
