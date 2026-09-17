@@ -512,7 +512,7 @@ func TestFetchCollectsEveryErrorAndKeepsTheGoodItems(t *testing.T) {
 // goroutines has: nothing of a fetch outlives the call.
 func TestFetchStopsWhenCancelled(t *testing.T) {
 	stop := make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body) // only after the body is read does the server notice a hang-up
 		select {
 		case <-r.Context().Done(): // the client gave up
