@@ -5,6 +5,7 @@
 package web
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"fmt"
 	"net/http"
@@ -147,5 +148,32 @@ func TestAListOfEntityTagsIsUnderstood(t *testing.T) {
 
 	if rec.Code != http.StatusNotModified {
 		t.Errorf("status = %d, want 304 — the entity tag was in the list", rec.Code)
+	}
+}
+
+// FR-1.9: the wait page's mark is a 512 px JPEG, served as such and never gzipped — a JPEG is
+// already compressed, and a gzip wrapper would only add bytes. Its size is pinned so a regenerated
+// file cannot quietly blow the wait page's budget (QS-2.3).
+func TestLargeMarkIsServedAsAJPEGWithoutGzip(t *testing.T) {
+	h := dashHandler(t, &fakeSource{})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/static/logo-large.jpg", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /static/logo-large.jpg = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "image/jpeg" {
+		t.Errorf("Content-Type = %q, want image/jpeg", ct)
+	}
+	if enc := rec.Header().Get("Content-Encoding"); enc != "" {
+		t.Errorf("Content-Encoding = %q, want none: a JPEG is not gzipped", enc)
+	}
+	if n := rec.Body.Len(); n > 45*1024 {
+		t.Errorf("logo-large.jpg is %d bytes, at most 45 kB is allowed", n)
+	}
+	if !bytes.HasPrefix(rec.Body.Bytes(), []byte{0xFF, 0xD8, 0xFF}) {
+		t.Error("the body does not start with the JPEG magic bytes")
 	}
 }

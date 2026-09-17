@@ -608,6 +608,7 @@ var staticContentTypes = map[string]string{
 	".svg": "image/svg+xml",
 	".png": "image/png",
 	".ico": "image/x-icon",
+	".jpg": "image/jpeg",
 }
 
 // loadStatic reads every embedded asset once, at start-up, and pre-computes its gzip encoding.

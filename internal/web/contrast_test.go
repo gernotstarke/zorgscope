@@ -274,3 +274,29 @@ func relativeLuminance(c rgb) float64 {
 	}
 	return 0.2126*linear(c.r) + 0.7152*linear(c.g) + 0.0722*linear(c.b)
 }
+
+// FR-1.9 AC4: the wait page's status line is text on the page background, and it must be readable
+// in both appearances — it is the one signal that is not colour or motion.
+func TestWaitingStatusKeepsTextReadable(t *testing.T) {
+	raw, err := fs.ReadFile(embedded, "static/app.css")
+	if err != nil {
+		t.Fatalf("reading the embedded app.css: %v", err)
+	}
+	css := string(raw)
+	if !strings.Contains(css, ".waiting-status {") {
+		t.Fatal("app.css defines no .waiting-status rule")
+	}
+	bg, ok := lightDarkToken(t, css, "bg")
+	if !ok {
+		t.Fatal("no --bg token")
+	}
+	text, ok := lightDarkToken(t, css, "text")
+	if !ok {
+		t.Fatal("no --text token")
+	}
+	for i, name := range []string{"light", "dark"} {
+		if r := contrastRatio(text[i], bg[i]); r < 4.5 {
+			t.Errorf("--text on --bg (%s) = %.2f:1, want at least 4.5:1", name, r)
+		}
+	}
+}
