@@ -17,11 +17,13 @@
       <span class="repo-count">{{.CountLine}}</span></h2>
     <ul class="items">
       {{range .Items}}
-      <li class="item{{if .New}} is-new{{end}}">
+      <li class="item{{if .New}} is-new{{end}}{{if .Quiet}} is-quiet{{end}}">
         <p class="item-line">
           {{if .New}}<span class="badge badge-new">NEW</span>{{end}}
           {{if .Number}}<span class="item-number">#{{.Number}}</span>{{end}}
           <a class="item-title" href="{{.URL}}" target="_blank" rel="noopener noreferrer">{{.Title}}</a>
+          {{/* The item's labels as chips (FR-1.10 AC3). Key picks the colour class; the six names the arc42 repositories use get a colour of their own, everything else is a plain chip. */}}
+          {{range .Labels}}<span class="label label-{{.Key}}">{{.Name}}</span>{{end}}
         </p>
         {{/* The item's own description, in small type under its title: a number and a headline
              often do not say what an issue is actually about. Absent when the source has none —
@@ -32,7 +34,7 @@
         {{/* Both stamps are guarded by .Known: a zero timestamp — a stored row whose created_at
              failed to parse — must read as unknown rather than render <time datetime=""></time>,
              which is invalid HTML and shows the visitor the word "opened" followed by nothing. */}}
-        <p class="item-meta">{{if .Created.Known}}opened <time datetime="{{.Created.Absolute}}">{{.Created.Relative}}</time>{{else}}opened at an unknown time{{end}}{{if .Updated.Known}}, updated <time datetime="{{.Updated.Absolute}}">{{.Updated.Relative}}</time>{{end}}</p>
+        <p class="item-meta">{{if .Created.Known}}opened <time datetime="{{.Created.Absolute}}">{{.Created.Relative}}</time>{{else}}opened at an unknown time{{end}}{{if .Updated.Known}}, updated <time datetime="{{.Updated.Absolute}}">{{.Updated.Relative}}</time>{{end}}{{if .Quiet}}, quiet{{end}}</p>
       </li>
       {{end}}
     </ul>

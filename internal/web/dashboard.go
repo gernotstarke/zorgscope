@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"html/template"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -305,6 +306,47 @@ type itemView struct {
 	New     bool
 	Created timeView
 	Updated timeView
+	// Labels are the item's chips, in GitHub's order (FR-1.10 AC3).
+	Labels []labelView
+	// Quiet marks an item nothing has touched for domain.QuietAfter (FR-1.10 AC4).
+	Quiet bool
+}
+
+// labelView is one chip: the name as GitHub spells it, and the key that picks its colour class.
+type labelView struct {
+	Name, Key string
+}
+
+// labelKeys are the label names that get a colour of their own, as the keys their CSS classes and
+// tokens use: label-<key> and --label-<key>. They are the names the arc42 repositories actually
+// use, normalised as labelKey normalises them. Any other label is labelOther (FR-1.10 AC3).
+var labelKeys = []string{"bug", "enhancement", "documentation", "question", "help-wanted", "in-progress"}
+
+// labelOther is the key of every label outside labelKeys: a neutral chip whose name does the work.
+const labelOther = "other"
+
+// labelKey normalises a label name — lowercase, trimmed, runs of whitespace as one hyphen — and
+// returns it when it is one of labelKeys, labelOther otherwise. "Help Wanted", "help wanted" and
+// "help-wanted" all land on the same chip, which is the point: the same label is spelled three
+// ways across the arc42 repositories.
+func labelKey(name string) string {
+	key := strings.Join(strings.Fields(strings.ToLower(name)), "-")
+	if slices.Contains(labelKeys, key) {
+		return key
+	}
+	return labelOther
+}
+
+// labelViews turns label names into chips, keeping GitHub's order; nil for none.
+func labelViews(names []string) []labelView {
+	if len(names) == 0 {
+		return nil
+	}
+	out := make([]labelView, 0, len(names))
+	for _, name := range names {
+		out = append(out, labelView{Name: name, Key: labelKey(name)})
+	}
+	return out
 }
 
 // ---------------------------------------------------------------- view construction
@@ -471,6 +513,8 @@ func newItemView(it domain.Item, now time.Time, isNew bool) itemView {
 		New:     isNew,
 		Created: newTimeView(it.CreatedAt, now),
 		Updated: newTimeView(it.UpdatedAt, now),
+		Labels:  labelViews(it.Labels),
+		Quiet:   it.IsQuiet(now),
 	}
 }
 

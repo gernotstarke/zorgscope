@@ -669,3 +669,48 @@ button:hover,
     transform: translate(-50%, -50%) scale(1.08);
   }
 }
+
+/* ---------------------------------------------------------------- labels and quiet items (FR-1.10)
+
+   Labels as chips. Six names the arc42 repositories actually use get a colour of their own;
+   anything else is a plain outlined chip whose name does the work. The palette is fixed here
+   rather than taken from GitHub: the same name carries different colours in different arc42
+   repositories, and a colour can only reach the page as a class (QS-4.4). Each colour is chosen so
+   the chip's text reaches 4.5:1 on its own tinted background in both appearances — the contrast
+   test measures exactly that. */
+:root {
+  --label-bug: light-dark(#b3261e, #f2836f);
+  --label-enhancement: light-dark(#0e4f80, #7fb2e0);
+  --label-documentation: light-dark(#1b5648, #5fb49c);
+  --label-question: light-dark(#682d63, #c98ac1);
+  --label-help-wanted: light-dark(#186633, #6bc98a);
+  --label-in-progress: light-dark(#8a5300, #e0a03c);
+}
+
+.label {
+  padding: 0 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.label-bug { --label: var(--label-bug); }
+.label-enhancement { --label: var(--label-enhancement); }
+.label-documentation { --label: var(--label-documentation); }
+.label-question { --label: var(--label-question); }
+.label-help-wanted { --label: var(--label-help-wanted); }
+.label-in-progress { --label: var(--label-in-progress); }
+
+/* Only the chips with a colour of their own are tinted; label-other keeps the plain outline. */
+.label-bug, .label-enhancement, .label-documentation, .label-question, .label-help-wanted, .label-in-progress {
+  color: var(--label);
+  border-color: var(--label);
+  background: color-mix(in srgb, var(--label) 10%, transparent);
+}
+
+/* Quiet: nothing has happened here for three months (FR-1.10 AC4). The title dims, and the meta
+   line says the word, so the state is readable without the colour. */
+.is-quiet .item-title { color: var(--muted); }

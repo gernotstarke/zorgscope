@@ -61,6 +61,18 @@ func SortItems(items []Item, lastVisit time.Time) {
 	})
 }
 
+// QuietAfter is how long an item may go without an update before the page calls it quiet
+// (FR-1.10 AC4). Three months: long enough that a maintainer's own pause does not trip it, short
+// enough that a forgotten issue shows up before the year is out.
+const QuietAfter = 90 * 24 * time.Hour
+
+// IsQuiet reports whether nothing has happened to the item for QuietAfter or longer, measured
+// from its last update to now. An item whose update time is unknown is never quiet: unknown is
+// not idle.
+func (i Item) IsQuiet(now time.Time) bool {
+	return !i.UpdatedAt.IsZero() && now.Sub(i.UpdatedAt) >= QuietAfter
+}
+
 // CountNew reports how many items are new as of lastVisit.
 func CountNew(items []Item, lastVisit time.Time) int {
 	n := 0

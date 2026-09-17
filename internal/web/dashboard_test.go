@@ -1061,7 +1061,7 @@ func representativeItems() []domain.Item {
 			if i%3 == 0 {
 				kind = domain.KindPR
 			}
-			items = append(items, domain.Item{
+			item := domain.Item{
 				Kind:      kind,
 				Repo:      repo,
 				Number:    n,
@@ -1071,7 +1071,11 @@ func representativeItems() []domain.Item {
 				State:     "OPEN",
 				CreatedAt: testNow.Add(-time.Duration(n) * time.Hour),
 				UpdatedAt: testNow.Add(-time.Duration(i) * time.Hour),
-			})
+			}
+			if i%4 == 0 {
+				item.Labels = []string{"bug", "help wanted"}
+			}
+			items = append(items, item)
 		}
 	}
 	return items
@@ -1119,4 +1123,66 @@ func openingTag(t *testing.T, body, prefix string) string {
 		t.Fatalf("the element starting %s is never closed", prefix)
 	}
 	return rest[:j+1]
+}
+
+// FR-1.10 AC3: labels become chips after the title, in GitHub's order; six names get their own
+// class, matched without regard to case and with spaces as hyphens; anything else is "other"; an
+// item without labels draws no chip at all.
+func TestLabelsRenderAsChipsWithTheFixedPalette(t *testing.T) {
+	labelled := ghItem(1, "Labelled", testNow.Add(-time.Hour))
+	labelled.Labels = []string{"bug", "Help Wanted", "in progress", "needs-triage", "Documentation"}
+	plain := ghItem(2, "Plain", testNow.Add(-time.Hour))
+	body := getAuthed(t, dashHandler(t, &fakeSource{items: []domain.Item{labelled, plain}}), "/").Body.String()
+
+	want := `<span class="label label-bug">bug</span>` +
+		`<span class="label label-help-wanted">Help Wanted</span>` +
+		`<span class="label label-in-progress">in progress</span>` +
+		`<span class="label label-other">needs-triage</span>` +
+		`<span class="label label-documentation">Documentation</span>`
+	if !strings.Contains(strings.Join(strings.Fields(body), ""), strings.Join(strings.Fields(want), "")) {
+		t.Errorf("the labelled row does not carry the chips in order; row:\n%s", firstLineContaining(body, "Labelled"))
+	}
+	if n := strings.Count(body, `class="label `); n != 5 {
+		t.Errorf("page has %d chips, want 5: the plain item must draw none", n)
+	}
+	for _, key := range labelKeys {
+		if !strings.Contains(key, "-") && strings.Contains(key, " ") {
+			t.Errorf("label key %q carries a space; keys are hyphenated", key)
+		}
+	}
+}
+
+// FR-1.10 AC3: the key is the normalised name when it is one of the six, "other" otherwise.
+func TestLabelKeyNormalisesCaseAndSpaces(t *testing.T) {
+	cases := map[string]string{
+		"bug": "bug", "Bug": "bug", "  enhancement ": "enhancement", "Help Wanted": "help-wanted",
+		"help-wanted": "help-wanted", "help   wanted": "help-wanted", "in progress": "in-progress",
+		"documentation": "documentation", "question": "question", "content": "other", "": "other",
+		"wontfix": "other",
+	}
+	for name, want := range cases {
+		if got := labelKey(name); got != want {
+			t.Errorf("labelKey(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+// FR-1.10 AC4: a quiet item is marked as such on the row and says the word in its meta line; a
+// recently updated one is neither.
+func TestQuietItemsAreDimmedAndSayQuiet(t *testing.T) {
+	quiet := ghItem(1, "Old thing", testNow.Add(-100*24*time.Hour))
+	live := ghItem(2, "Fresh thing", testNow.Add(-time.Hour))
+	body := getAuthed(t, dashHandler(t, &fakeSource{items: []domain.Item{quiet, live}}), "/").Body.String()
+
+	quietRow := openingTag(t, body, `<li class="item is-quiet"`)
+	if quietRow == "" {
+		t.Fatalf("no row carries is-quiet; the 100-day-old item must:\n%s", firstLineContaining(body, "Old thing"))
+	}
+	if !strings.Contains(body, "</time>, quiet</p>") {
+		t.Error("the quiet item's meta line does not end with \", quiet\"")
+	}
+	if strings.Count(body, "is-quiet") != 1 || strings.Count(body, ", quiet</p>") != 1 {
+		t.Errorf("quiet marks = %d rows / %d words, want exactly 1 each: the fresh item must carry none",
+			strings.Count(body, "is-quiet"), strings.Count(body, ", quiet</p>"))
+	}
 }

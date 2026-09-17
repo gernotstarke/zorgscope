@@ -323,3 +323,33 @@ func TestWaitingStatusKeepsTextReadable(t *testing.T) {
 		}
 	}
 }
+
+// FR-1.10 AC3: chip text is the label colour on a chip tinted 10 % with the same colour over the
+// page; it must reach 4.5:1 in both appearances, and every key the page can emit must have a
+// token — a key without one would draw a chip in the inherited colour and nobody would notice.
+func TestLabelChipsKeepTextReadable(t *testing.T) {
+	raw, err := fs.ReadFile(embedded, "static/app.css")
+	if err != nil {
+		t.Fatalf("reading the embedded app.css: %v", err)
+	}
+	css := string(raw)
+	bg, ok := lightDarkToken(t, css, "bg")
+	if !ok {
+		t.Fatal("no --bg token")
+	}
+	for _, key := range labelKeys {
+		if !strings.Contains(css, ".label-"+key+" {") {
+			t.Errorf("app.css defines no .label-%s rule", key)
+		}
+		colour, ok := lightDarkToken(t, css, "label-"+key)
+		if !ok {
+			continue
+		}
+		for i, name := range []string{"light", "dark"} {
+			chip := mixSRGB(colour[i], bg[i], 0.10)
+			if r := contrastRatio(colour[i], chip); r < 4.5 {
+				t.Errorf("--label-%s on its chip (%s) = %.2f:1, want at least 4.5:1", key, name, r)
+			}
+		}
+	}
+}

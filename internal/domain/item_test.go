@@ -109,3 +109,26 @@ func titles(items []domain.Item) []string {
 	}
 	return out
 }
+
+// FR-1.10 AC4: quiet is 90 days without an update, measured to the second; an item whose update
+// time is unknown is never quiet — unknown is not idle.
+func TestIsQuietAtTheBoundary(t *testing.T) {
+	now := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name    string
+		updated time.Time
+		want    bool
+	}{
+		{"just under 90 days", now.Add(-domain.QuietAfter + time.Second), false},
+		{"exactly 90 days", now.Add(-domain.QuietAfter), true},
+		{"a year", now.AddDate(-1, 0, 0), true},
+		{"unknown", time.Time{}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := (domain.Item{UpdatedAt: c.updated}).IsQuiet(now); got != c.want {
+				t.Errorf("IsQuiet = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
