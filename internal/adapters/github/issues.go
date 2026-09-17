@@ -171,7 +171,7 @@ type ghIssueNode struct {
 	CreatedAt githubv4.DateTime
 	UpdatedAt githubv4.DateTime
 	State     githubv4.String
-	Labels    ghLabelConnection `graphql:"labels(first: 10)"`
+	Labels    ghLabelConnection `graphql:"labels(first: 5)"`
 }
 
 // ghPRNode is one pull-request node: every field of ghIssueNode plus isDraft (FR-2.1 AC1).
@@ -194,7 +194,7 @@ type ghPRNode struct {
 	CreatedAt githubv4.DateTime
 	UpdatedAt githubv4.DateTime
 	State     githubv4.String
-	Labels    ghLabelConnection `graphql:"labels(first: 10)"`
+	Labels    ghLabelConnection `graphql:"labels(first: 5)"`
 	IsDraft   githubv4.Boolean
 }
 
@@ -209,9 +209,10 @@ type ghLabelNode struct {
 	Name githubv4.String
 }
 
-// ghLabelConnection is the labels connection of one node. first: 10 is the whole of any arc42
-// item's labels today, and it is a field on a node the query already fetches — it costs points,
-// not requests, so QS-3.5's count of 20 does not move (FR-1.10 AC3).
+// ghLabelConnection is the labels connection of one node. first: 5 is the whole of any arc42
+// item's labels today (the most-labelled item has three), and it is a field on a node the query
+// already fetches — it costs points, not requests, so QS-3.5's count of 20 does not move
+// (FR-1.10 AC3).
 type ghLabelConnection struct {
 	Nodes []ghLabelNode
 }

@@ -44,7 +44,7 @@ zorgscope
 
 | Id | Context | Stimulus | Response | Measure |
 |----|---------|----------|----------|---------|
-| QS‑3.5 | The representative configuration (10 repositories) | A page view is stale and pays a fetch | GitHub's GraphQL endpoint is queried at most 20 times — one request read as one point-equivalent, the reading the requirement's own assertion clause prescribes — so that GitHub's rate limit is never a constraint | `TestGraphQLRequestBudget` (`internal/adapters/github/cost_test.go`) counts requests against a fake server and asserts the exact count: 10 repositories × 2 queries (issues and pull requests paginate independently) = 20, met with no headroom. |
+| QS‑3.5 | The representative configuration (10 repositories) | A page view is stale and pays a fetch | GitHub's GraphQL endpoint is queried at most 20 times — one request read as one point-equivalent, the reading the requirement's own assertion clause prescribes — so that GitHub's rate limit is never a constraint. The measure counts requests; a connection nested in a node — the labels of an item (FR‑1.10) — raises GitHub's point cost of a query without raising the count, and is kept small (`first: 5`) for that reason. | `TestGraphQLRequestBudget` (`internal/adapters/github/cost_test.go`) counts requests against a fake server and asserts the exact count: 10 repositories × 2 queries (issues and pull requests paginate independently) = 20, met with no headroom. |
 
 ## 5.5 QG‑4 Confidentiality
 

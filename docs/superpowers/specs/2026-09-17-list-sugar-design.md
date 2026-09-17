@@ -82,10 +82,10 @@ Both node types in `internal/adapters/github/issues.go` gain
 ```go
 Labels struct {
 	Nodes []struct{ Name githubv4.String }
-} `graphql:"labels(first: 10)"`
+} `graphql:"labels(first: 5)"`
 ```
 
-Ten covers every arc42 item today (the most labelled has three). The connection is a field on nodes
+Five covers every arc42 item today (the most labelled has three). The connection is a field on nodes
 the queries already fetch, so the request count — what QS‑3.5 measures — does not change;
 `TestGraphQLRequestBudget` keeps counting 20. `toItem` copies the names, in GitHub's order, into
 `domain.Item.Labels []string`; an item with no labels has a nil slice.

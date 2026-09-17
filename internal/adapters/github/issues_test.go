@@ -559,7 +559,7 @@ func TestFetchCarriesLabelsInGitHubsOrder(t *testing.T) {
 
 	want := map[string][]string{
 		"issue:org/repo#1": {"bug", "Help Wanted"},
-		"issue:org/repo#2": {"enhancement"},
+		"issue:org/repo#2": {"enhancement", "question"},
 		"issue:org/repo#3": {"documentation", "needs-triage"},
 		"pr:org/repo#10":   {"in progress"},
 		"pr:org/repo#11":   nil,

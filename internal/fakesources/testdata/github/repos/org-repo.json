@@ -37,6 +37,9 @@
         "nodes": [
           {
             "name": "enhancement"
+          },
+          {
+            "name": "question"
           }
         ]
       }
