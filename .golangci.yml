@@ -56,3 +56,7 @@ linters:
         text: "context-as-argument"
         linters:
           - revive
+
+formatters:
+  enable:
+    - gofmt

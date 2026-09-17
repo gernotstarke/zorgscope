@@ -270,7 +270,7 @@ type itemsView struct {
 // filter is applied, so narrowing the list never makes the page understate what is out there
 // (FR-1.2).
 type groupView struct {
-	Repo      string
+	Repo string
 	// Hue is the site's colour key, drawn as the group's stripe (FR-1.10 AC2).
 	Hue       string
 	NewCount  int

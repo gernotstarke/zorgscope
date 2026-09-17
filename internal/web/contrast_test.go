@@ -260,6 +260,7 @@ func parseHexColour(h string) rgb {
 
 // mixSRGB is CSS `color-mix(in srgb, a p, b)`: a linear interpolation of the gamma-encoded
 // channels, p of a and the rest of b.
+//
 //nolint:misspell // color-mix is the CSS function's own name, not prose to be normalised
 func mixSRGB(a, b rgb, p float64) rgb {
 	return rgb{a.r*p + b.r*(1-p), a.g*p + b.g*(1-p), a.b*p + b.b*(1-p)}
