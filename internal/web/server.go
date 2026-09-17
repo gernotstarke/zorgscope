@@ -589,11 +589,12 @@ type staticAsset struct {
 // links stay readable in the page source.
 const assetVersionLen = 7
 
-// compressibleStatic are the extensions worth gzipping. Everything else — the PNGs and the ICO of
-// the logo — is already compressed, and gzipping it costs bytes rather than saving them.
-// Deliberately absent: .png and .ico's larger cousins. A PNG is already deflate-compressed, so
-// gzipping it again spends CPU on a cold start to add a few bytes. .ico is here because it is
-// not: an ICO is uncompressed bitmap data and gzips to a fraction of its size.
+// compressibleStatic are the extensions worth gzipping. Everything else — the PNGs, the large
+// mark's JPEG and the ICO of the logo — is already compressed, and gzipping it costs bytes rather
+// than saving them. Deliberately absent: .png and .jpg. A PNG is already deflate-compressed and a
+// JPEG is already its own compressed format, so gzipping either again spends CPU on a cold start
+// to add a few bytes. .ico is here because it is not: an ICO is uncompressed bitmap data and gzips
+// to a fraction of its size.
 var compressibleStatic = map[string]bool{
 	".css": true, ".js": true, ".svg": true, ".json": true, ".html": true, ".txt": true,
 	".xml": true, ".map": true, ".ico": true,
