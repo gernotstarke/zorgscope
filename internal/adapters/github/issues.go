@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/shurcooL/githubv4"
@@ -73,30 +74,54 @@ func NewIssueFetcher(cfg Config, hc *http.Client) *IssueFetcher {
 // already fetched from the others (QS-1.4): every per-repository error is collected, joined with
 // errors.Join, and returned alongside every item successfully fetched — never returned early on
 // the first failure.
+//
+// The repositories are fetched side by side (QS-2.7): one goroutine per repository and
+// connection, all started at once. There is no separate concurrency limit, because QS-3.5 caps the
+// configuration at ten repositories and therefore at twenty requests in flight. Each goroutine
+// writes into its own slot, and the slots are read out in order once every goroutine has finished,
+// so the result is the one the sequential loop produced — repositories in configuration order, a
+// repository's issues before its pull requests — whatever order the upstream answered in.
 func (f *IssueFetcher) Fetch(ctx context.Context) ([]domain.Item, error) {
-	var items []domain.Item
-	var errs []error
+	type slot struct {
+		items []domain.Item
+		err   error
+	}
+	// Two slots per repository: issues at 2i, pull requests at 2i+1.
+	slots := make([]slot, 2*len(f.repos))
 
-	for _, repo := range f.repos {
+	var wg sync.WaitGroup
+	for i, repo := range f.repos {
 		owner, name, ok := splitRepo(repo)
 		if !ok {
-			errs = append(errs, fmt.Errorf("github: %q is not owner/name", repo))
+			slots[2*i].err = fmt.Errorf("github: %q is not owner/name", repo)
 			continue
 		}
-
-		issues, err := f.fetchIssues(ctx, owner, name)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("github: fetching issues for %s: %w", repo, err))
-		}
-		items = append(items, issues...)
-
-		prs, err := f.fetchPullRequests(ctx, owner, name)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("github: fetching pull requests for %s: %w", repo, err))
-		}
-		items = append(items, prs...)
+		wg.Add(2)
+		go func(s *slot) {
+			defer wg.Done()
+			s.items, s.err = f.fetchIssues(ctx, owner, name)
+			if s.err != nil {
+				s.err = fmt.Errorf("github: fetching issues for %s: %w", repo, s.err)
+			}
+		}(&slots[2*i])
+		go func(s *slot) {
+			defer wg.Done()
+			s.items, s.err = f.fetchPullRequests(ctx, owner, name)
+			if s.err != nil {
+				s.err = fmt.Errorf("github: fetching pull requests for %s: %w", repo, s.err)
+			}
+		}(&slots[2*i+1])
 	}
+	wg.Wait()
 
+	var items []domain.Item
+	var errs []error
+	for _, s := range slots {
+		items = append(items, s.items...)
+		if s.err != nil {
+			errs = append(errs, s.err)
+		}
+	}
 	return items, errors.Join(errs...)
 }
 

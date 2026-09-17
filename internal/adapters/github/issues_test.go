@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -406,5 +407,136 @@ func TestIssueBodyTextReachesTheItem(t *testing.T) {
 	}
 	if empty.Summary != "" {
 		t.Errorf("Summary = %q for an issue with no body, want empty", empty.Summary)
+	}
+}
+
+// QS-2.7: the requests of one fetch run side by side. Twenty requests that each take 200 ms would
+// take four seconds one after the other; side by side they take about one round trip.
+func TestFetchRunsRepositoriesSideBySide(t *testing.T) {
+	echo := connectionEchoHandler(t, func(string) (nodes []any, hasNextPage bool, endCursor string) {
+		return []any{}, false, ""
+	})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+		echo(w, r)
+	}))
+	defer srv.Close()
+
+	f := github.NewIssueFetcher(github.Config{
+		Token: "x", BaseURL: srv.URL, Repos: representativeRepos(),
+	}, srv.Client())
+
+	start := time.Now()
+	if _, err := f.Fetch(context.Background()); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("a fetch of %d repositories took %v; side by side it should take about one "+
+			"200 ms round trip (QS-2.7)", len(representativeRepos()), elapsed)
+	}
+}
+
+// FR-1.4: running side by side changes when items arrive, never where they land. The result is
+// the sequential one — repositories in configuration order, a repository's issues before its pull
+// requests — however the upstream happens to answer. The handler answers after a random pause so
+// that a fetch which merely appended results as they came in would fail here.
+func TestFetchKeepsConfigurationOrder(t *testing.T) {
+	echo := connectionEchoHandler(t, func(string) (nodes []any, hasNextPage bool, endCursor string) {
+		return []any{stuckNode(1)}, false, ""
+	})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(time.Duration(rand.IntN(30)) * time.Millisecond)
+		echo(w, r)
+	}))
+	defer srv.Close()
+
+	repos := []string{"org/one", "org/two", "org/three", "org/four"}
+	f := github.NewIssueFetcher(github.Config{Token: "x", BaseURL: srv.URL, Repos: repos}, srv.Client())
+
+	items, err := f.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	var got []string
+	for _, it := range items {
+		got = append(got, string(it.Kind)+":"+it.Repo)
+	}
+	var want []string
+	for _, repo := range repos {
+		want = append(want, string(domain.KindIssue)+":"+repo, string(domain.KindPR)+":"+repo)
+	}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("items in order %v, want %v", got, want)
+	}
+}
+
+// FR-1.4 AC4 across the fan-out: one repository failing, one that is not owner/name, and the
+// rest fine. Every error is collected, and the good repositories' items are all returned.
+func TestFetchCollectsEveryErrorAndKeepsTheGoodItems(t *testing.T) {
+	echo := connectionEchoHandler(t, func(string) (nodes []any, hasNextPage bool, endCursor string) {
+		return []any{stuckNode(1)}, false, ""
+	})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), `"name":"broken"`) {
+			http.Error(w, "upstream on fire", http.StatusBadGateway)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		echo(w, r)
+	}))
+	defer srv.Close()
+
+	repos := []string{"org/good", "org/broken", "not-a-repo", "org/fine"}
+	f := github.NewIssueFetcher(github.Config{Token: "x", BaseURL: srv.URL, Repos: repos}, srv.Client())
+
+	items, err := f.Fetch(context.Background())
+	if err == nil {
+		t.Fatal("want an error naming the broken repository and the malformed name")
+	}
+	for _, needle := range []string{"org/broken", `"not-a-repo" is not owner/name`} {
+		if !strings.Contains(err.Error(), needle) {
+			t.Errorf("error %q does not mention %s", err, needle)
+		}
+	}
+	got := map[string]int{}
+	for _, it := range items {
+		got[it.Repo]++
+	}
+	if got["org/good"] != 2 || got["org/fine"] != 2 || got["org/broken"] != 0 {
+		t.Errorf("items per repository = %v, want org/good:2 org/fine:2 org/broken:0", got)
+	}
+}
+
+// A cancelled context ends the fetch promptly, and Fetch does not return before every one of its
+// goroutines has: nothing of a fetch outlives the call.
+func TestFetchStopsWhenCancelled(t *testing.T) {
+	stop := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body) // only after the body is read does the server notice a hang-up
+		select {
+		case <-r.Context().Done(): // the client gave up
+		case <-stop:               // the test is over
+		}
+	}))
+	defer srv.Close()
+	defer close(stop) // runs before srv.Close: defers are last in, first out
+
+	f := github.NewIssueFetcher(github.Config{
+		Token: "x", BaseURL: srv.URL, Repos: representativeRepos(),
+	}, srv.Client())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+	start := time.Now()
+	_, err := f.Fetch(ctx)
+	if err == nil {
+		t.Fatal("want the cancellation reported as an error")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("Fetch took %v to notice the cancellation", elapsed)
 	}
 }
