@@ -2,6 +2,9 @@
 # nothing else to bring up: no database, no volume.
 services:
   app:
+    # One fixed name, so `docker ps` and the logs say which container this is rather than
+    # Compose's default of the directory and the service ("deploy-app-1").
+    container_name: zorgscope-local
     build:
       context: ..
       dockerfile: deploy/Dockerfile
