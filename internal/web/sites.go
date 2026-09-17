@@ -23,6 +23,10 @@ const (
 // Sites view never hides something the list shows.
 const otherTileName = "Other"
 
+// unclaimedHue is the colour key drawn for a repository no configured site claims: the Other
+// tile, and now the list's own group stripe for the same repository (FR-1.10 AC2).
+const unclaimedHue = "slate"
+
 // handleSites renders the Sites view (FR-1.8). Like render, it reads only the snapshot and the
 // session, and it is not a visit: only POST /seen moves the seen-mark.
 func (s *Server) handleSites(w http.ResponseWriter, r *http.Request) {
@@ -70,30 +74,30 @@ func siteSpecs(gh config.GitHub) []domain.SiteSpec {
 		}
 	}
 	if len(other) > 0 {
-		specs = append(specs, domain.SiteSpec{Name: otherTileName, Hue: "slate", Repos: other})
+		specs = append(specs, domain.SiteSpec{Name: otherTileName, Hue: unclaimedHue, Repos: other})
 	}
 	return specs
 }
 
-// tileHue is key when the stylesheet defines it, and slate otherwise. config.Load already refuses an
-// unknown key; this is the second lock on the same door, for a Config built in code, so that nothing
-// but a known class name can ever reach the template.
+// tileHue is key when the stylesheet defines it, and unclaimedHue otherwise. config.Load already
+// refuses an unknown key; this is the second lock on the same door, for a Config built in code, so
+// that nothing but a known class name can ever reach the template.
 func tileHue(key string) string {
 	if slices.Contains(config.HueKeys, key) {
 		return key
 	}
-	return "slate"
+	return unclaimedHue
 }
 
-// hueForRepo is the colour key of the site that claims repo, slate when no site does — the rule
-// the Other tile follows, now shared with the list's groups (FR-1.10 AC2).
+// hueForRepo is the colour key of the site that claims repo, unclaimedHue when no site does — the
+// rule the Other tile follows, now shared with the list's groups (FR-1.10 AC2).
 func hueForRepo(gh config.GitHub, repo string) string {
 	for _, site := range gh.Sites {
 		if site.Repo == repo {
 			return tileHue(site.Hue)
 		}
 	}
-	return "slate"
+	return unclaimedHue
 }
 
 // sitesView is the whole Sites page.

@@ -1135,16 +1135,20 @@ func TestLabelsRenderAsChipsWithTheFixedPalette(t *testing.T) {
 	plain := ghItem(2, "Plain", testNow.Add(-time.Hour))
 	body := getAuthed(t, dashHandler(t, &fakeSource{items: []domain.Item{labelled, plain}}), "/").Body.String()
 
-	want := `<span class="label label-bug">bug</span>` +
+	want := `<span class="visually-hidden">Labels:</span>` +
+		`<span class="label label-bug">bug</span>` +
 		`<span class="label label-help-wanted">Help Wanted</span>` +
 		`<span class="label label-in-progress">in progress</span>` +
 		`<span class="label label-other">needs-triage</span>` +
 		`<span class="label label-documentation">Documentation</span>`
 	if !strings.Contains(strings.Join(strings.Fields(body), ""), strings.Join(strings.Fields(want), "")) {
-		t.Errorf("the labelled row does not carry the chips in order; row:\n%s", firstLineContaining(body, "Labelled"))
+		t.Errorf("the labelled row does not carry the cue before its chips, in order; row:\n%s", firstLineContaining(body, "Labelled"))
 	}
 	if n := strings.Count(body, `class="label `); n != 5 {
 		t.Errorf("page has %d chips, want 5: the plain item must draw none", n)
+	}
+	if n := strings.Count(body, `class="visually-hidden"`); n != 1 {
+		t.Errorf("page has %d Labels cues, want 1: the plain item has no labels and must draw none", n)
 	}
 	for _, key := range labelKeys {
 		if !strings.Contains(key, "-") && strings.Contains(key, " ") {

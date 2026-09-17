@@ -120,7 +120,7 @@ the tests and the contrast test both read.
   --label-enhancement: light-dark(#0e4f80, #7fb2e0);
   --label-documentation: light-dark(#1b5648, #5fb49c);
   --label-question: light-dark(#682d63, #c98ac1);
-  --label-help-wanted: light-dark(#1f7a3d, #6bc98a);
+  --label-help-wanted: light-dark(#186633, #6bc98a);
   --label-in-progress: light-dark(#8a5300, #e0a03c);
 }
 .label {
@@ -148,7 +148,9 @@ the tests and the contrast test both read.
 The six colours are the page's existing semantic tones (`--danger`, `--accent`'s family, `--ok`,
 `--warn`) and the tile palette's teal and plum, chosen so the chip text keeps 4.5:1 against its own
 tinted background in both appearances; the contrast test measures exactly that, mixing each label
-colour at 10 % over `--bg` and checking the label colour on the result.
+colour at 10 % over `--bg` and checking the label colour on the result. Help wanted is not `--ok`
+itself: it is a darker green in the light appearance, chosen for headroom over 4.5:1 rather than
+sitting exactly on the line.
 
 ## 6. Quiet items
 

@@ -352,6 +352,26 @@ func TestLabelChipsKeepTextReadable(t *testing.T) {
 			}
 		}
 	}
+
+	// The rule above only checks each key's own token; it says nothing about which chips actually
+	// get tinted. Find the rule whose declaration block carries the tint itself, and check its
+	// selector list names every labelKeys entry — a key missing from it would draw in the
+	// inherited muted colour instead, and label-other must stay untinted, since it carries no
+	// colour of its own to measure.
+	//nolint:misspell // color-mix is the CSS function's own name, not prose to be normalised
+	tintRule := regexp.MustCompile(`(?s)([^{}]+)\{[^{}]*background:\s*color-mix\(in srgb, var\(--label\) 10%[^{}]*\}`).FindStringSubmatch(css)
+	if tintRule == nil {
+		t.Fatal("app.css defines no rule tinting a chip's background with color-mix(in srgb, var(--label) 10%, ...)") //nolint:misspell // ditto
+	}
+	selector := tintRule[1]
+	for _, key := range labelKeys {
+		if !strings.Contains(selector, ".label-"+key) {
+			t.Errorf("the tinted selector list does not include .label-%s: %q", key, selector)
+		}
+	}
+	if strings.Contains(selector, ".label-"+labelOther) {
+		t.Errorf("the tinted selector list includes .label-%s, which must keep the plain outline: %q", labelOther, selector)
+	}
 }
 
 // FR-1.10 AC2: every site's stripe is visible against the page in both appearances — the hue in

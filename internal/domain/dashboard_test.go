@@ -99,6 +99,43 @@ func TestBuildDashboardEchoesLastVisitAt(t *testing.T) {
 	}
 }
 
+// FR-1.10 AC3: labels are borrowed text the domain only carries, never inspects — BuildDashboard
+// must hand them on unchanged, all the way to the grouped item the page renders, and SortItems
+// (called on every group internally, and here again directly on a copy) must not drop them either.
+func TestBuildDashboardCarriesLabelsThrough(t *testing.T) {
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	items := []domain.Item{
+		{Title: "labelled", Repo: "arc42/a", Kind: domain.KindIssue, Labels: []string{"bug", "Help Wanted"}, CreatedAt: now, UpdatedAt: now},
+		{Title: "plain", Repo: "arc42/a", Kind: domain.KindIssue, CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour)},
+	}
+	d := domain.BuildDashboard(domain.DashboardInput{Now: now, Items: items, Repos: []string{"arc42/a"}})
+
+	if len(d.Groups) != 1 || len(d.Groups[0].Items) != 2 {
+		t.Fatalf("groups = %+v", d.Groups)
+	}
+	var got []string
+	var found bool
+	for _, it := range d.Groups[0].Items {
+		if it.Title == "labelled" {
+			got, found = it.Labels, true
+		}
+	}
+	if !found {
+		t.Fatal("the labelled item did not survive grouping")
+	}
+	if !slices.Equal(got, items[0].Labels) {
+		t.Fatalf("grouped item's Labels = %v, want %v", got, items[0].Labels)
+	}
+
+	sorted := slices.Clone(items)
+	domain.SortItems(sorted, time.Time{})
+	for _, it := range sorted {
+		if it.Title == "labelled" && !slices.Equal(it.Labels, items[0].Labels) {
+			t.Errorf("SortItems dropped Labels: %v, want %v", it.Labels, items[0].Labels)
+		}
+	}
+}
+
 func repoNames(gs []domain.RepoGroup) []string {
 	out := make([]string, 0, len(gs))
 	for _, g := range gs {

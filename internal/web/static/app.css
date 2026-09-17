@@ -254,7 +254,17 @@ button:hover,
 .repo-group {
   margin-top: 1.5rem;
   padding-left: 0.75rem;
-  border-left: 4px solid light-dark(var(--tile-hue, var(--hue-slate)), color-mix(in srgb, var(--tile-sig, var(--hue-slate-sig)) 70%, #ffffff));
+  border-left: 4px solid var(--tile-hue, var(--hue-slate));
+}
+
+/* Where the browser can compute it, the dark appearance lightens the signal colour instead of
+   drawing the plain hue: navy and plum as drawn on a tile are nearly invisible as a 4 px line on
+   the dark page. Elsewhere the plain fallback above stays, in both appearances, which is a
+   readable stripe rather than none. Same @supports pattern as .tile-body above. */
+@supports (color: light-dark(#000000, #ffffff)) and (color: color-mix(in srgb, #000000 50%, #ffffff)) {
+  .repo-group {
+    border-left-color: light-dark(var(--tile-hue, var(--hue-slate)), color-mix(in srgb, var(--tile-sig, var(--hue-slate-sig)) 70%, #ffffff));
+  }
 }
 
 .repo-title {

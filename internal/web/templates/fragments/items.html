@@ -24,7 +24,8 @@
           {{if .New}}<span class="badge badge-new">NEW</span>{{end}}
           {{if .Number}}<span class="item-number">#{{.Number}}</span>{{end}}
           <a class="item-title" href="{{.URL}}" target="_blank" rel="noopener noreferrer">{{.Title}}</a>
-          {{/* The item's labels as chips (FR-1.10 AC3). Key picks the colour class; the six names the arc42 repositories use get a colour of their own, everything else is a plain chip. */}}
+          {{/* The item's labels as chips (FR-1.10 AC3). Key picks the colour class; the six names the arc42 repositories use get a colour of their own, everything else is a plain chip. The cue before the first chip gives a screen reader a spoken boundary between the title and the labels, since nothing else in the markup says where the title ends. */}}
+          {{if .Labels}}<span class="visually-hidden">Labels:</span>{{end}}
           {{range .Labels}}<span class="label label-{{.Key}}">{{.Name}}</span>{{end}}
         </p>
         {{/* The item's own description, in small type under its title: a number and a headline
