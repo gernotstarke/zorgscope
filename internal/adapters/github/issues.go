@@ -171,6 +171,7 @@ type ghIssueNode struct {
 	CreatedAt githubv4.DateTime
 	UpdatedAt githubv4.DateTime
 	State     githubv4.String
+	Labels    ghLabelConnection `graphql:"labels(first: 10)"`
 }
 
 // ghPRNode is one pull-request node: every field of ghIssueNode plus isDraft (FR-2.1 AC1).
@@ -193,6 +194,7 @@ type ghPRNode struct {
 	CreatedAt githubv4.DateTime
 	UpdatedAt githubv4.DateTime
 	State     githubv4.String
+	Labels    ghLabelConnection `graphql:"labels(first: 10)"`
 	IsDraft   githubv4.Boolean
 }
 
@@ -200,6 +202,18 @@ type ghPRNode struct {
 type ghPageInfo struct {
 	HasNextPage githubv4.Boolean
 	EndCursor   githubv4.String
+}
+
+// ghLabelNode is one label of an issue or pull request: its name is all the page needs.
+type ghLabelNode struct {
+	Name githubv4.String
+}
+
+// ghLabelConnection is the labels connection of one node. first: 10 is the whole of any arc42
+// item's labels today, and it is a field on a node the query already fetches — it costs points,
+// not requests, so QS-3.5's count of 20 does not move (FR-1.10 AC3).
+type ghLabelConnection struct {
+	Nodes []ghLabelNode
 }
 
 // fetchIssues fetches every open issue for owner/name, following pageInfo.hasNextPage with the
@@ -307,6 +321,7 @@ func toItem(owner, name string, kind domain.Kind, n ghIssueNode) domain.Item {
 		Summary:   summarise(string(n.BodyText)),
 		URL:       n.URL.String(),
 		Author:    string(n.Author.Login),
+		Labels:    labelNames(n.Labels),
 		State:     string(n.State),
 		CreatedAt: n.CreatedAt.UTC(),
 		UpdatedAt: n.UpdatedAt.UTC(),
@@ -340,11 +355,25 @@ func toPRItem(owner, name string, n ghPRNode) domain.Item {
 		CreatedAt: n.CreatedAt,
 		UpdatedAt: n.UpdatedAt,
 		State:     n.State,
+		Labels:    n.Labels,
 	})
 	if bool(n.IsDraft) {
 		it.State = draftState
 	}
 	return it
+}
+
+// labelNames is the names of a label connection, in GitHub's order; nil for none, so an item
+// without labels carries nil rather than an empty slice.
+func labelNames(c ghLabelConnection) []string {
+	if len(c.Nodes) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(c.Nodes))
+	for _, l := range c.Nodes {
+		out = append(out, string(l.Name))
+	}
+	return out
 }
 
 // splitRepo splits "owner/name" into its two parts. It reports ok = false for anything else,

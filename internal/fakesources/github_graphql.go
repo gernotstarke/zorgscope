@@ -151,9 +151,15 @@ func paginate(nodes []ghIssue, after string) ghConnection {
 		end = len(nodes)
 	}
 
-	page := nodes[start:end]
-	if page == nil {
-		page = []ghIssue{}
+	// A copy, so that filling in an empty label list never writes into the fixture. shurcooL's
+	// decoder wants every key it asked for, so a node without labels is served with
+	// labels: {nodes: []} rather than null.
+	page := make([]ghIssue, 0, end-start)
+	for _, n := range nodes[start:end] {
+		if n.Labels.Nodes == nil {
+			n.Labels.Nodes = []ghLabel{}
+		}
+		page = append(page, n)
 	}
 
 	hasNext := end < len(nodes)

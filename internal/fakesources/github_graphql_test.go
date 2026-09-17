@@ -3,8 +3,10 @@ package fakesources_test
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -149,5 +151,74 @@ func TestGraphQLNoVariablesServesOrgRepo(t *testing.T) {
 	}
 	if len(body.Data.Repository.Issues.Nodes) == 0 {
 		t.Fatal("want the org/repo fixture when variables are absent")
+	}
+}
+
+// graphQL posts body to the fake's /graphql and returns the response body.
+func graphQL(t *testing.T, base, body string) []byte {
+	t.Helper()
+	resp, err := http.Post(base+"/graphql", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /graphql: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	out, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading the response: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /graphql = %d: %s", resp.StatusCode, out)
+	}
+	return out
+}
+
+// The fixture's labels round-trip through the GraphQL handler in the shape GitHub uses:
+// labels.nodes[].name, in fixture order.
+func TestGraphQLServesLabelsInFixtureOrder(t *testing.T) {
+	srv := httptest.NewServer(fakesources.NewServer())
+	defer srv.Close()
+
+	body := graphQL(t, srv.URL, `{"query":"{ repository(owner: $owner, name: $name) { issues { nodes { number labels { nodes { name } } } } } }","variables":{"owner":"org","name":"repo"}}`)
+	var resp struct {
+		Data struct {
+			Repository struct {
+				Issues struct {
+					Nodes []struct {
+						Number int `json:"number"`
+						Labels struct {
+							Nodes []struct {
+								Name string `json:"name"`
+							} `json:"nodes"`
+						} `json:"labels"`
+					} `json:"nodes"`
+				} `json:"issues"`
+			} `json:"repository"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("decoding: %v\n%s", err, body)
+	}
+	got := map[int][]string{}
+	for _, n := range resp.Data.Repository.Issues.Nodes {
+		var names []string
+		for _, l := range n.Labels.Nodes {
+			names = append(names, l.Name)
+		}
+		got[n.Number] = names
+	}
+	if strings.Join(got[1], "|") != "bug|Help Wanted" || strings.Join(got[3], "|") != "documentation|needs-triage" {
+		t.Errorf("labels = %v, want #1 [bug Help Wanted] and #3 [documentation needs-triage]", got)
+	}
+}
+
+// A node without labels serialises an empty connection, never a missing key or a null list:
+// shurcooL's decoder is strict about the keys the query asked for.
+func TestANodeWithoutLabelsServesAnEmptyConnection(t *testing.T) {
+	srv := httptest.NewServer(fakesources.NewServer())
+	defer srv.Close()
+
+	body := graphQL(t, srv.URL, `{"query":"{ repository(owner: $owner, name: $name) { pullRequests { nodes { number labels { nodes { name } } } } } }","variables":{"owner":"org","name":"bad"}}`)
+	if !strings.Contains(string(body), `"labels":{"nodes":[]}`) {
+		t.Errorf("a node without labels must serialise \"labels\":{\"nodes\":[]}; got %s", body)
 	}
 }

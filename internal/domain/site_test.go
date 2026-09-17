@@ -1,6 +1,7 @@
 package domain_test
 
 import (
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -131,7 +132,7 @@ func TestBuildSiteTilesLeavesTheInputUntouched(t *testing.T) {
 		Sites: []domain.SiteSpec{{Name: "a", Repos: []string{"arc42/a"}}},
 	})
 
-	if !slices.Equal(items, before) {
+	if !reflect.DeepEqual(items, before) {
 		t.Errorf("input = %+v, want it unchanged %+v", items, before)
 	}
 }

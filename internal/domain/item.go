@@ -30,9 +30,13 @@ type Item struct {
 	// because it is displayed short: the dashboard renders it in small type under the title, so
 	// that a list of numbers and headlines says what the items are actually about. It is
 	// borrowed text like Title, and is escaped, never trusted.
-	Summary   string
-	URL       string
-	Author    string
+	Summary string
+	URL     string
+	Author  string
+	// Labels are the item's GitHub labels as GitHub spells them, in GitHub's order — at most ten,
+	// which covers every arc42 item there is. nil when the item has none. The domain carries the
+	// names and nothing else; which of them get a colour is the page's business (FR-1.10 AC3).
+	Labels    []string
 	State     string
 	CreatedAt time.Time
 	UpdatedAt time.Time

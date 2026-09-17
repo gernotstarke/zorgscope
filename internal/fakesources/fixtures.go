@@ -38,12 +38,25 @@ type ghIssue struct {
 	CreatedAt string   `json:"createdAt"`
 	UpdatedAt string   `json:"updatedAt"`
 	State     string   `json:"state"`
-	IsDraft   bool     `json:"isDraft,omitempty"`
+	// Labels is the labels connection GitHub serialises as labels.nodes[].name. A fixture may
+	// leave it out; paginate serves such a node with an empty connection rather than null.
+	Labels  ghLabels `json:"labels"`
+	IsDraft bool     `json:"isDraft,omitempty"`
 }
 
 // ghAuthor is the author sub-object of a GraphQL issue or pull-request node.
 type ghAuthor struct {
 	Login string `json:"login"`
+}
+
+// ghLabels mirrors GitHub's labels connection: a page of nodes.
+type ghLabels struct {
+	Nodes []ghLabel `json:"nodes"`
+}
+
+// ghLabel is one label; the fake serves its name only.
+type ghLabel struct {
+	Name string `json:"name"`
 }
 
 // ghRepoFixture is the pristine, un-paginated content of one fake GitHub repository: every open

@@ -516,7 +516,7 @@ func TestFetchStopsWhenCancelled(t *testing.T) {
 		_, _ = io.Copy(io.Discard, r.Body) // only after the body is read does the server notice a hang-up
 		select {
 		case <-r.Context().Done(): // the client gave up
-		case <-stop:               // the test is over
+		case <-stop: // the test is over
 		}
 	}))
 	defer srv.Close()
@@ -538,5 +538,42 @@ func TestFetchStopsWhenCancelled(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Errorf("Fetch took %v to notice the cancellation", elapsed)
+	}
+}
+
+// FR-1.10 AC3: an item carries its labels, as GitHub spells them and in GitHub's order, and an
+// item without labels carries none. The fixture's org/repo #1 has two, #2 one, #3 two (one of
+// them outside the palette — the adapter does not know the palette), and #10 one; #11 has none.
+func TestFetchCarriesLabelsInGitHubsOrder(t *testing.T) {
+	srv := httptest.NewServer(fakesources.NewServer())
+	defer srv.Close()
+
+	f := github.NewIssueFetcher(github.Config{
+		Token: "x", BaseURL: srv.URL + "/graphql", Repos: []string{"org/repo"},
+	}, srv.Client())
+	items, err := f.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	byID := byKey(items)
+
+	want := map[string][]string{
+		"issue:org/repo#1": {"bug", "Help Wanted"},
+		"issue:org/repo#2": {"enhancement"},
+		"issue:org/repo#3": {"documentation", "needs-triage"},
+		"pr:org/repo#10":   {"in progress"},
+		"pr:org/repo#11":   nil,
+	}
+	for key, labels := range want {
+		it, ok := byID[key]
+		if !ok {
+			t.Fatalf("%s missing from %d items", key, len(items))
+		}
+		if strings.Join(it.Labels, "|") != strings.Join(labels, "|") {
+			t.Errorf("%s labels = %q, want %q", key, it.Labels, labels)
+		}
+		if labels == nil && it.Labels != nil {
+			t.Errorf("%s has an empty non-nil label slice; an item without labels carries nil", key)
+		}
 	}
 }
