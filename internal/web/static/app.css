@@ -246,8 +246,16 @@ button:hover,
 
 /* One repository, one block. No card: the groups are read in sequence down a single column, and
    a border around each would turn a list into a stack of boxes to look past. The space above is
-   what separates them. */
-.repo-group { margin-top: 1.5rem; }
+   what separates them; the site's colour is a stripe down the left edge (FR-1.10 AC2). The name
+   stays in the page's text colour — the stripe is the colour's whole job here, and eight groups in
+   eight coloured bands would be a poster, not a list. In the dark appearance the signal colour is
+   lightened, because navy and plum as drawn on a tile are nearly invisible as a thin line on the
+   dark page; the contrast test holds every stripe at 3:1 against the page in both appearances. */
+.repo-group {
+  margin-top: 1.5rem;
+  padding-left: 0.75rem;
+  border-left: 4px solid light-dark(var(--tile-hue, var(--hue-slate)), color-mix(in srgb, var(--tile-sig, var(--hue-slate-sig)) 70%, #ffffff));
+}
 
 .repo-title {
   display: flex;
@@ -714,3 +722,14 @@ button:hover,
 /* Quiet: nothing has happened here for three months (FR-1.10 AC4). The title dims, and the meta
    line says the word, so the state is readable without the colour. */
 .is-quiet .item-title { color: var(--muted); }
+
+/* ---------------------------------------------------------------- the rainbow band (FR-1.10)
+
+   The arc42 family's rainbow, as status.arc42.org draws it ($arc42-rainbow in its
+   docs/_sass/_arc42-family.scss). It is the brand, not the theme, so it is the same in both
+   appearances; it is written out as the status site writes it rather than assembled from the
+   tile tokens, so the two stay identical by inspection. */
+.rainbow {
+  height: 4px;
+  background: linear-gradient(90deg, #c22b47, #ffc95c, #2e9e67, #5fb49c, #1675b9, #374769, #682d63);
+}

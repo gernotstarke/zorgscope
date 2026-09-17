@@ -353,3 +353,41 @@ func TestLabelChipsKeepTextReadable(t *testing.T) {
 		}
 	}
 }
+
+// FR-1.10 AC2: every site's stripe is visible against the page in both appearances — the hue in
+// light, the signal colour lightened 30 % toward white in dark, at least 3:1 (the bar for a
+// non-text element). Navy and plum as drawn on a tile are nearly invisible as a 4 px line on the
+// dark page; the lightening is what this test guards. When a stripe fails, raise the mix
+// percentage in app.css and here together; never change a brand colour.
+func TestGroupStripesAreVisibleInBothAppearances(t *testing.T) {
+	raw, err := fs.ReadFile(embedded, "static/app.css")
+	if err != nil {
+		t.Fatalf("reading the embedded app.css: %v", err)
+	}
+	css := string(raw)
+	//nolint:misspell // color-mix is a CSS standard function, not a misspelling
+	if !strings.Contains(css, "color-mix(in srgb, var(--tile-sig, var(--hue-slate-sig)) 70%, #ffffff)") {
+		t.Fatal("the dark stripe is not the signal colour mixed 30 % toward white; this test measures that mix")
+	}
+	bg, ok := lightDarkToken(t, css, "bg")
+	if !ok {
+		t.Fatal("no --bg token")
+	}
+	white := rgb{255, 255, 255}
+	for _, key := range config.HueKeys {
+		hue, ok := hexToken(t, css, "hue-"+key)
+		if !ok {
+			continue
+		}
+		sig, ok := hexToken(t, css, "hue-"+key+"-sig")
+		if !ok {
+			continue
+		}
+		if r := contrastRatio(hue, bg[0]); r < 3 {
+			t.Errorf("the %s stripe on the light page = %.2f:1, want at least 3:1", key, r)
+		}
+		if r := contrastRatio(mixSRGB(sig, white, 0.70), bg[1]); r < 3 {
+			t.Errorf("the %s stripe on the dark page = %.2f:1, want at least 3:1", key, r)
+		}
+	}
+}

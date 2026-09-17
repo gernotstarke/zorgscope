@@ -271,6 +271,8 @@ type itemsView struct {
 // (FR-1.2).
 type groupView struct {
 	Repo      string
+	// Hue is the site's colour key, drawn as the group's stripe (FR-1.10 AC2).
+	Hue       string
 	NewCount  int
 	CountLine string // "3 of 7" when filtered, "7" otherwise
 	Items     []itemView
@@ -422,6 +424,7 @@ func (s *Server) itemsView(d domain.Dashboard, now time.Time) itemsView {
 	for _, g := range d.Groups {
 		gv := groupView{
 			Repo:      g.Repo,
+			Hue:       hueForRepo(s.cfg.GitHub, g.Repo),
 			NewCount:  g.NewCount,
 			CountLine: countLine(len(g.Items), g.Total, v.Filtered),
 			Items:     make([]itemView, 0, len(g.Items)),

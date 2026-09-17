@@ -85,6 +85,17 @@ func tileHue(key string) string {
 	return "slate"
 }
 
+// hueForRepo is the colour key of the site that claims repo, slate when no site does — the rule
+// the Other tile follows, now shared with the list's groups (FR-1.10 AC2).
+func hueForRepo(gh config.GitHub, repo string) string {
+	for _, site := range gh.Sites {
+		if site.Repo == repo {
+			return tileHue(site.Hue)
+		}
+	}
+	return "slate"
+}
+
 // sitesView is the whole Sites page.
 type sitesView struct {
 	headerView

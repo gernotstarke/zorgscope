@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gernotstarke/zorgscope/internal/config"
 	"github.com/gernotstarke/zorgscope/internal/domain"
 	"github.com/gernotstarke/zorgscope/internal/ports"
 	"github.com/gernotstarke/zorgscope/internal/snapshot"
@@ -1184,5 +1185,57 @@ func TestQuietItemsAreDimmedAndSayQuiet(t *testing.T) {
 	if strings.Count(body, "is-quiet") != 1 || strings.Count(body, ", quiet</p>") != 1 {
 		t.Errorf("quiet marks = %d rows / %d words, want exactly 1 each: the fresh item must carry none",
 			strings.Count(body, "is-quiet"), strings.Count(body, ", quiet</p>"))
+	}
+}
+
+// FR-1.10 AC1: the arc42 rainbow band sits on every page — the list, the Sites view, the sign-in
+// page and the wait page — as one element the stylesheet paints; it is never the only thing that
+// tells pages apart, so it is hidden from assistive technology.
+func TestEveryPageCarriesTheRainbowBand(t *testing.T) {
+	const band = `<div class="rainbow" aria-hidden="true"></div>`
+	h := dashHandler(t, &fakeSource{items: representativeItems()})
+	c := signIn(t, h)
+	pages := map[string]string{
+		"GET /":      getAs(h, "/", c).Body.String(),
+		"GET /sites": getAs(h, "/sites", c).Body.String(),
+		"GET /login": get(h, "/login").Body.String(),
+	}
+	wh, release := coldServer(t)
+	defer close(release)
+	pages["GET / (waiting)"] = getAs(wh, "/", signIn(t, wh)).Body.String()
+
+	for name, body := range pages {
+		if strings.Count(body, band) != 1 {
+			t.Errorf("%s carries the band %d times, want exactly once", name, strings.Count(body, band))
+		}
+	}
+	if strings.Contains(getAs(h, "/items", c).Body.String(), band) {
+		t.Error("the list fragment carries the band; it belongs to the layout, not the list")
+	}
+}
+
+// FR-1.10 AC2: a group carries the hue of the site that claims its repository, slate when none
+// does — the same rule the Other tile follows.
+func TestGroupsCarryTheirSitesHue(t *testing.T) {
+	claimed := ghItem(1, "Claimed", testNow.Add(-time.Hour))
+	claimed.Repo = "org/claimed"
+	unclaimed := ghItem(2, "Unclaimed", testNow.Add(-time.Hour))
+	unclaimed.Repo = "org/unclaimed"
+	src := &fakeSource{items: []domain.Item{claimed, unclaimed}}
+	h := newTestServerWith(t, func(o *Options) {
+		o.Config.GitHub.Repos = []string{"org/claimed", "org/unclaimed"}
+		o.Config.GitHub.Sites = []config.Site{{Name: "claimed.example", URL: "https://claimed.example", Repo: "org/claimed", Hue: "plum"}}
+		o.Cache = snapshot.New(src, time.Hour, o.Clock)
+	}).Handler()
+	body := getAuthed(t, h, "/").Body.String()
+
+	if !strings.Contains(body, `<section class="repo-group hue-plum">`) {
+		t.Errorf("the claimed group does not carry hue-plum:\n%s", firstLineContaining(body, "repo-group"))
+	}
+	if !strings.Contains(body, `<section class="repo-group hue-slate">`) {
+		t.Error("the unclaimed group does not carry hue-slate")
+	}
+	if strings.Contains(body, `style="`) {
+		t.Error("a colour reached the page as a style attribute (QS-4.4)")
 	}
 }

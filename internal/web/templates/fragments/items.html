@@ -9,7 +9,9 @@
     <span class="shown-count">{{.ShownLine}}</span>
   </p>
   {{range .Groups}}
-  <section class="repo-group">
+  {{/* The site's colour as a stripe down the group's edge (FR-1.10 AC2): the same hue-<key>
+       class a tile carries, drawn here as a border rather than a band. */}}
+  <section class="repo-group hue-{{.Hue}}">
     <h2 class="repo-title"><a href="https://github.com/{{.Repo}}" target="_blank" rel="noopener noreferrer">{{.Repo}}</a>
       {{/* The new count and the total are taken before the filter is applied, so narrowing the
            list never makes the page understate what is out there (FR-1.2). */}}
