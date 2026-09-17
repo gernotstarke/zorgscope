@@ -3,6 +3,7 @@ package snapshot_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -165,6 +166,50 @@ func TestAFailedFirstFetchYieldsAnEmptyListWithTheError(t *testing.T) {
 	s := settled(t, c)
 	if s.Err == nil || len(s.Items) != 0 || !s.FetchedAt.IsZero() {
 		t.Fatalf("got %+v", s)
+	}
+}
+
+// panicSource answers normally until told to panic, so TestAPanickingSourceBecomesAFetchError can
+// check both that a panic turns into an error and that the items from before it are still on hand
+// afterwards.
+type panicSource struct {
+	calls  int
+	items  []domain.Item
+	panics bool
+}
+
+func (s *panicSource) Fetch(_ context.Context) ([]domain.Item, error) {
+	s.calls++
+	if s.panics {
+		panic("boom")
+	}
+	return s.items, nil
+}
+
+// I1: a fetch that panics is a bug in a Source, never a deliberate error, but it must not take the
+// whole process down. Before this branch it ran on the request goroutine under recoverPanics and
+// cost one 500; the goroutine Get starts has no such net of its own, so Get must recover in it.
+func TestAPanickingSourceBecomesAFetchError(t *testing.T) {
+	clock := &fakeClock{t: time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)}
+	src := &panicSource{items: one("kept")}
+	c := snapshot.New(src, time.Hour, clock)
+	good := settled(t, c) // a clean fetch first, so there is something to keep
+
+	src.panics = true
+	c.Invalidate()
+	s := settled(t, c)
+	if s.Fetching {
+		t.Fatalf("still Fetching after the panic landed: %+v", s)
+	}
+	if s.Err == nil || !strings.Contains(s.Err.Error(), "panicked") {
+		t.Fatalf("Err = %v, want it to say the fetch panicked", s.Err)
+	}
+	if len(s.Items) != 1 || s.Items[0].Title != good.Items[0].Title {
+		t.Errorf("the previous items were lost: %+v", s.Items)
+	}
+
+	if again := c.Get(context.Background()); again.Fetching || src.calls != 2 {
+		t.Errorf("a panic was retried within the TTL: calls=%d %+v", src.calls, again)
 	}
 }
 

@@ -10,6 +10,7 @@ package snapshot
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -86,9 +87,28 @@ func (c *Cache) Get(ctx context.Context) Snapshot {
 
 	c.inflight = true
 	fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), fetchBudget)
+	// The fetch runs detached from any request, so nothing but this goroutine is left to catch a
+	// panic in it. Before this cache existed the fetch ran on the request goroutine, under
+	// recoverPanics, and a bug in a Source cost one visitor a 500; left unrecovered here the same
+	// bug would crash the whole process — and because Get starts a fetch again on the very next
+	// call after one lands, a deterministic panic would crash it in a loop, taking /healthz and
+	// sign-in down with it, not just one request. loggingSource wraps the source to log a failed
+	// fetch, but a panic unwinds past that wrapper without ever returning to it, so the recovered
+	// error would otherwise be logged nowhere at all: turning it into err here is what makes it
+	// land in Snapshot.Err, which the dashboard's error notice shows, same as any other fetch
+	// failure.
 	go func() {
 		defer cancel()
-		items, err := c.src.Fetch(fetchCtx)
+		var items []domain.Item
+		var err error
+		func() {
+			defer func() {
+				if p := recover(); p != nil {
+					err = fmt.Errorf("snapshot: the fetch panicked: %v", p)
+				}
+			}()
+			items, err = c.src.Fetch(fetchCtx)
+		}()
 		c.land(now, items, err)
 	}()
 	return c.fetching()
