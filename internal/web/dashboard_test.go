@@ -129,6 +129,7 @@ func TestMarkSeenUsesTheFetchedAtOfTheSnapshotShownNotTheClick(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
+	warmCache(t, o.Cache) // one warm-up fetch, so the first view below reads it rather than starting its own
 	h := s.Handler()
 	c := signIn(t, h)
 
@@ -152,7 +153,8 @@ func TestMarkSeenUsesTheFetchedAtOfTheSnapshotShownNotTheClick(t *testing.T) {
 	}
 
 	postAs(h, "/refresh", nil, reminted)
-	body := getAs(h, "/", reminted).Body.String()
+	warmCache(t, o.Cache) // deterministically wait for the fetch /refresh made due to land
+	body := getSettled(t, h, "/", reminted).Body.String()
 	if !strings.Contains(body, "Created after the fetch, before the click") {
 		t.Fatal("the fixture is wrong: the late item is missing from the refreshed list")
 	}
@@ -175,6 +177,7 @@ func TestTheMarkSeenFormCarriesTheSnapshotsFetchedAt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
+	warmCache(t, o.Cache) // one warm-up fetch, so the read below sees the snapshot rather than the wait state
 	h := s.Handler()
 	body := getAs(h, "/", signIn(t, h)).Body.String()
 
@@ -275,6 +278,7 @@ func TestAPartialFetchKeepsTheFailingRepositoryAndTheSeenAtOfTheGoodFetch(t *tes
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
+	warmCache(t, o.Cache) // one warm-up fetch, so the good fetch below reads it rather than starting its own
 	h := s.Handler()
 	c := signIn(t, h)
 	getAs(h, "/", c) // the good fetch, at testNow
@@ -283,7 +287,8 @@ func TestAPartialFetchKeepsTheFailingRepositoryAndTheSeenAtOfTheGoodFetch(t *tes
 	src.setItems([]domain.Item{ghItem(1, "After", testNow.Add(-time.Hour))})
 	src.setErr(errors.New("github: org/repository-number-0: unexpected status 502"))
 	postAs(h, "/refresh", nil, c)
-	body := getAs(h, "/", c).Body.String()
+	warmCache(t, o.Cache) // deterministically wait for the fetch /refresh made due to land
+	body := getSettled(t, h, "/", c).Body.String()
 
 	if !strings.Contains(body, "From the repository that later fails") {
 		t.Error("a partial fetch dropped the failing repository's items (FR-1.4 AC1)")
@@ -304,10 +309,10 @@ func TestAPartialFetchKeepsTheFailingRepositoryAndTheSeenAtOfTheGoodFetch(t *tes
 // design §5: POST /refresh invalidates the cache, so the next GET fetches again.
 func TestRefreshInvalidatesTheCacheSoTheNextGetFetches(t *testing.T) {
 	src := &fakeSource{items: []domain.Item{ghItem(1, "One", testNow.Add(-time.Hour))}}
-	h := dashHandler(t, src)
+	h, cache := dashHandlerWith(t, src)
 	c := signIn(t, h)
 
-	getAs(h, "/", c) // the first view pays the one fetch
+	getAs(h, "/", c) // the warm-up already paid the one fetch; this view reads it, not a new one
 	if n := src.CallCount(); n != 1 {
 		t.Fatalf("the fixture is wrong: %d fetches before refresh, want 1", n)
 	}
@@ -320,14 +325,15 @@ func TestRefreshInvalidatesTheCacheSoTheNextGetFetches(t *testing.T) {
 		t.Errorf("POST /refresh redirects to %q, want %q", got, "/")
 	}
 
-	getAs(h, "/", c)
+	warmCache(t, cache) // deterministically wait for the fetch /refresh made due to land
 	if n := src.CallCount(); n != 2 {
 		t.Errorf("fetches after refresh = %d, want 2: /refresh must make the next GET fetch again", n)
 	}
 }
 
-// Two page views within the TTL share one fetch: rendering reads the cache, it does not decide
-// on its own to go to GitHub (FR-1.1 AC2's stateless equivalent).
+// Two page views within the TTL fetch nothing of their own: the warm-up already paid the one fetch
+// CallCount counts here, and rendering only reads the cache — it does not decide on its own to go
+// to GitHub (FR-1.1 AC2's stateless equivalent).
 func TestTwoPageViewsWithinTheTTLShareOneFetch(t *testing.T) {
 	src := &fakeSource{items: []domain.Item{ghItem(1, "Stored already", testNow.Add(-time.Hour))}}
 	h := dashHandler(t, src)
@@ -344,15 +350,16 @@ func TestTwoPageViewsWithinTheTTLShareOneFetch(t *testing.T) {
 // fails yields an empty list with the notice.
 func TestAFailingSourceShowsTheNoticeAndKeepsThePreviousList(t *testing.T) {
 	src := &fakeSource{items: []domain.Item{ghItem(1, "Still visible", testNow.Add(-72*time.Hour))}}
-	h := dashHandler(t, src)
+	h, cache := dashHandlerWith(t, src)
 	c := signIn(t, h)
 
-	getAs(h, "/", c) // populate the cache with a good fetch
+	getAs(h, "/", c) // the warm-up already populated the cache with a good fetch; this reads it
 
 	src.setErr(errors.New("github: unexpected status 502"))
 	postAs(h, "/refresh", nil, c)
 
-	body := getAs(h, "/", c).Body.String()
+	warmCache(t, cache) // deterministically wait for the fetch /refresh made due to land
+	body := getSettled(t, h, "/", c).Body.String()
 	if !strings.Contains(body, "github: unexpected status 502") {
 		t.Error("the notice does not show the error text (FR-1.4)")
 	}
@@ -671,6 +678,7 @@ func BenchmarkDashboard(b *testing.B) {
 	if err != nil {
 		b.Fatalf("New() error = %v", err)
 	}
+	warmCache(b, o.Cache)
 	h := s.Handler()
 
 	c := mintSession()
@@ -929,18 +937,36 @@ func TestHeaderFormsCarryTheCurrentPageAsTheirReturn(t *testing.T) {
 // repositories these tests expect, in the order they rely on for grouping.
 func dashServer(t *testing.T, src ports.Source) *Server {
 	t.Helper()
-	return newTestServerWith(t, func(o *Options) {
+	s, _ := dashServerWithCache(t, src)
+	return s
+}
+
+// dashServerWithCache is dashServer plus the cache it built, for a test that must deterministically
+// wait for a later fetch — after Invalidate, say — to land: it calls warmCache on the very cache
+// the returned server reads from, rather than guessing from HTTP responses alone.
+func dashServerWithCache(t *testing.T, src ports.Source) (*Server, *snapshot.Cache) {
+	t.Helper()
+	s, c := newColdServerWith(t, func(o *Options) {
 		// The one repository ghItem produces, plus the ten representativeItems holds: the
 		// grouping follows configuration order, so a fixture repository nobody is watching
 		// would be listed after the configured ones rather than where the tests expect it.
 		o.Config.GitHub.Repos = append([]string{"org/repo"}, representativeRepos()...)
 		o.Cache = snapshot.New(src, time.Hour, o.Clock)
 	})
+	warmCache(t, c)
+	return s, c
 }
 
 func dashHandler(t *testing.T, src ports.Source) http.Handler {
 	t.Helper()
 	return dashServer(t, src).Handler()
+}
+
+// dashHandlerWith is dashHandler plus the cache it built — see dashServerWithCache.
+func dashHandlerWith(t *testing.T, src ports.Source) (http.Handler, *snapshot.Cache) {
+	t.Helper()
+	s, c := dashServerWithCache(t, src)
+	return s.Handler(), c
 }
 
 // mintSession is the cookie a browser holds right after signing in: seen is zero, so nothing is

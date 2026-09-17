@@ -38,14 +38,38 @@ func (s *countingSource) Fetch(_ context.Context) ([]domain.Item, error) {
 
 func (s *countingSource) count() int { s.mu.Lock(); defer s.mu.Unlock(); return s.calls }
 
+func (s *countingSource) set(items []domain.Item, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.items, s.err = items, err
+}
+
 func one(title string) []domain.Item { return []domain.Item{{Repo: "a/b", Number: 1, Title: title}} }
+
+// settled calls Get until no fetch is in flight and returns what landed. Get returns at once, so a
+// test that wants the result of the fetch it just triggered waits here; the fakes answer in
+// microseconds, so the loop is a formality with a deadline for when something is actually wrong.
+func settled(t *testing.T, c *snapshot.Cache) snapshot.Snapshot {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		s := c.Get(context.Background())
+		if !s.Fetching {
+			return s
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the fetch never landed")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
 
 func TestFirstGetFetchesAndSecondWithinTTLDoesNot(t *testing.T) {
 	clock := &fakeClock{t: time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)}
 	src := &countingSource{items: one("x")}
 	c := snapshot.New(src, 5*time.Minute, clock)
 
-	s1 := c.Get(context.Background())
+	s1 := settled(t, c)
 	s2 := c.Get(context.Background())
 	if src.count() != 1 {
 		t.Fatalf("fetches = %d, want 1", src.count())
@@ -53,8 +77,49 @@ func TestFirstGetFetchesAndSecondWithinTTLDoesNot(t *testing.T) {
 	if len(s1.Items) != 1 || s1.FetchedAt != clock.t || s1.Err != nil {
 		t.Fatalf("first snapshot = %+v", s1)
 	}
-	if s2.FetchedAt != s1.FetchedAt {
-		t.Fatalf("second Get refetched: %v != %v", s2.FetchedAt, s1.FetchedAt)
+	if s2.FetchedAt != s1.FetchedAt || s2.Fetching {
+		t.Fatalf("second Get refetched: %+v", s2)
+	}
+}
+
+// QS-2.6: Get never waits for the source. The first Get of an empty cache returns before the
+// source has answered, says a fetch is in flight, and carries nothing yet.
+func TestFirstGetReturnsAtOnceWithNothingWhileFetching(t *testing.T) {
+	clock := &fakeClock{t: time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)}
+	src := &countingSource{items: one("x"), block: make(chan struct{})}
+	c := snapshot.New(src, time.Hour, clock)
+
+	s := c.Get(context.Background()) // would hang here if Get waited for the source
+	if !s.Fetching || len(s.Items) != 0 || !s.FetchedAt.IsZero() {
+		t.Fatalf("got %+v, want an empty snapshot with Fetching set", s)
+	}
+	close(src.block)
+	if got := settled(t, c); len(got.Items) != 1 || got.FetchedAt != clock.t {
+		t.Fatalf("after the fetch landed: %+v", got)
+	}
+}
+
+// While a refetch is in flight the previous list is what Get returns — marked Fetching, so the page
+// can decide to wait rather than show it (design §5.1).
+func TestGetDuringARefetchReturnsThePreviousListMarkedFetching(t *testing.T) {
+	clock := &fakeClock{t: time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)}
+	src := &countingSource{items: one("x")}
+	c := snapshot.New(src, time.Minute, clock)
+	first := settled(t, c)
+
+	clock.t = clock.t.Add(2 * time.Minute)
+	block := make(chan struct{})
+	src.mu.Lock()
+	src.items, src.block = one("y"), block
+	src.mu.Unlock()
+
+	s := c.Get(context.Background())
+	if !s.Fetching || len(s.Items) != 1 || s.Items[0].Title != "x" || s.FetchedAt != first.FetchedAt {
+		t.Fatalf("during the refetch: %+v, want the previous list marked Fetching", s)
+	}
+	close(block)
+	if got := settled(t, c); got.Items[0].Title != "y" || got.FetchedAt != clock.t {
+		t.Fatalf("after the refetch: %+v", got)
 	}
 }
 
@@ -62,11 +127,11 @@ func TestGetRefetchesOnceTheSnapshotIsOlderThanTTL(t *testing.T) {
 	clock := &fakeClock{t: time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)}
 	src := &countingSource{items: one("x")}
 	c := snapshot.New(src, 5*time.Minute, clock)
-	c.Get(context.Background())
+	settled(t, c)
 
 	clock.t = clock.t.Add(5*time.Minute + time.Second)
-	src.items = one("y")
-	s := c.Get(context.Background())
+	src.set(one("y"), nil)
+	s := settled(t, c)
 	if src.count() != 2 || s.Items[0].Title != "y" || s.FetchedAt != clock.t {
 		t.Fatalf("after ttl: fetches=%d snapshot=%+v", src.count(), s)
 	}
@@ -76,17 +141,20 @@ func TestAFailedFetchKeepsTheOldItemsAndReportsTheError(t *testing.T) {
 	clock := &fakeClock{t: time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)}
 	src := &countingSource{items: one("x")}
 	c := snapshot.New(src, time.Minute, clock)
-	good := c.Get(context.Background())
+	good := settled(t, c)
 
 	clock.t = clock.t.Add(2 * time.Minute)
-	src.err = errors.New("boom")
-	src.items = nil
-	s := c.Get(context.Background())
+	src.set(nil, errors.New("boom"))
+	s := settled(t, c)
 	if s.Err == nil || s.ErrAt != clock.t {
 		t.Fatalf("error not reported: %+v", s)
 	}
 	if len(s.Items) != 1 || s.FetchedAt != good.FetchedAt {
 		t.Fatalf("old items not kept: %+v", s)
+	}
+	// A failure is not retried within the TTL: the next Get serves the failure, not a fetch.
+	if again := c.Get(context.Background()); again.Fetching || src.count() != 2 {
+		t.Fatalf("a failure was retried at once: fetches=%d %+v", src.count(), again)
 	}
 }
 
@@ -94,7 +162,7 @@ func TestAFailedFirstFetchYieldsAnEmptyListWithTheError(t *testing.T) {
 	clock := &fakeClock{t: time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)}
 	src := &countingSource{err: errors.New("boom")}
 	c := snapshot.New(src, time.Minute, clock)
-	s := c.Get(context.Background())
+	s := settled(t, c)
 	if s.Err == nil || len(s.Items) != 0 || !s.FetchedAt.IsZero() {
 		t.Fatalf("got %+v", s)
 	}
@@ -104,7 +172,7 @@ func TestPartialResultIsKeptTogetherWithItsError(t *testing.T) {
 	clock := &fakeClock{t: time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)}
 	src := &countingSource{items: one("partial"), err: errors.New("one repo failed")}
 	c := snapshot.New(src, time.Minute, clock)
-	s := c.Get(context.Background())
+	s := settled(t, c)
 	if s.Err == nil || len(s.Items) != 1 || s.FetchedAt != clock.t {
 		t.Fatalf("partial result mishandled: %+v", s)
 	}
@@ -114,27 +182,52 @@ func TestInvalidateForcesTheNextGetToFetch(t *testing.T) {
 	clock := &fakeClock{t: time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)}
 	src := &countingSource{items: one("x")}
 	c := snapshot.New(src, time.Hour, clock)
-	c.Get(context.Background())
+	settled(t, c)
 	c.Invalidate()
-	c.Get(context.Background())
+	settled(t, c)
 	if src.count() != 2 {
 		t.Fatalf("fetches = %d, want 2", src.count())
 	}
 }
 
-func TestConcurrentGetsShareOneFetch(t *testing.T) {
+// Refresh pressed while a fetch is already running changes nothing: that fetch is the freshest
+// list there can be, and its landing clears the mark Invalidate set (design §4).
+func TestInvalidateDuringAFetchDoesNotStartAnother(t *testing.T) {
+	clock := &fakeClock{t: time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)}
+	src := &countingSource{items: one("x"), block: make(chan struct{})}
+	c := snapshot.New(src, time.Hour, clock)
+
+	c.Get(context.Background()) // starts the fetch
+	c.Invalidate()
+	if s := c.Get(context.Background()); !s.Fetching {
+		t.Fatalf("got %+v, want the running fetch reported", s)
+	}
+	close(src.block)
+	settled(t, c)
+	c.Get(context.Background())
+	if src.count() != 1 {
+		t.Fatalf("fetches = %d, want 1: Invalidate during a fetch must not queue a second one", src.count())
+	}
+}
+
+func TestManyCallersShareOneFetch(t *testing.T) {
 	clock := &fakeClock{t: time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)}
 	src := &countingSource{items: one("x"), block: make(chan struct{})}
 	c := snapshot.New(src, time.Hour, clock)
 
 	var wg sync.WaitGroup
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 10; i++ {
 		wg.Add(1)
-		go func() { defer wg.Done(); c.Get(context.Background()) }()
+		go func() {
+			defer wg.Done()
+			if s := c.Get(context.Background()); !s.Fetching {
+				t.Errorf("a caller during the fetch got %+v, want Fetching", s)
+			}
+		}()
 	}
-	time.Sleep(50 * time.Millisecond) // let every goroutine reach the cache
+	wg.Wait() // every caller returned while the source is still blocked
 	close(src.block)
-	wg.Wait()
+	settled(t, c)
 	if src.count() != 1 {
 		t.Fatalf("fetches = %d, want 1", src.count())
 	}
@@ -161,24 +254,22 @@ func (s *ctxSource) Fetch(ctx context.Context) ([]domain.Item, error) {
 	return s.items, nil
 }
 
-// A fetch is shared by every caller waiting on the mutex, so the visitor who happened to trigger it
-// must not be able to cancel it by going away: the error would be served to everyone for a TTL.
-func TestACallerThatGoesAwayDoesNotCancelTheSharedFetch(t *testing.T) {
+// The fetch is detached from the request that started it: the visitor who happened to trigger it
+// must not be able to cancel it by going away, or the error would be served to everyone for a TTL.
+func TestACallerThatGoesAwayDoesNotCancelTheFetch(t *testing.T) {
 	clock := &fakeClock{t: time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)}
 	src := &ctxSource{started: make(chan struct{}), release: make(chan struct{}), items: one("x")}
 	c := snapshot.New(src, time.Minute, clock)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan snapshot.Snapshot, 1)
-	go func() { done <- c.Get(ctx) }()
-
+	c.Get(ctx)
 	<-src.started
 	cancel() // the visitor closes the tab mid-fetch
 	close(src.release)
 
-	s := <-done
+	s := settled(t, c)
 	if s.Err != nil || len(s.Items) != 1 || s.FetchedAt != clock.t {
-		t.Fatalf("a cancelled caller poisoned the shared fetch: %+v", s)
+		t.Fatalf("a cancelled caller poisoned the fetch: %+v", s)
 	}
 }
 
@@ -193,12 +284,11 @@ func TestAPartialFetchKeepsTheFailingRepositorysItemsAndTheOldFetchedAt(t *testi
 		{Repo: "c/d", Number: 3, Title: "c/d three"},
 	}}
 	c := snapshot.New(src, time.Minute, clock)
-	good := c.Get(context.Background())
+	good := settled(t, c)
 
 	clock.t = clock.t.Add(2 * time.Minute)
-	src.items = []domain.Item{{Repo: "a/b", Number: 1, Title: "a/b after"}}
-	src.err = errors.New("c/d: unexpected status 502")
-	s := c.Get(context.Background())
+	src.set([]domain.Item{{Repo: "a/b", Number: 1, Title: "a/b after"}}, errors.New("c/d: unexpected status 502"))
+	s := settled(t, c)
 
 	if s.Err == nil || s.ErrAt != clock.t {
 		t.Errorf("error not reported: %+v", s)

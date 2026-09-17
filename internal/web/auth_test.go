@@ -872,7 +872,22 @@ func startFakeGitHub(t *testing.T, o *Options) string {
 
 func newTestServer(t *testing.T) *Server { return newTestServerWith(t, func(*Options) {}) }
 
+// newTestServerWith builds a server whose cache is already warm: the first fetch has landed, so
+// GET / shows the list at once rather than the wait page (FR-1.9). Tests about the wait page
+// itself, or about what a cold cache does, use newColdServerWith. The warm-up counts as one call
+// on the source.
 func newTestServerWith(t *testing.T, mutate func(*Options)) *Server {
+	t.Helper()
+	s, c := newColdServerWith(t, mutate)
+	warmCache(t, c)
+	return s
+}
+
+// newColdServerWith is newTestServerWith without the warm-up: the cache is empty and the first
+// page view starts the first fetch. It also returns the cache, so a caller that needs to force a
+// later fetch to land — after Invalidate, say — can call warmCache on it directly rather than
+// guessing from HTTP responses alone.
+func newColdServerWith(t *testing.T, mutate func(*Options)) (*Server, *snapshot.Cache) {
 	t.Helper()
 	o := testOptions()
 	mutate(&o)
@@ -880,7 +895,40 @@ func newTestServerWith(t *testing.T, mutate func(*Options)) *Server {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	return s
+	return s, o.Cache
+}
+
+// warmCache triggers a fetch and waits until it has landed. The fakes answer at once, so the loop
+// is a formality with a deadline for when something is actually wrong.
+func warmCache(t testing.TB, c *snapshot.Cache) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for c.Get(context.Background()).Fetching {
+		if time.Now().After(deadline) {
+			t.Fatal("the warm-up fetch never landed")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// waitingMarker is what only the wait page carries: the id of its polling element.
+const waitingMarker = `id="waiting"`
+
+// getSettled is getAs for a request that may find a fetch in flight — after Refresh, or after the
+// clock moved past the TTL. It asks again until the answer is not the wait page.
+func getSettled(t *testing.T, h http.Handler, path string, c *http.Cookie) *httptest.ResponseRecorder {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		rec := getAs(h, path, c)
+		if !strings.Contains(rec.Body.String(), waitingMarker) {
+			return rec
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("GET %s kept answering the wait page", path)
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 func get(h http.Handler, path string) *httptest.ResponseRecorder {

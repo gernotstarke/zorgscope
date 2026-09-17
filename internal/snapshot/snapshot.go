@@ -1,6 +1,11 @@
 // Package snapshot keeps the most recently fetched item list in memory and refetches it when it
 // is older than a TTL. It is the whole of zorgscope's state: a process that restarts, or a Fly
-// Machine that wakes from zero, starts empty and pays one fetch on its first page view.
+// Machine that wakes from zero, starts empty and fetches on its first page view.
+//
+// Get never waits for that fetch (QS-2.6). When one is due it starts it in a goroutine of its own
+// and returns what is known so far, marked Fetching; the page shows a wait page and asks again.
+// The goroutine is the one piece of work this process ever does outside a request, it exists only
+// because a request asked, and it lives at most fetchBudget (ADR-0011). There is no ticker.
 package snapshot
 
 import (
@@ -24,31 +29,35 @@ import (
 // Err and ErrAt describe the last fetch that failed, and are cleared by the next fetch that does
 // not. So a page can say both "this list is from 11:50" and "GitHub has been failing since 12:04"
 // at once.
+//
+// Fetching reports that a fetch is in flight: everything else in the snapshot is what was known
+// before it started. A page that would rather wait than show that (FR-1.9) reads this field.
 type Snapshot struct {
 	Items     []domain.Item
 	FetchedAt time.Time // zero until a fetch has returned items
 	Err       error     // the most recent fetch error, nil once a fetch succeeds cleanly
 	ErrAt     time.Time // when Err was recorded
+	Fetching  bool
 }
 
-// fetchBudget bounds one fetch. A fetch is shared by every caller waiting on the mutex, so it runs
-// detached from the context of the caller that happened to trigger it — a visitor closing the tab
-// must not cancel it and leave everyone else an error for a whole TTL. Detached, nothing would stop
-// a hung upstream from holding the mutex, and every page view with it, indefinitely; the budget is
-// that stop, and is generous enough for a representative configuration's sequential requests.
+// fetchBudget bounds one fetch. A fetch is shared by every caller that finds it in flight, so it
+// runs detached from the context of the caller that happened to trigger it — a visitor closing the
+// tab must not cancel it and leave everyone else an error for a whole TTL. Detached, nothing would
+// stop a hung upstream from holding the in-flight mark, and every page view with it, indefinitely;
+// the budget is that stop, and is generous for a fetch that runs its repositories side by side.
 const fetchBudget = 60 * time.Second
 
-// Cache is safe for concurrent use. A fetch runs under the mutex, so concurrent callers wait for
-// the one fetch in flight rather than start their own: with one visitor and a fetch of a few
-// seconds that is simpler than single-flight and equally correct.
+// Cache is safe for concurrent use. At most one fetch runs at a time: a Get that finds one in
+// flight reports it rather than starting another.
 type Cache struct {
 	src   ports.Source
 	ttl   time.Duration
 	clock ports.Clock
 
-	mu    sync.Mutex
-	cur   Snapshot
-	stale bool // set by Invalidate; cleared by the next fetch
+	mu       sync.Mutex
+	cur      Snapshot // cur.Fetching is always false; Get sets it on the copy it returns
+	stale    bool     // set by Invalidate; cleared when the next fetch lands
+	inflight bool     // a fetch goroutine is running
 }
 
 // New returns an empty cache. ttl is how long both a fetched list and a failure are reused before
@@ -58,47 +67,84 @@ func New(src ports.Source, ttl time.Duration, clock ports.Clock) *Cache {
 	return &Cache{src: src, ttl: ttl, clock: clock, stale: true}
 }
 
-// Get returns the current snapshot, fetching first if it is missing, invalidated, or older than
-// the TTL. A failed fetch never discards the previous items, and ctx's cancellation does not reach
-// the fetch — see fetchBudget.
+// Get returns the current snapshot at once. When a fetch is due — nothing fetched yet,
+// invalidated, the list older than the TTL, or the last failure older than the TTL — and none is
+// in flight, it starts one and returns with Fetching set; while one is in flight, it returns the
+// previous snapshot with Fetching set. ctx's cancellation does not reach the fetch — see
+// fetchBudget.
 func (c *Cache) Get(ctx context.Context) Snapshot {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	now := c.clock.Now()
-	if !c.stale && !c.cur.FetchedAt.IsZero() && now.Sub(c.cur.FetchedAt) <= c.ttl {
-		return c.cur
+	if c.inflight {
+		return c.fetching()
 	}
-	// A failing source is retried at most once per TTL as well, so a broken upstream does not
-	// turn every page view into a fetch.
-	if !c.stale && !c.cur.ErrAt.IsZero() && now.Sub(c.cur.ErrAt) <= c.ttl {
+	now := c.clock.Now()
+	if !c.due(now) {
 		return c.cur
 	}
 
+	c.inflight = true
 	fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), fetchBudget)
-	defer cancel()
-	items, err := c.src.Fetch(fetchCtx)
+	go func() {
+		defer cancel()
+		items, err := c.src.Fetch(fetchCtx)
+		c.land(now, items, err)
+	}()
+	return c.fetching()
+}
+
+// fetching is the snapshot Get returns while a fetch runs: what is known, marked. Called with
+// the mutex held.
+func (c *Cache) fetching() Snapshot {
+	s := c.cur
+	s.Fetching = true
+	return s
+}
+
+// due reports whether a fetch should start now. A failing source is retried at most once per TTL
+// as well, so a broken upstream does not turn every page view into a fetch. Called with the mutex
+// held.
+func (c *Cache) due(now time.Time) bool {
+	if c.stale {
+		return true
+	}
+	if !c.cur.FetchedAt.IsZero() && now.Sub(c.cur.FetchedAt) <= c.ttl {
+		return false
+	}
+	if !c.cur.ErrAt.IsZero() && now.Sub(c.cur.ErrAt) <= c.ttl {
+		return false
+	}
+	return true
+}
+
+// land records the result of a fetch that began at began. A failed fetch never discards the
+// previous items.
+func (c *Cache) land(began time.Time, items []domain.Item, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.inflight = false
 	c.stale = false
 	switch {
 	case err == nil:
-		c.cur.Items, c.cur.FetchedAt = items, now
+		c.cur.Items, c.cur.FetchedAt = items, began
 	case items == nil:
 		// Nothing fetched at all: the previous snapshot stands as it was.
 	case c.cur.FetchedAt.IsZero():
 		// A partial first fetch has no older list to fill in from.
-		c.cur.Items, c.cur.FetchedAt = items, now
+		c.cur.Items, c.cur.FetchedAt = items, began
 	default:
 		// A partial fetch: fill in the repositories that failed, and leave FetchedAt alone.
 		c.cur.Items = mergePartial(c.cur.Items, items)
 	}
 	if err != nil {
 		c.cur.Err = err
-		c.cur.ErrAt = now
+		c.cur.ErrAt = began
 	} else {
 		c.cur.Err = nil
 		c.cur.ErrAt = time.Time{}
 	}
-	return c.cur
 }
 
 // mergePartial is the list after a fetch that failed for some repositories: every fresh item, plus
@@ -126,7 +172,8 @@ func mergePartial(prev, fresh []domain.Item) []domain.Item {
 	return out
 }
 
-// Invalidate makes the next Get fetch regardless of age.
+// Invalidate makes the next Get fetch regardless of age. Called while a fetch is in flight it
+// changes nothing: that fetch is the freshest list there can be, and its landing clears the mark.
 func (c *Cache) Invalidate() {
 	c.mu.Lock()
 	c.stale = true
