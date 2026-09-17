@@ -26,11 +26,11 @@ const otherTileName = "Other"
 // handleSites renders the Sites view (FR-1.8). Like render, it reads only the snapshot and the
 // session, and it is not a visit: only POST /seen moves the seen-mark.
 func (s *Server) handleSites(w http.ResponseWriter, r *http.Request) {
-	if s.answeredWaiting(w, r) {
+	snap, waiting := s.answeredWaiting(w, r)
+	if waiting {
 		return
 	}
 	sess, _ := s.session(r) // requireSession already admitted the request
-	snap := s.cache.Get(r.Context())
 	now := s.clock.Now()
 
 	tiles := domain.BuildSiteTiles(domain.SiteTilesInput{

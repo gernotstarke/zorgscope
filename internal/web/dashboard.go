@@ -30,9 +30,11 @@ type waitingView struct {
 	Path  string
 }
 
-// answeredWaiting is the first thing a page handler does (FR-1.9). It asks the cache — which
-// starts a fetch when one is due and never waits for it (QS-2.6) — and, while a fetch is in
-// flight, answers the request itself and reports so:
+// answeredWaiting is the first thing a page handler does (FR-1.9). It asks the cache once — which
+// starts a fetch when one is due and never waits for it (QS-2.6) — and hands the snapshot back to
+// the caller either way, so a page never has to ask the cache a second time and risk that second
+// call crossing the TTL a moment after the first, and rendering the ordinary page with Fetching
+// true. While a fetch is in flight it also answers the request itself and reports so:
 //
 //   - an ordinary page view gets the wait page;
 //   - the wait page's own poll gets 204, so htmx swaps nothing and the animation keeps running;
@@ -40,52 +42,62 @@ type waitingView struct {
 //     renders it from the current snapshot (AC5), since a wait page selected for #items would
 //     empty the list.
 //
+// This rule assumes htmx is used only for fragments: it is what a request either being, or not
+// being, the wait page's own poll comes down to. Adding hx-boost to the body would make ordinary
+// navigations carry HX-Request: true as well and be answered from the snapshot rather than with
+// the wait page, defeating FR-1.9 for every boosted link.
+//
 // When no fetch is in flight it answers nothing and the caller renders as it always has.
-func (s *Server) answeredWaiting(w http.ResponseWriter, r *http.Request) bool {
+func (s *Server) answeredWaiting(w http.ResponseWriter, r *http.Request) (snapshot.Snapshot, bool) {
 	snap := s.cache.Get(r.Context())
 	if !snap.Fetching {
-		return false
+		return snap, false
 	}
 	if r.Header.Get("HX-Request") != "true" {
-		// A wait page must never come back out of a browser cache: it is only ever right now.
+		// requireSession already sets no-store on every session route (see its own comment); this
+		// Set restates, for a reader of this branch, that the guarantee covers the wait page too —
+		// it must never come back out of a browser cache, since it is only ever right now.
 		w.Header().Set("Cache-Control", "no-store")
 		s.execute(w, r, http.StatusOK, "waiting.html", pageData{
 			Waiting: &waitingView{Repos: len(s.cfg.GitHub.Repos), Path: r.URL.RequestURI()},
 		})
-		return true
+		return snap, true
 	}
 	if r.Header.Get("HX-Trigger") == waitingPollID {
 		w.WriteHeader(http.StatusNoContent)
-		return true
+		return snap, true
 	}
-	return false
+	return snap, false
 }
 
 // ---------------------------------------------------------------- handlers
 
 // handleDashboard renders the whole page; handleItems renders only the #items fragment for the
-// htmx filter form. Both read the same snapshot and the same session.
+// htmx filter form. Both read the same session; handleDashboard's snapshot comes from
+// answeredWaiting, and handleItems reads its own, since GET /items answers on its own rather than
+// as part of a page view.
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	if s.answeredWaiting(w, r) {
+	snap, waiting := s.answeredWaiting(w, r)
+	if waiting {
 		return
 	}
-	s.render(w, r, "dashboard.html")
+	s.render(w, r, "dashboard.html", snap)
 }
 func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, fragmentItemsTemplate)
+	s.render(w, r, fragmentItemsTemplate, s.cache.Get(r.Context()))
 }
 
-// render assembles the dashboard from the in-memory snapshot and the visitor's session, and
-// executes tmpl with it. It contacts no upstream service itself (FR-1.1): the only thing it
-// reaches for is the cache, which fetches on its own schedule — see internal/snapshot — and never
-// waits for that fetch; answeredWaiting has already dealt with a fetch in flight before render
-// runs.
+// render assembles the dashboard from snap — the snapshot its caller already read from the cache —
+// and the visitor's session, and executes tmpl with it. It contacts no upstream service itself
+// (FR-1.1) and does not read the cache on its own: for a page, answeredWaiting has already dealt
+// with a fetch in flight before render runs, and snap is the very snapshot it decided that with;
+// the /items fragment is deliberately served from the current snapshot whatever the cache is
+// doing (FR-1.9 AC5).
 //
 // It is not a visit: only POST /seen moves the seen-mark, so rendering the page never clears a
 // badge on its own (FR-1.2 AC4).
-func (s *Server) render(w http.ResponseWriter, r *http.Request, tmpl string) {
+func (s *Server) render(w http.ResponseWriter, r *http.Request, tmpl string, snap snapshot.Snapshot) {
 	sess, _ := s.session(r) // requireSession already admitted the request
-	snap := s.cache.Get(r.Context())
 	now := s.clock.Now()
 
 	d := domain.BuildDashboard(domain.DashboardInput{

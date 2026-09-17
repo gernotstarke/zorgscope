@@ -129,8 +129,8 @@ A new template `waiting.html`, executed inside the shared `layout` so the top ba
 ```html
 {{define "head"}}<noscript><meta http-equiv="refresh" content="2"></noscript>{{end}}
 {{define "content"}}
-<section class="waiting" aria-busy="true">
-  <div class="orbit-stage" data-state="refreshing">
+<section class="waiting">
+  <div class="orbit-stage" data-state="refreshing" aria-busy="true">
     <img class="orbit-mark" src="{{.Asset "logo-large.jpg"}}" width="512" height="512" alt="">
     <svg class="orbit-ring" viewBox="0 0 100 100" aria-hidden="true">
       <circle class="orbit-track" cx="50" cy="50" r="46.5" pathLength="100"></circle>
@@ -168,7 +168,8 @@ A new template `waiting.html`, executed inside the shared `layout` so the top ba
 The scanning-orbit study, reduced to what CSS alone can do, in `app.css`:
 
 - The stage is a square of `min(70vmin, 420px)`, centred in `main`. The mark fills it, clipped to a
-  circle (`clip-path: circle(49%)`) so its square dark background disappears; the ring sits over it.
+  circle (`clip-path: circle(42.5%)`) so its square dark background disappears; the ring sits over
+  it. 42.5% is the ring's outer edge in the artwork.
 - The track is a faint circle in the brand green; the beam is a rounded lime arc
   (`stroke-dasharray: 17 83`, `stroke-width: 3.8`) rotating once per 1.05 s with a linear
   `@keyframes` on `transform` about the centre (`transform-box: view-box`,

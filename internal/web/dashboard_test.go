@@ -309,7 +309,7 @@ func TestAPartialFetchKeepsTheFailingRepositoryAndTheSeenAtOfTheGoodFetch(t *tes
 // design §5: POST /refresh invalidates the cache, so the next GET fetches again.
 func TestRefreshInvalidatesTheCacheSoTheNextGetFetches(t *testing.T) {
 	src := &fakeSource{items: []domain.Item{ghItem(1, "One", testNow.Add(-time.Hour))}}
-	h, cache := dashHandlerWith(t, src)
+	h, _ := dashHandlerWith(t, src)
 	c := signIn(t, h)
 
 	getAs(h, "/", c) // the warm-up already paid the one fetch; this view reads it, not a new one
@@ -325,7 +325,9 @@ func TestRefreshInvalidatesTheCacheSoTheNextGetFetches(t *testing.T) {
 		t.Errorf("POST /refresh redirects to %q, want %q", got, "/")
 	}
 
-	warmCache(t, cache) // deterministically wait for the fetch /refresh made due to land
+	// getSettled reads through the handler, wait page included, rather than reaching past it into
+	// the cache directly — deterministic now that the wait page exists to poll past.
+	getSettled(t, h, "/", c)
 	if n := src.CallCount(); n != 2 {
 		t.Errorf("fetches after refresh = %d, want 2: /refresh must make the next GET fetch again", n)
 	}
@@ -622,10 +624,12 @@ func TestNoRenderedHTMLNeedsUnsafeInline(t *testing.T) {
 	// with no state cookie is the refusal anyone who did not start here is answered with.
 	pages["GET /auth/callback (refused)"] = get(h, "/auth/callback?code=x&state=y").Body.String()
 
-	// The wait page (FR-1.9) is swept too: it is the one page a cold start shows.
+	// The wait page (FR-1.9) is swept too: it is the one page a cold start shows. Nothing below
+	// reads release again — the body above is already captured — so whether it closes before or
+	// after the sweep that follows makes no difference, and a defer is the simpler cleanup.
 	wh, release := coldServer(t)
+	defer close(release)
 	pages["GET / (waiting)"] = getAs(wh, "/", signIn(t, wh)).Body.String()
-	close(release)
 
 	for name, body := range pages {
 		t.Run(name, func(t *testing.T) {

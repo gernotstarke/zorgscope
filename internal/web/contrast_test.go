@@ -195,6 +195,17 @@ func TestContrastRatioMatchesWCAGReferenceValues(t *testing.T) {
 	}
 }
 
+// waitingStatusBody returns the declaration block of `.waiting-status { ... }` in css, or "" when
+// app.css defines no such rule. Tolerant of whitespace, like hueClassBody.
+func waitingStatusBody(t *testing.T, css string) string {
+	t.Helper()
+	m := regexp.MustCompile(`\.waiting-status\s*\{([^}]*)\}`).FindStringSubmatch(css)
+	if m == nil {
+		return ""
+	}
+	return m[1]
+}
+
 // rgb is a colour's gamma-encoded sRGB channels, 0 to 255.
 type rgb struct{ r, g, b float64 }
 
@@ -283,8 +294,20 @@ func TestWaitingStatusKeepsTextReadable(t *testing.T) {
 		t.Fatalf("reading the embedded app.css: %v", err)
 	}
 	css := string(raw)
-	if !strings.Contains(css, ".waiting-status {") {
+	body := waitingStatusBody(t, css)
+	if body == "" {
 		t.Fatal("app.css defines no .waiting-status rule")
+	}
+	// The measurement below is only true of the page if .waiting-status actually paints its text
+	// from --text; without this the contrast pinned here could belong to a colour the rule never
+	// uses (the same seam TestHueClassBindsItsOwnTokens closes for the tile hues).
+	//nolint:misspell // color: is the CSS property's own name, not prose to be normalised
+	decl := regexp.MustCompile(`color:\s*([^;]+);`).FindStringSubmatch(body)
+	if decl == nil {
+		t.Fatal(".waiting-status declares no color:") //nolint:misspell // the CSS property's name
+	}
+	if got := strings.TrimSpace(decl[1]); got != "var(--text)" {
+		t.Errorf(".waiting-status color = %q, want var(--text)", got) //nolint:misspell // ditto
 	}
 	bg, ok := lightDarkToken(t, css, "bg")
 	if !ok {

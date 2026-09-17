@@ -6,9 +6,13 @@
      status line, so the signal is never only colour or motion (AC4); and a poll that asks for
      this page again every half second and swaps main in once the fetch has ended (AC2). While
      the fetch still runs the poll is answered 204, so nothing is swapped and the animation never
-     restarts. The polling element sits inside main, so the swap that brings the page removes it. */}}
-<section class="waiting" aria-busy="true">
-  <div class="orbit-stage" data-state="refreshing">
+     restarts. The polling element sits inside main, so the swap that brings the page removes it.
+     aria-busy sits on the orbit stage, the decorative part, rather than on this section: an
+     ancestor marked busy has its subtree withheld from assistive technology announcements, and
+     the status line right below — role="status" aria-live="polite" — is the one thing here that
+     must be announced. */}}
+<section class="waiting">
+  <div class="orbit-stage" data-state="refreshing" aria-busy="true">
     <img class="orbit-mark" src="{{$.Asset "logo-large.jpg"}}" width="512" height="512" alt="" decoding="async">
     <svg class="orbit-ring" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
       <circle class="orbit-track" cx="50" cy="50" r="46.5" pathLength="100"></circle>

@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/gernotstarke/zorgscope/internal/domain"
+	"github.com/gernotstarke/zorgscope/internal/ports"
 	"github.com/gernotstarke/zorgscope/internal/snapshot"
 )
 
@@ -86,6 +88,7 @@ func TestWaitPageWhileFetching(t *testing.T) {
 	}
 	for _, want := range []string{
 		`class="orbit-stage"`,
+		`<div class="orbit-stage" data-state="refreshing" aria-busy="true">`,
 		`/static/logo-large.jpg?`,
 		`class="orbit-beam"`,
 		`class="polling-pulse"`,
@@ -97,6 +100,11 @@ func TestWaitPageWhileFetching(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("wait page lacks %s", want)
 		}
+	}
+	if got := openingTag(t, body, `<section class="waiting"`); strings.Contains(got, "aria-busy") {
+		t.Errorf(`<section class="waiting"> carries aria-busy: %s — a busy ancestor withholds the`+
+			" status line below it from assistive technology; aria-busy belongs on the decorative"+
+			" orbit stage alone", got)
 	}
 	for _, forbidden := range []string{`id="items"`, `class="filter"`, `class="tiles"`, "Mark all seen"} {
 		if strings.Contains(body, forbidden) {
@@ -127,9 +135,10 @@ func TestPollAnswers204WhileFetching(t *testing.T) {
 // swap in, and the list.
 func TestPollReceivesThePageAfterTheFetch(t *testing.T) {
 	h, release := coldServer(t)
+	defer close(release)
 	c := signIn(t, h)
-	getAs(h, "/", c) // starts the fetch
-	close(release)
+	getAs(h, "/", c)      // starts the fetch
+	release <- struct{}{} // unblocks it now; the deferred close above is only cleanup once the test ends
 
 	rec := getSettled(t, h, "/", c)
 	body := rec.Body.String()
@@ -174,6 +183,105 @@ func TestSitesViewWaitsToo(t *testing.T) {
 	body := getAs(h, "/sites", c).Body.String()
 	if !strings.Contains(body, `hx-get="/sites"`) || !strings.Contains(body, waitingMarker) {
 		t.Errorf("GET /sites during a fetch is not the wait page polling /sites")
+	}
+}
+
+// refetchBlockSource answers its first fetch — the warm-up — at once, and blocks every fetch after
+// that until release is closed or sent to, so a test can warm the cache and then hold a refetch in
+// flight while the list the warm-up fetched is already on hand.
+type refetchBlockSource struct {
+	mu      sync.Mutex
+	calls   int
+	items   []domain.Item
+	release chan struct{}
+}
+
+func (s *refetchBlockSource) Fetch(ctx context.Context) ([]domain.Item, error) {
+	s.mu.Lock()
+	s.calls++
+	first := s.calls == 1
+	s.mu.Unlock()
+	if first {
+		return s.items, nil
+	}
+	select {
+	case <-s.release:
+		return s.items, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// FR-1.9 AC1, and the decision behind it (design §2): the wait page appears on every fetch, a
+// Refresh included — a list already held is not shown while a fresh one is on its way.
+func TestRefreshShowsTheWaitPageEvenThoughAListIsAlreadyHeld(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	src := &refetchBlockSource{
+		items:   []domain.Item{ghItem(1, "Held already", testNow.Add(-time.Hour))},
+		release: release,
+	}
+	s, cache := newColdServerWith(t, func(o *Options) {
+		o.Config.GitHub.Repos = append([]string{"org/repo"}, representativeRepos()...)
+		o.Cache = snapshot.New(src, time.Hour, o.Clock)
+	})
+	warmCache(t, cache) // the warm-up fetch, answered at once
+	h := s.Handler()
+	c := signIn(t, h)
+
+	rec := postAs(h, "/refresh", nil, c)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("POST /refresh = %d, want %d", rec.Code, http.StatusSeeOther)
+	}
+
+	body := getAs(h, "/", c).Body.String()
+	if !strings.Contains(body, waitingMarker) {
+		t.Error("GET / after Refresh did not show the wait page")
+	}
+	if strings.Contains(body, "Held already") {
+		t.Error("GET / after Refresh showed the list already held, instead of waiting for the fresh one")
+	}
+
+	release <- struct{}{} // unblocks the refetch; the deferred close is only cleanup once the test ends
+	body = getSettled(t, h, "/", c).Body.String()
+	if !strings.Contains(body, "Held already") {
+		t.Error("once the refetch landed the list did not come back")
+	}
+}
+
+// FR-1.9 AC1: the same rule holds for a TTL that has expired as for a Refresh — a list already held
+// is not shown while the TTL's own refetch is on its way.
+func TestAnExpiredTTLShowsTheWaitPageNotTheOldList(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	src := &refetchBlockSource{
+		items:   []domain.Item{ghItem(1, "Held already", testNow.Add(-time.Hour))},
+		release: release,
+	}
+	var clock *ports.FixedClock
+	s, cache := newColdServerWith(t, func(o *Options) {
+		o.Config.GitHub.Repos = append([]string{"org/repo"}, representativeRepos()...)
+		clock = o.Clock.(*ports.FixedClock)
+		o.Cache = snapshot.New(src, time.Minute, o.Clock)
+	})
+	warmCache(t, cache) // the warm-up fetch, answered at once
+	h := s.Handler()
+	c := signIn(t, h)
+
+	clock.Advance(2 * time.Minute) // past the one-minute TTL
+
+	body := getAs(h, "/", c).Body.String()
+	if !strings.Contains(body, waitingMarker) {
+		t.Error("GET / past the TTL did not show the wait page")
+	}
+	if strings.Contains(body, "Held already") {
+		t.Error("GET / past the TTL showed the old list, instead of waiting for the fresh one")
+	}
+
+	release <- struct{}{} // unblocks the refetch; the deferred close is only cleanup once the test ends
+	body = getSettled(t, h, "/", c).Body.String()
+	if !strings.Contains(body, "Held already") {
+		t.Error("once the refetch landed the list did not come back")
 	}
 }
 
