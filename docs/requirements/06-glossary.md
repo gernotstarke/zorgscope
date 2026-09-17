@@ -10,5 +10,6 @@
 | **Site** | One arc42 web property configured in `github.sites`: a name, an `https` address, the one watched repository behind it, a colour from the fixed palette, and an optional short tag. |
 | **Tile** | A site's panel on the Sites view (`/sites`): its colour band, at most three pull requests and four issues, its totals, and a link to the filtered list when it holds more than it shows. |
 | **Other tile** | The last tile of the Sites view, holding every watched repository no site claims, so the Sites view never hides an item of a watched repository. |
-| **Cold start** | The first request after the Fly Machine has been stopped; it includes starting the machine and the process and, when the snapshot is empty or stale, the one fetch that follows. |
+| **Cold start** | The first request after the Fly Machine has been stopped; it includes starting the machine and the process and, when the snapshot is empty or stale, the fetch that follows — shown as the wait page, not waited for. |
+| **Wait page** | The page shown in place of the list or the tiles while a fetch is running: the mark, animated, a status line naming how many repositories are being asked, and a poll that replaces it with the page once the fetch has ended. |
 | **Fake sources** | A local HTTP server (`cmd/fakesources`, `make fakes`) that answers like GitHub — issues, pull requests and the OAuth endpoints a sign-in needs — from fixture files, used for offline development and tests. |

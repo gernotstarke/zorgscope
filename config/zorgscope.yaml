@@ -16,6 +16,7 @@ github:
   # QS-3.5 budgets 20 GraphQL queries per page view and the issue fetcher spends two per repository
   # (issues and pull requests paginate independently), so this list may hold at most ten entries.
   # It holds nine.
+  # The repositories are fetched side by side, so the list's length costs no time, only requests.
   repos:
     - arc42/arc42.org-site
     - arc42/arc42.de-site

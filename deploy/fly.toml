@@ -1,5 +1,5 @@
 # Scale to zero (C-3, ADR-0003): the Machine is stopped whenever nothing is in flight.
-# A visitor's request starts it, and the first page view after a cold start pays the one fetch (design §5).
+# A visitor's request starts it, and the first page view after a cold start shows the wait page while the one fetch runs (ADR-0011).
 app = "zorgscope"
 primary_region = "fra"
 

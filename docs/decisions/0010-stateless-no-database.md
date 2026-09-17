@@ -50,9 +50,11 @@ migrate.
 * Bad: no history. An item that disappears and returns is indistinguishable from one that was
   always there; there is no build status, no notifications, and no per-item dismissal — a `NEW`
   mark is global to the visitor's session, not a fact about the item.
-* Bad: the first view after the Fly Machine scales to zero pays one fetch (design §5, ~16 GraphQL
-  calls for eight repositories) rather than reading a warm cache; this is the price a refresh button
-  charges in place of a cron-warmed database, and it is accepted as such.
+* Bad: the first view after the Fly Machine scales to zero pays one fetch rather than reading a
+  warm cache; this is the price a refresh button charges in place of a cron-warmed database, and it
+  is accepted as such. Since [ADR‑0011](0011-request-triggered-fetch-never-a-ticker.md) the fetch
+  runs side by side and the page does not wait for it: the visitor sees the wait page for about a
+  second rather than a blank tab for nine.
 * Bad: signing out, or the session cookie expiring, forgets the seen mark — there is nowhere else
   for it to live. For a single-user tool this is a real property, not an oversight (see
   [security and token handling](../concepts/security-and-tokens.md)).

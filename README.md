@@ -9,11 +9,13 @@ new since the last look.
 (screenshot placeholder)
 
 One Go binary runs on a Fly.io Machine that is **stopped whenever nothing is happening**. There is
-no database and no background scheduler: the backend fetches straight from GitHub on demand, keeps
-the last fetched list in memory for a few minutes, and a "Refresh" button fetches immediately when
-that is not fresh enough. The container itself is disposable — it remembers nothing between restarts
-except what a signed-in visitor's own browser carries in its session cookie (design
-[ADR‑0010](docs/decisions/0010-stateless-no-database.md)).
+no database and no background scheduler: the backend fetches straight from GitHub on demand, every
+repository side by side, keeps the last fetched list in memory for a few minutes, and a "Refresh"
+button fetches immediately when that is not fresh enough. While a fetch runs the page shows the
+zorgscope mark, animated, and replaces it with the list on its own. The container itself is
+disposable — it remembers nothing between restarts except what a signed-in visitor's own browser
+carries in its session cookie (design [ADR‑0010](docs/decisions/0010-stateless-no-database.md),
+[ADR‑0011](docs/decisions/0011-request-triggered-fetch-never-a-ticker.md)).
 
 ## Quick start
 

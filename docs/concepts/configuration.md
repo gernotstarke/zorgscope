@@ -36,7 +36,7 @@ Sign-in requests no OAuth scopes, so `auth_repo` must be a repository GitHub wil
 visitor's scope-less token: a public one, or one they can see without scopes. A private repository
 would need the `repo` scope, and an organisation repository behind OAuth App access restrictions may
 need `read:org` as well.
-`github.cache_ttl` is how old the in-memory snapshot may be before a page view triggers a fetch
+`github.cache_ttl` is how old the in-memory snapshot may be before a page view triggers a fetch — shown as the wait page while it runs (FR‑1.9)
 instead of reusing it (design §5); it defaults to 5 minutes when the field is left out. Both sit in
 the YAML file rather than the environment because neither is a secret, and both are exactly the kind
 of thing a reader of this repository should be able to look up.

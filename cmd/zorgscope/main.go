@@ -3,7 +3,7 @@
 // The process is stateless: the only thing it remembers between requests is the last fetched item
 // list, held in memory by internal/snapshot and refetched when it is stale. There is no database,
 // no background scheduler and no refresh pipeline — the Fly Machine it runs on is stopped whenever
-// nothing is in flight, and the first page view after a cold start pays the one fetch (design §5).
+// nothing is in flight, and the first page view after a cold start starts the one fetch and shows the wait page until it lands (ADR-0011).
 //
 // Everything is assembled in one place, run: configuration, the GitHub source, the snapshot cache
 // and the HTTP server. Nothing below it reads the environment.

@@ -18,7 +18,7 @@ originally. See [ADR‑0010](../decisions/0010-stateless-no-database.md). Retire
 ```text
 zorgscope
 ├── QG‑1 Correctness of "new"   per-repository resilience, pagination completeness
-├── QG‑2 Speed                  page weight, pagination that cannot hang
+├── QG‑2 Speed                  page weight, pagination that cannot hang, a page that never waits for GitHub
 ├── QG‑3 Frugality              GitHub request budget
 ├── QG‑4 Confidentiality        secret handling, authentication, transport, route-table coverage
 └── QG‑5 Maintainability        isolation of the domain, per-adapter isolation, CI turnaround
@@ -35,8 +35,10 @@ zorgscope
 
 | Id | Context | Stimulus | Response | Measure |
 |----|---------|----------|----------|---------|
-| QS‑2.3 | The representative configuration (10 repositories, ~150 open items between them) | The dashboard or the Sites view is rendered, unfiltered | The response is small enough for a slow connection | ≤ 150 kB uncompressed HTML plus ≤ 50 kB of static assets on the wire (gzip-negotiated), including the vendored htmx. `TestRenderedPageStaysInsideItsBudget` and `TestStaticAssetsFitTheirBudgetOnTheWire` (`internal/web/dashboard_test.go`) assert both halves of the budget against the rendered fixture, and `TestSitesPageStaysInsideItsBudget` (`internal/web/sites_test.go`) holds the Sites view to the same 150 kB. |
+| QS‑2.3 | The representative configuration (10 repositories, ~150 open items between them) | The dashboard or the Sites view is rendered, unfiltered | The response is small enough for a slow connection | ≤ 150 kB uncompressed HTML plus ≤ 50 kB of static assets on the wire (gzip-negotiated), including the vendored htmx. `TestRenderedPageStaysInsideItsBudget` and `TestStaticAssetsFitTheirBudgetOnTheWire` (`internal/web/dashboard_test.go`) assert both halves of the budget against the rendered fixture, and `TestSitesPageStaysInsideItsBudget` (`internal/web/sites_test.go`) holds the Sites view to the same 150 kB. The wait page (FR‑1.9) has its own measure: at most 20 kB of HTML and at most 100 kB of static assets on the wire, asserted by `TestWaitPageStaysInsideItsBudget` (`internal/web/waiting_test.go`). |
 | QS‑2.5 | GitHub's pagination cursor stalls — repeated or empty — or a connection never reports `hasNextPage: false` | A fetch runs against such an upstream | The fetch stops with a named error rather than looping forever: a forward-progress check catches a cursor that does not move, and a hard page cap (`maxPages = 100`) backstops a cursor that genuinely advances but never terminates | `TestFetchStopsWhenCursorNeverAdvances` and `TestFetchStopsAtPageCap` (`internal/adapters/github`) each assert `Fetch` returns within a bounded time — rather than hanging the caller — when driven against a handler built to misbehave exactly one of those two ways. |
+| QS‑2.6 | A list that is empty or stale | A page view while GitHub has not answered | The page answers without waiting for GitHub: the wait page, and the fetch runs on | With a source that blocks until the test releases it, `GET /` answers within 200 ms, asserted by `TestPageNeverWaitsForGitHub` (`internal/web/waiting_test.go`); `Get` of the cache returns at once with `Fetching` set, asserted by `TestFirstGetReturnsAtOnceWithNothingWhileFetching` (`internal/snapshot`). |
+| QS‑2.7 | The representative configuration (10 repositories) | A fetch runs against a source that answers each request after 200 ms | The twenty requests run side by side | The fetch completes within 1 s, asserted by `TestFetchRunsRepositoriesSideBySide` (`internal/adapters/github`); the result keeps configuration order, asserted by `TestFetchKeepsConfigurationOrder`. |
 
 ## 5.4 QG‑3 Frugality
 
