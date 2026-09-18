@@ -1,0 +1,29 @@
+{{/* The Contributors page (FR-12.2). A table, because it is one: five facts per person, compared down the columns. */}}
+{{define "content"}}
+{{with .Contributors}}
+{{template "header" .}}
+<section class="contributors">
+  <h1>Contributors</h1>
+  <p class="source-line">{{.CountLine}}</p>
+  {{if .Rows}}
+  <div class="table-scroll">
+  <table class="contributor-table">
+    <thead><tr><th scope="col">Contributor</th><th scope="col" class="num">Pull requests</th><th scope="col" class="num">Issues</th><th scope="col">Repositories</th><th scope="col">Last active</th><th scope="col"><span class="visually-hidden">Items</span></th></tr></thead>
+    <tbody>
+    {{range .Rows}}
+    <tr>
+      <th scope="row">{{if .Unknown}}<span class="contributor-unknown">unknown</span>{{else}}<a href="{{.ProfileURL}}" target="_blank" rel="noopener noreferrer">{{.Login}}</a>{{end}}</th>
+      <td class="num">{{.PRs}}</td>
+      <td class="num">{{.Issues}}</td>
+      <td>{{range $i, $r := .Repos}}{{if $i}}, {{end}}{{$r}}{{end}}</td>
+      <td>{{if .LastActive.Known}}<time datetime="{{.LastActive.Absolute}}">{{.LastActive.Relative}}</time>{{else}}unknown{{end}}</td>
+      <td>{{with .ItemsURL}}<a href="{{.}}">items →<span class="visually-hidden"> of this contributor</span></a>{{end}}</td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{end}}
+</section>
+{{end}}
+{{end}}

@@ -758,3 +758,15 @@ mark { background: #fde68a; color: #1f2937; border-radius: 2px; padding: 0 0.1em
   .hit { border-left-color: light-dark(var(--tile-hue, var(--hue-slate)), color-mix(in srgb, var(--tile-sig, var(--hue-slate-sig)) 70%, #ffffff)); }
   mark { background: color-mix(in srgb, var(--accent) 25%, transparent); color: inherit; }
 }
+
+/* ---------------------------------------------------------------- contributors (FR-12.2) */
+
+.table-scroll { overflow-x: auto; }
+.contributor-table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+.contributor-table th, .contributor-table td { padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border); text-align: left; vertical-align: baseline; }
+.contributor-table thead th { color: var(--muted); font-weight: 500; font-size: 0.8rem; }
+.contributor-table tbody th { font-weight: 600; }
+.contributor-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.contributor-table a { color: var(--text); }
+.contributor-table a:hover { color: var(--accent); }
+.contributor-unknown { color: var(--muted); font-style: italic; }
