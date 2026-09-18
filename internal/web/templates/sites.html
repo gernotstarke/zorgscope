@@ -11,7 +11,6 @@
     <h2 class="tile-title" id="{{.ID}}">
       {{if .URL}}<a href="{{.URL}}" target="_blank" rel="noopener noreferrer">{{.Name}}</a>{{else}}{{.Name}}{{end}}
       {{with .Tag}}<span class="tile-tag">{{.}}</span>{{end}}
-      {{if gt .NewCount 0}}<span class="tile-new">{{.NewCount}} new</span>{{end}}
       <span class="tile-count">{{.CountLine}}</span>
     </h2>
     <div class="tile-body">
@@ -29,12 +28,11 @@
 {{end}}
 {{end}}
 
-{{/* One row of a tile: the NEW badge, the number, the title linking to GitHub, and when it last
-     moved. No summary and no author — a tile is for a glance, the list is for reading. The
-     timestamp is guarded by Known exactly as the list guards its own. */}}
+{{/* One row of a tile: the number, the title linking to GitHub, and when it last moved. No summary
+     and no author — a tile is for a glance, the list is for reading. The timestamp is guarded by
+     Known exactly as the list guards its own. */}}
 {{define "tileitem"}}
-<li class="tile-item{{if .New}} is-new{{end}}">
-  {{if .New}}<span class="badge badge-new">NEW</span>{{end}}
+<li class="tile-item">
   {{if .Number}}<span class="item-number">#{{.Number}}</span>{{end}}
   <a class="item-title" href="{{.URL}}" target="_blank" rel="noopener noreferrer">{{.Title}}</a>
   <span class="tile-updated">{{if .Updated.Known}}updated <time datetime="{{.Updated.Absolute}}">{{.Updated.Relative}}</time>{{else}}updated at an unknown time{{end}}</span>

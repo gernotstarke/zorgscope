@@ -181,11 +181,10 @@ button:hover,
 
 /* ---------------------------------------------------------------- the filter
 
-   One row of controls above the list (FR-1.2). It wraps rather than scrolls, so a phone stacks it
-   instead of hiding half of it, and every control sits on one baseline so the row reads as one
-   thing rather than as four. It is deliberately plain: the filter is a tool for narrowing a list,
-   and a toolbar that drew attention to itself would compete with the one thing on this page that
-   should — what is new. */
+   One row of controls above the list. It wraps rather than scrolls, so a phone stacks it instead
+   of hiding half of it, and every control sits on one baseline so the row reads as one thing
+   rather than as four. It is deliberately plain: the filter is a tool for narrowing a list, and a
+   toolbar that drew attention to itself would compete with the list it narrows. */
 .filter {
   display: flex;
   flex-wrap: wrap;
@@ -282,9 +281,6 @@ button:hover,
 .repo-title a { color: var(--text); text-decoration: none; }
 .repo-title a:hover { color: var(--accent); text-decoration: underline; }
 
-/* The lime focus point, spent on the one thing this dashboard exists to say: something here is
-   new. The rest of the heading is the page's ordinary colours. */
-.new-count { color: var(--accent); font-size: 0.85rem; font-weight: 600; }
 .repo-count { margin-left: auto; color: var(--muted); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
 
 /* Every state says what it is in words as well as in colour (FR-1.5 AC2). */
@@ -318,21 +314,6 @@ button:hover,
 
 .item-title { color: var(--text); overflow-wrap: anywhere; }
 .item-meta { margin: 0.15rem 0 0; color: var(--muted); font-size: 0.8rem; overflow-wrap: anywhere; }
-
-.is-new .item-title { font-weight: 600; }
-
-.badge {
-  flex: none;
-  padding: 0.05rem 0.4rem;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.badge-new { border-color: var(--accent); color: var(--accent); }
 
 .empty { margin: 0; color: var(--muted); }
 
@@ -510,7 +491,6 @@ button:hover,
   letter-spacing: 0.06em;
 }
 
-.tile-new { font-size: 0.8rem; }
 .tile-count { margin-left: auto; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
 
 .tile-body { flex: 1; padding: 0.4rem 0.8rem 0.7rem; }

@@ -106,7 +106,7 @@ func TestWaitPageWhileFetching(t *testing.T) {
 			" status line below it from assistive technology; aria-busy belongs on the decorative"+
 			" orbit stage alone", got)
 	}
-	for _, forbidden := range []string{`id="items"`, `class="filter"`, `class="tiles"`, "Mark all seen"} {
+	for _, forbidden := range []string{`id="items"`, `class="filter"`, `class="tiles"`, `class="dash-actions"`} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("wait page shows %s; it must show nothing of the list while the fetch runs (FR-1.9 AC1)", forbidden)
 		}

@@ -26,7 +26,7 @@ import (
 	"github.com/gernotstarke/zorgscope/internal/snapshot"
 )
 
-// FR-1.1 AC1, FR-1.2 AC1/AC2.
+// FR-1.1 AC1: the list is grouped by repository, and says how many items are open.
 func TestDashboardRendersTheListGroupedByRepository(t *testing.T) {
 	src := &fakeSource{items: []domain.Item{
 		ghItem(1, "An issue from last week", testNow.Add(-7*24*time.Hour)),
@@ -41,232 +41,25 @@ func TestDashboardRendersTheListGroupedByRepository(t *testing.T) {
 		t.Error("the list does not group by repository, or the heading does not link it (FR-1.1 AC1)")
 	}
 	if !strings.Contains(body, "2 open") {
-		t.Error("the list does not state how many items are open (FR-1.2 AC2)")
+		t.Error("the list does not state how many items are open (FR-1.1)")
 	}
 }
 
-// design §5: NEW is "created after my previous mark seen". An item created exactly at the seen
-// mark is not new either — only a first sighting strictly after it counts.
-func TestNewMarkerAppearsOnlyForItemsCreatedAfterSeen(t *testing.T) {
-	seen := testNow.Add(-2 * time.Hour)
-	src := &fakeSource{items: []domain.Item{
-		ghItem(1, "Created exactly at the seen mark", seen),
-		ghItem(2, "Created after the seen mark", seen.Add(time.Minute)),
-		ghItem(3, "Created well before", seen.Add(-time.Hour)),
-	}}
-	h := dashHandler(t, src)
-	body := getAs(h, "/", mintSessionSeenAt(seen)).Body.String()
-
-	if n := strings.Count(body, `<span class="badge badge-new">NEW</span>`); n != 1 {
-		t.Errorf("the per-item NEW marker appears %d times, want 1", n)
-	}
-	if !strings.Contains(body, "NEW 1") {
-		t.Error("the header's NEW total does not count the one item created after seen")
-	}
-}
-
-// FR-1.2 AC2.
-func TestTabTitleCarriesTheNewCount(t *testing.T) {
-	src := &fakeSource{items: []domain.Item{ghItem(1, "Fresh", testNow.Add(-time.Hour))}}
-	h := dashHandler(t, src)
-	body := getAs(h, "/", mintSessionSeenAt(testNow.Add(-2*time.Hour))).Body.String()
-	if !strings.Contains(body, "<title>(1) zorgscope") {
-		t.Errorf("title does not carry the new count:\n%s", firstLineContaining(body, "<title>"))
-	}
-}
-
-// FR-1.2 AC2: "when it is greater than zero" — nothing new means no prefix at all.
-func TestTabTitleHasNoPrefixWhenNothingIsNew(t *testing.T) {
+// The list is the site rather than a page within it, so its tab title is the site name alone —
+// nothing is counted into it (FR-1.2 retired 2026-09-18).
+func TestTabTitleIsTheSiteName(t *testing.T) {
 	src := &fakeSource{items: []domain.Item{ghItem(1, "Old news", testNow.Add(-72*time.Hour))}}
 	h := dashHandler(t, src)
-	body := getAs(h, "/", mintSessionSeenAt(testNow)).Body.String()
+	body := getAuthed(t, h, "/").Body.String()
 	if !strings.Contains(body, "<title>zorgscope</title>") {
-		t.Errorf("title carries a prefix with nothing new:\n%s", firstLineContaining(body, "<title>"))
+		t.Errorf("the tab title is not the site name alone:\n%s", firstLineContaining(body, "<title>"))
 	}
 }
 
-// FR-1.2: POST /seen re-mints the cookie with seen = now, and the next GET shows no NEW.
-func TestMarkSeenClearsTheNewBadgeOnTheNextGet(t *testing.T) {
-	src := &fakeSource{items: []domain.Item{ghItem(1, "Fresh", testNow.Add(-time.Hour))}}
-	h := dashHandler(t, src)
-	// Seen before the item was created, so it starts out NEW; a fresh sign-in's seen = 0 would
-	// show nothing as new at all (design §4), which is not what this test needs to prove.
-	c := mintSessionSeenAt(testNow.Add(-2 * time.Hour))
-
-	if body := getAs(h, "/", c).Body.String(); !strings.Contains(body, "badge-new") {
-		t.Fatal("the fixture is wrong: nothing is new before the click")
-	}
-
-	rec := postAs(h, "/seen", nil, c)
-	// A plain form post, so the action works with JavaScript disabled (FR-1.2 AC4).
-	if rec.Code != http.StatusSeeOther {
-		t.Errorf("POST /seen = %d, want %d: a no-JavaScript form post needs a redirect (FR-1.2 AC4)",
-			rec.Code, http.StatusSeeOther)
-	}
-	if got := rec.Header().Get("Location"); got != "/" {
-		t.Errorf("POST /seen redirects to %q, want %q", got, "/")
-	}
-	reminted := cookieNamed(rec, sessionCookieName)
-	if reminted == nil {
-		t.Fatal("POST /seen set no cookie")
-	}
-
-	if body := getAs(h, "/", reminted).Body.String(); strings.Contains(body, "badge-new") {
-		t.Error("an item still carries NEW after mark all seen (FR-1.2 AC4)")
-	}
-}
-
-// Controller ruling on FR-1.2: "Mark all seen" stamps seen at the fetch the visitor was actually
-// shown, not at the moment of the click. An item created between that fetch and the click was
-// never on the page being acknowledged, so it must still read as NEW once it does appear.
-func TestMarkSeenUsesTheFetchedAtOfTheSnapshotShownNotTheClick(t *testing.T) {
-	clock := &ports.FixedClock{T: testNow}
-	src := &fakeSource{items: []domain.Item{ghItem(1, "Present at the first fetch", testNow.Add(-time.Hour))}}
-	o := testOptions()
-	o.Config.GitHub.Repos = append([]string{"org/repo"}, representativeRepos()...)
-	o.Clock = clock
-	o.Cache = snapshot.New(src, time.Hour, clock)
-	s, err := New(o)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	warmCache(t, o.Cache) // one warm-up fetch, so the first view below reads it rather than starting its own
-	h := s.Handler()
-	c := signIn(t, h)
-
-	// T: the first view, fetched now.
-	fetchedAt := clock.Now()
-	getAs(h, "/", c)
-
-	// T+2m: an item created after that fetch, but before the click, turns up in a later fetch.
-	clock.Advance(2 * time.Minute)
-	late := ghItem(2, "Created after the fetch, before the click", clock.Now())
-	src.setItems([]domain.Item{ghItem(1, "Present at the first fetch", testNow.Add(-time.Hour)), late})
-
-	// T+4m: "Mark all seen" is pressed. Its form named the fetch the visitor actually saw (T),
-	// exactly as dashboard.html's hidden seen_at field does.
-	clock.Advance(2 * time.Minute)
-	form := url.Values{"seen_at": {strconv.FormatInt(fetchedAt.Unix(), 10)}}
-	rec := postAs(h, "/seen", form, c)
-	reminted := cookieNamed(rec, sessionCookieName)
-	if reminted == nil {
-		t.Fatal("POST /seen set no cookie")
-	}
-
-	postAs(h, "/refresh", nil, reminted)
-	warmCache(t, o.Cache) // deterministically wait for the fetch /refresh made due to land
-	body := getSettled(t, h, "/", reminted).Body.String()
-	if !strings.Contains(body, "Created after the fetch, before the click") {
-		t.Fatal("the fixture is wrong: the late item is missing from the refreshed list")
-	}
-	if !strings.Contains(body, `<span class="badge badge-new">NEW</span>`) {
-		t.Error("an item created between the snapshot fetch and the click is not NEW: seen was " +
-			"stamped at the click rather than at the fetch the visitor was shown")
-	}
-}
-
-// The rendered "Mark all seen" form actually carries the wiring the test above exercises by hand:
-// the snapshot's own fetched-at, as dashboardView.FetchedAtUnix.
-func TestTheMarkSeenFormCarriesTheSnapshotsFetchedAt(t *testing.T) {
-	clock := &ports.FixedClock{T: testNow}
-	src := &fakeSource{items: []domain.Item{ghItem(1, "One", testNow.Add(-time.Hour))}}
-	o := testOptions()
-	o.Config.GitHub.Repos = append([]string{"org/repo"}, representativeRepos()...)
-	o.Clock = clock
-	o.Cache = snapshot.New(src, time.Hour, clock)
-	s, err := New(o)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	warmCache(t, o.Cache) // one warm-up fetch, so the read below sees the snapshot rather than the wait state
-	h := s.Handler()
-	body := getAs(h, "/", signIn(t, h)).Body.String()
-
-	want := `<input type="hidden" name="seen_at" value="` + strconv.FormatInt(testNow.Unix(), 10) + `">`
-	if !strings.Contains(body, want) {
-		t.Errorf("the Mark all seen form does not carry the snapshot's fetched-at:\nwant: %s\ngot:  %s",
-			want, firstLineContaining(body, `action="/seen"`))
-	}
-}
-
-// Before the first fetch has ever returned anything there is no fetched-at to carry, and the form
-// must not send a fabricated one — the field is simply absent, and handleSeen falls back to now.
-func TestTheMarkSeenFormOmitsSeenAtBeforeTheFirstFetch(t *testing.T) {
-	src := &fakeSource{err: errors.New("github: unreachable")}
-	body := getAuthed(t, dashHandler(t, src), "/").Body.String()
-
-	form := firstLineContaining(body, `action="/seen"`)
-	if strings.Contains(form, "seen_at") {
-		t.Errorf("the Mark all seen form names a fetch that never happened: %s", form)
-	}
-}
-
-// Controller ruling on FR-1.2: a seen_at that is missing, unparsable, not positive, or in the
-// future must never be trusted as is — handleSeen falls back to now in every such case.
-func TestSeenAtFallsBackToNowWhenMissingInvalidOrFuture(t *testing.T) {
-	tests := []struct {
-		name string
-		form url.Values
-	}{
-		{"missing entirely", url.Values{}},
-		{"present but empty", url.Values{"seen_at": {""}}},
-		{"not a number", url.Values{"seen_at": {"not-a-number"}}},
-		{"zero", url.Values{"seen_at": {"0"}}},
-		{"negative", url.Values{"seen_at": {"-5"}}},
-		{"in the future", url.Values{"seen_at": {strconv.FormatInt(testNow.Add(time.Hour).Unix(), 10)}}},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			clock := &ports.FixedClock{T: testNow}
-			s := newTestServerWith(t, func(o *Options) { o.Clock = clock })
-			h := s.Handler()
-			c := signIn(t, h)
-
-			rec := postAs(h, "/seen", tc.form, c)
-			reminted := cookieNamed(rec, sessionCookieName)
-			if reminted == nil {
-				t.Fatal("POST /seen set no cookie")
-			}
-			sess, ok := s.codec.decode(reminted.Value, testNow)
-			if !ok {
-				t.Fatal("the re-minted cookie does not decode")
-			}
-			if !sess.Seen.Equal(testNow) {
-				t.Errorf("seen = %v, want now (%v): %s must fall back to now", sess.Seen, testNow, tc.name)
-			}
-		})
-	}
-}
-
-// FR-1.2: "Mark all seen" from an old tab, showing an older fetch than the one already acknowledged,
-// must not move the seen mark backwards — that would turn items already seen back into NEW ones.
-func TestMarkSeenNeverMovesTheSeenMarkBackwards(t *testing.T) {
-	clock := &ports.FixedClock{T: testNow}
-	s := newTestServerWith(t, func(o *Options) { o.Clock = clock })
-	h := s.Handler()
-
-	later := testNow                   // T2, already acknowledged
-	earlier := testNow.Add(-time.Hour) // T1, what the old tab shows
-	c := mintSessionSeenAt(later)
-	form := url.Values{"seen_at": {strconv.FormatInt(earlier.Unix(), 10)}}
-
-	reminted := cookieNamed(postAs(h, "/seen", form, c), sessionCookieName)
-	if reminted == nil {
-		t.Fatal("POST /seen set no cookie")
-	}
-	sess, ok := s.codec.decode(reminted.Value, testNow)
-	if !ok {
-		t.Fatal("the re-minted cookie does not decode")
-	}
-	if !sess.Seen.Equal(later) {
-		t.Errorf("seen = %v, want it kept at %v: an older seen_at moved the mark backwards", sess.Seen, later)
-	}
-}
-
-// FR-1.4 AC1/AC4 and FR-1.2 AC3: after a fetch in which one repository failed, the page still lists
-// that repository's previous items, and "Mark all seen" names no moment later than the last fetch
-// whose items were all current — otherwise it would acknowledge items that were never on the page.
-func TestAPartialFetchKeepsTheFailingRepositoryAndTheSeenAtOfTheGoodFetch(t *testing.T) {
+// FR-1.4 AC1/AC4: after a fetch in which one repository failed, the page still lists that
+// repository's previous items, and the Fetched line still names the last fetch whose items were
+// all current rather than the failed one.
+func TestAPartialFetchKeepsTheFailingRepositoryAndTheFetchedAtOfTheGoodFetch(t *testing.T) {
 	clock := &ports.FixedClock{T: testNow}
 	other := ghItem(2, "From the repository that later fails", testNow.Add(-time.Hour))
 	other.Repo = "org/repository-number-0"
@@ -297,13 +90,9 @@ func TestAPartialFetchKeepsTheFailingRepositoryAndTheSeenAtOfTheGoodFetch(t *tes
 	if !strings.Contains(body, "After") {
 		t.Fatal("the fixture is wrong: the repository that did fetch is not current")
 	}
-	m := regexp.MustCompile(`name="seen_at" value="(\d+)"`).FindStringSubmatch(body)
-	if m == nil {
-		t.Fatalf("no seen_at on the page: %s", firstLineContaining(body, `action="/seen"`))
-	}
-	seenAt, _ := strconv.ParseInt(m[1], 10, 64)
-	if seenAt > testNow.Unix() {
-		t.Errorf("seen_at = %d, later than the good fetch at %d: it would acknowledge items never shown", seenAt, testNow.Unix())
+	if want := "Fetched " + clockLabel(testNow, s.loc); !strings.Contains(body, want) {
+		t.Errorf("the Fetched line names a moment later than the good fetch:\nwant: %s\ngot:  %s",
+			want, firstLineContaining(body, "fetched-line"))
 	}
 }
 
@@ -445,7 +234,7 @@ func TestTheItemsFragmentRendersWithoutTheLayout(t *testing.T) {
 	}
 }
 
-// FR-1.2: the filter narrows the list from the query string alone, so the narrowed page is a URL
+// FR-2.1: the filter narrows the list from the query string alone, so the narrowed page is a URL
 // that can be reloaded, bookmarked and shared — everything htmx does on top of it is enhancement.
 func TestTheFrontPageFiltersByQueryString(t *testing.T) {
 	h := dashHandler(t, &fakeSource{items: representativeItems()})
@@ -529,31 +318,46 @@ func TestTheFilterFormIsAPlainGetFormWithHtmxOnTop(t *testing.T) {
 	}
 }
 
-// FR-1.2: the NEW total and the tab title count what is new, not what is visible. A filter that
-// moved either would make the dashboard lie about what has arrived the moment somebody typed in
-// the box.
-func TestTheNewBadgeIgnoresTheFilter(t *testing.T) {
-	h := dashHandler(t, &fakeSource{items: representativeItems()})
-	c := mintSessionSeenAt(testNow.Add(-24 * time.Hour))
+// FR-2.1 AC3: a repository's count line is taken before the filter is applied, so narrowing the
+// list never makes the page understate what is out there.
+func TestTheRepositoryTotalIgnoresTheFilter(t *testing.T) {
+	src := &fakeSource{items: []domain.Item{
+		ghItem(1, "Alpha", testNow.Add(-time.Hour)),
+		ghItem(2, "Beta", testNow.Add(-2*time.Hour)),
+		ghItem(3, "Gamma", testNow.Add(-3*time.Hour)),
+	}}
+	h := dashHandler(t, src)
+	c := signIn(t, h)
 
 	all := getAs(h, "/", c).Body.String()
-	some := getAs(h, "/?q=zzz-no-such-text", c).Body.String()
-	title := func(s string) string {
-		i := strings.Index(s, "<title>")
-		j := strings.Index(s, "</title>")
-		return s[i:j]
+	some := getAs(h, "/?q=Alpha", c).Body.String()
+	if want := `<span class="repo-count">3</span>`; !strings.Contains(all, want) {
+		t.Errorf("the unfiltered count line is not the repository's total:\n%s",
+			firstLineContaining(all, "repo-count"))
 	}
-	if title(all) != title(some) {
-		t.Fatalf("tab title changed with the filter: %q vs %q", title(all), title(some))
-	}
-	badge := func(s string) string { return firstLineContaining(s, "badge-new") }
-	if badge(all) != badge(some) {
-		t.Errorf("the NEW badge changed with the filter:\n%s\n%s", badge(all), badge(some))
+	if want := `<span class="repo-count">1 of 3</span>`; !strings.Contains(some, want) {
+		t.Errorf("the filtered count line does not name the unfiltered total:\n%s",
+			firstLineContaining(some, "repo-count"))
 	}
 }
 
-// Rendering is never a visit: only POST /seen may move the seen-mark, so a plain GET must never
-// re-mint the session cookie.
+// FR-1.2 retired 2026-09-18: nothing on the page is marked new, and the route that moved the
+// seen mark is gone.
+func TestNothingIsMarkedNewAndSeenIsNoRoute(t *testing.T) {
+	h := dashHandler(t, &fakeSource{items: representativeItems()})
+	body := getAuthed(t, h, "/").Body.String()
+	for _, gone := range []string{"badge-new", "is-new", "NEW", "Mark all seen", "seen_at"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("the page still carries %q", gone)
+		}
+	}
+	if rec := post(h, "/seen", nil); rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST /seen = %d, want 404 or 405", rec.Code)
+	}
+}
+
+// A plain GET must never re-mint the session cookie: rendering the page changes nothing about the
+// session it was rendered for.
 func TestRenderingNeverReMintsTheSessionCookie(t *testing.T) {
 	src := &fakeSource{items: []domain.Item{ghItem(1, "Fresh", testNow.Add(-time.Hour))}}
 	h := dashHandler(t, src)
@@ -565,7 +369,7 @@ func TestRenderingNeverReMintsTheSessionCookie(t *testing.T) {
 			t.Fatalf("GET %s = %d, want 200", p, rec.Code)
 		}
 		if cookieNamed(rec, sessionCookieName) != nil {
-			t.Errorf("GET %s re-minted the session cookie; only POST /seen may move the seen-mark (FR-1.2 AC3)", p)
+			t.Errorf("GET %s re-minted the session cookie; rendering changes no session state", p)
 		}
 	}
 }
@@ -615,11 +419,11 @@ func TestNoRenderedHTMLNeedsUnsafeInline(t *testing.T) {
 	c := signIn(t, h)
 
 	pages := map[string]string{
-		"GET /":            getAs(h, "/", c).Body.String(),
-		"GET /?kind=pr":    getAs(h, "/?kind=pr", c).Body.String(),
-		"GET /login":       get(h, "/login").Body.String(),
-		"GET /items":       getAs(h, "/items", c).Body.String(),
-		"POST /seen (401)": post(h, "/seen", nil).Body.String(),
+		"GET /":               getAs(h, "/", c).Body.String(),
+		"GET /?kind=pr":       getAs(h, "/?kind=pr", c).Body.String(),
+		"GET /login":          get(h, "/login").Body.String(),
+		"GET /items":          getAs(h, "/items", c).Body.String(),
+		"POST /refresh (401)": post(h, "/refresh", nil).Body.String(),
 	}
 	// The sign-in page's error state renders visitor-facing text, so it is swept too. A callback
 	// with no state cookie is the refusal anyone who did not start here is answered with.
@@ -895,49 +699,45 @@ func TestStaticIsServedUncompressedWhenTheClientCannotAcceptGzip(t *testing.T) {
 	}
 }
 
-// FR-1.8 AC4: "Mark all seen" and "Refresh" go back to the page they were pressed on — and only ever
-// to a page of this site, since the return field is the browser's to send.
-func TestSeenAndRefreshReturnToThePageTheyWerePressedOn(t *testing.T) {
+// FR-1.8 AC4: "Refresh" goes back to the page it was pressed on — and only ever to a page of this
+// site, since the return field is the browser's to send.
+func TestRefreshReturnsToThePageItWasPressedOn(t *testing.T) {
 	h := dashHandler(t, &fakeSource{})
 	c := signIn(t, h)
-	for _, action := range []string{"/seen", "/refresh"} {
-		for _, tc := range []struct{ ret, want string }{
-			{"", "/"},
-			{"/sites", "/sites"},
-			{"/?repo=org%2Frepo&kind=pr", "/?repo=org%2Frepo&kind=pr"},
-			{"https://evil.example/", "/"},
-			{"//evil.example/", "/"},
-		} {
-			t.Run(action+" return="+tc.ret, func(t *testing.T) {
-				form := url.Values{}
-				if tc.ret != "" {
-					form.Set("return", tc.ret)
-				}
-				rec := postAs(h, action, form, c)
-				if rec.Code != http.StatusSeeOther {
-					t.Fatalf("POST %s = %d, want %d", action, rec.Code, http.StatusSeeOther)
-				}
-				if got := rec.Header().Get("Location"); got != tc.want {
-					t.Errorf("POST %s with return %q redirects to %q, want %q", action, tc.ret, got, tc.want)
-				}
-			})
-		}
+	for _, tc := range []struct{ ret, want string }{
+		{"", "/"},
+		{"/sites", "/sites"},
+		{"/?repo=org%2Frepo&kind=pr", "/?repo=org%2Frepo&kind=pr"},
+		{"https://evil.example/", "/"},
+		{"//evil.example/", "/"},
+	} {
+		t.Run("return="+tc.ret, func(t *testing.T) {
+			form := url.Values{}
+			if tc.ret != "" {
+				form.Set("return", tc.ret)
+			}
+			rec := postAs(h, "/refresh", form, c)
+			if rec.Code != http.StatusSeeOther {
+				t.Fatalf("POST /refresh = %d, want %d", rec.Code, http.StatusSeeOther)
+			}
+			if got := rec.Header().Get("Location"); got != tc.want {
+				t.Errorf("POST /refresh with return %q redirects to %q, want %q", tc.ret, got, tc.want)
+			}
+		})
 	}
 }
 
-// FR-1.8 AC4: the header's two forms carry the page they sit on, query included, so a filtered list
-// comes back filtered — true of a request rendered whole, without JavaScript. Under an htmx-driven
-// filter change, hx-push-url updates the address bar but the header sits outside the swapped
-// #items fragment, so its forms keep carrying the return value from the last full page load, not
-// the filter now showing.
+// FR-1.8 AC4: the header's Refresh form carries the page it sits on, query included, so a filtered
+// list comes back filtered — true of a request rendered whole, without JavaScript. Under an
+// htmx-driven filter change, hx-push-url updates the address bar but the header sits outside the
+// swapped #items fragment, so its form keeps carrying the return value from the last full page
+// load, not the filter now showing.
 func TestHeaderFormsCarryTheCurrentPageAsTheirReturn(t *testing.T) {
 	h := dashHandler(t, &fakeSource{items: []domain.Item{ghItem(1, "Anything", testNow)}})
 	body := getAuthed(t, h, "/?kind=pr").Body.String()
 	const want = `<input type="hidden" name="return" value="/?kind=pr">`
-	for _, action := range []string{`action="/seen"`, `action="/refresh"`} {
-		if line := firstLineContaining(body, action); !strings.Contains(line, want) {
-			t.Errorf("the %s form does not carry its page as return:\n%s", action, line)
-		}
+	if line := firstLineContaining(body, `action="/refresh"`); !strings.Contains(line, want) {
+		t.Errorf("the Refresh form does not carry its page as return:\n%s", line)
 	}
 }
 
@@ -979,22 +779,13 @@ func dashHandlerWith(t *testing.T, src ports.Source) (http.Handler, *snapshot.Ca
 	return s.Handler(), c
 }
 
-// mintSession is the cookie a browser holds right after signing in: seen is zero, so nothing is
-// NEW until the visitor marks it. It is made directly from the client secret every test server is
-// built with, rather than by walking the OAuth flow, which is signin_test.go's own subject.
+// mintSession is the cookie a browser holds right after signing in. It is made directly from the
+// client secret every test server is built with, rather than by walking the OAuth flow, which is
+// signin_test.go's own subject.
 func mintSession() *http.Cookie {
 	return &http.Cookie{
 		Name:  sessionCookieName,
 		Value: newSessionCodec(testClientSecret).mint(session{Expiry: testNow.Add(sessionTTL)}),
-	}
-}
-
-// mintSessionSeenAt is the cookie for a session whose seen-mark is seen, for tests of the NEW
-// boundary itself.
-func mintSessionSeenAt(seen time.Time) *http.Cookie {
-	return &http.Cookie{
-		Name:  sessionCookieName,
-		Value: newSessionCodec(testClientSecret).mint(session{Expiry: testNow.Add(sessionTTL), Seen: seen}),
 	}
 }
 

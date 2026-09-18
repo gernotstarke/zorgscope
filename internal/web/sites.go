@@ -27,31 +27,28 @@ const otherTileName = "Other"
 // tile, and now the list's own group stripe for the same repository (FR-1.10 AC2).
 const unclaimedHue = "slate"
 
-// handleSites renders the Sites view (FR-1.8). Like render, it reads only the snapshot and the
-// session, and it is not a visit: only POST /seen moves the seen-mark.
+// handleSites renders the Sites view (FR-1.8). Like render, it reads only the snapshot.
 func (s *Server) handleSites(w http.ResponseWriter, r *http.Request) {
 	snap, waiting := s.answeredWaiting(w, r)
 	if waiting {
 		return
 	}
-	sess, _ := s.session(r) // requireSession already admitted the request
 	now := s.clock.Now()
 
 	tiles := domain.BuildSiteTiles(domain.SiteTilesInput{
-		LastVisitAt: sess.Seen, Items: snap.Items, Sites: siteSpecs(s.cfg.GitHub),
+		Items: snap.Items, Sites: siteSpecs(s.cfg.GitHub),
 		MaxPRs: tileMaxPRs, MaxIssues: tileMaxIssues,
 	})
 	view := sitesView{
-		headerView: s.headerView(snap, domain.CountNew(snap.Items, sess.Seen), r),
+		headerView: s.headerView(snap, r),
 		Tiles:      make([]tileView, 0, len(tiles)),
 	}
 	for i, tile := range tiles {
-		view.Tiles = append(view.Tiles, newTileView(i+1, tile, sess.Seen, now))
+		view.Tiles = append(view.Tiles, newTileView(i+1, tile, now))
 	}
 	s.execute(w, r, http.StatusOK, "sites.html", pageData{
-		Title:    "Sites",
-		NewCount: view.NewTotal,
-		Sites:    &view,
+		Title: "Sites",
+		Sites: &view,
 	})
 }
 
@@ -116,8 +113,7 @@ type tileView struct {
 	// Hue is a palette key the stylesheet defines, rendered as the hue-<key> class.
 	Hue string
 	// Tag tells apart two sites sharing a hue; empty for most.
-	Tag      string
-	NewCount int
+	Tag string
 	// CountLine is the tile's totals before the cut: "4 PRs · 11 issues".
 	CountLine   string
 	PRs, Issues []tileItemView
@@ -130,7 +126,6 @@ type tileItemView struct {
 	Number  int
 	Title   string
 	URL     string
-	New     bool
 	Updated timeView
 }
 
@@ -148,17 +143,16 @@ type tileLinkView struct {
 }
 
 // newTileView renders tile number n.
-func newTileView(n int, tile domain.SiteTile, seen, now time.Time) tileView {
+func newTileView(n int, tile domain.SiteTile, now time.Time) tileView {
 	v := tileView{
 		ID:        "tile-" + strconv.Itoa(n) + "-title",
 		Name:      tile.Spec.Name,
 		URL:       tile.Spec.URL,
 		Hue:       tile.Spec.Hue,
 		Tag:       tile.Spec.Tag,
-		NewCount:  tile.NewCount,
 		CountLine: kindsLine(tile.PRTotal, tile.IssueTotal),
-		PRs:       tileItems(tile.PRs, seen, now),
-		Issues:    tileItems(tile.Issues, seen, now),
+		PRs:       tileItems(tile.PRs, now),
+		Issues:    tileItems(tile.Issues, now),
 	}
 	if !tile.More {
 		return v
@@ -186,14 +180,13 @@ func kindsLine(prs, issues int) string {
 }
 
 // tileItems renders a tile's rows.
-func tileItems(items []domain.Item, seen, now time.Time) []tileItemView {
+func tileItems(items []domain.Item, now time.Time) []tileItemView {
 	out := make([]tileItemView, 0, len(items))
 	for _, it := range items {
 		out = append(out, tileItemView{
 			Number:  it.Number,
 			Title:   it.Title,
 			URL:     it.URL,
-			New:     it.IsNew(seen),
 			Updated: newTimeView(it.UpdatedAt, now),
 		})
 	}

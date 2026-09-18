@@ -43,24 +43,21 @@ const (
 // sessionEncoding is URL-safe and unpadded, so a cookie value never needs quoting.
 var sessionEncoding = base64.RawURLEncoding
 
-// session is what the cookie proves: when the sign-in expires, and when the visitor last marked
-// the list as seen (zero until they do). Both travel inside the signed payload, so neither can be
-// forged, and neither needs a row anywhere — the stateless design's whole point (design §4).
+// session is what the cookie proves: that the visitor signed in, and until when. It carries no
+// identity and, since 2026-09-18, no seen mark (ADR-0012).
 type session struct {
 	Expiry time.Time
-	Seen   time.Time
 }
 
 // sessionCodec mints and verifies session cookie values.
 //
-// A cookie value is base64(expiry:seen) + "." + base64(HMAC-SHA256(key, expiry:seen)), where the
-// key is SHA-256 of sessionKeyContext concatenated with GITHUB_OAUTH_CLIENT_SECRET. Two properties
-// fall out of that derivation. The browser never holds a credential — only an expiry, a seen mark
-// and a signature over them, so FR-8.3 AC2 needs no separate store, and neither the visitor's
-// GitHub token nor the client secret is ever in the cookie jar. And rotating the client secret
-// changes the key, which invalidates every signature ever minted under the old one: FR-8.3 AC4
-// without a session table, a revocation list or anything else that would have to survive the
-// Machine being stopped.
+// A cookie value is base64(expiry) + "." + base64(HMAC-SHA256(key, expiry)), where the key is
+// SHA-256 of sessionKeyContext concatenated with GITHUB_OAUTH_CLIENT_SECRET. Two properties fall
+// out of that derivation. The browser never holds a credential — only an expiry and a signature
+// over it, so FR-8.3 AC2 needs no separate store, and neither the visitor's GitHub token nor the
+// client secret is ever in the cookie jar. And rotating the client secret changes the key, which
+// invalidates every signature ever minted under the old one: FR-8.3 AC4 without a session table, a
+// revocation list or anything else that would have to survive the Machine being stopped.
 //
 // The cookie holds no identity on purpose. The product has no per-user state, and "which
 // collaborator is this" is a question it would then have to keep answering correctly.
@@ -72,19 +69,13 @@ func newSessionCodec(secret string) *sessionCodec {
 
 // mint returns the cookie value for s.
 func (c *sessionCodec) mint(s session) string {
-	seen := int64(0)
-	if !s.Seen.IsZero() {
-		seen = s.Seen.Unix()
-	}
-	payload := strconv.FormatInt(s.Expiry.Unix(), 10) + ":" + strconv.FormatInt(seen, 10)
+	payload := strconv.FormatInt(s.Expiry.Unix(), 10)
 	return sessionEncoding.EncodeToString([]byte(payload)) + "." +
 		sessionEncoding.EncodeToString(c.sign(payload))
 }
 
 // decode returns the session a cookie value proves, and false when the value is not a signature
-// this codec produced over a session still valid at now. A value minted under the pre-reset,
-// single-integer format has no ":" in its payload and is rejected the same way: it proves nothing
-// this codec ever signed.
+// this codec produced over a session still valid at now.
 func (c *sessionCodec) decode(value string, now time.Time) (session, bool) {
 	encPayload, encSig, ok := strings.Cut(value, ".")
 	if !ok {
@@ -101,19 +92,17 @@ func (c *sessionCodec) decode(value string, now time.Time) (session, bool) {
 	if subtle.ConstantTimeCompare(sig, c.sign(string(payload))) != 1 {
 		return session{}, false
 	}
-	expStr, seenStr, ok := strings.Cut(string(payload), ":")
-	if !ok {
+	// A payload of the 2026-09-15 to 2026-09-18 format, expiry:seen, was signed under the key this
+	// codec still holds, so nothing else here would refuse it: the seen mark is gone (ADR-0012) and
+	// the format with it, and a cookie of that shape has to be refused explicitly.
+	if strings.Contains(string(payload), ":") {
 		return session{}, false
 	}
-	exp, err1 := strconv.ParseInt(expStr, 10, 64)
-	seen, err2 := strconv.ParseInt(seenStr, 10, 64)
-	if err1 != nil || err2 != nil {
+	exp, err := strconv.ParseInt(string(payload), 10, 64)
+	if err != nil {
 		return session{}, false
 	}
 	s := session{Expiry: time.Unix(exp, 0)}
-	if seen > 0 {
-		s.Seen = time.Unix(seen, 0)
-	}
 	return s, now.Before(s.Expiry)
 }
 
@@ -185,10 +174,10 @@ func (s *Server) requireSession(next http.Handler, redirect bool) http.Handler {
 // unauthorisedPage is the body of a 401 on a session route.
 //
 // The status has to stay 401: QS-4.1's table says so, and /items is swapped into the page by
-// htmx, which must not paint a sign-in form into the list. But POST /seen is a plain browser
-// form (FR-1.2 AC4), so with JavaScript disabled the HX-Redirect above is never read and the
-// visitor is left looking at whatever this body says. A sentence and a link is the difference
-// between an expired session and a dead end.
+// htmx, which must not paint a sign-in form into the list. But POST /refresh is a plain browser
+// form, so with JavaScript disabled the HX-Redirect above is never read and the visitor is left
+// looking at whatever this body says. A sentence and a link is the difference between an expired
+// session and a dead end.
 const unauthorisedPage = `<!doctype html>
 <html lang="en">
 <head>

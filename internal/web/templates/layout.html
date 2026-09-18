@@ -8,9 +8,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-{{/* FR-1.2 AC2: the tab title is prefixed with the total new count, and only when it is greater
-     than zero. The dashboard leaves Title empty, because the dashboard is the site. */}}
-<title>{{if gt .NewCount 0}}({{.NewCount}}) {{end}}{{with .Title}}{{.}} · {{end}}zorgscope</title>
+{{/* The dashboard leaves Title empty, because the dashboard is the site rather than a page within
+     it. */}}
+<title>{{with .Title}}{{.}} · {{end}}zorgscope</title>
 {{/* Every static URL carries its file's content hash. Without it the browser holds a stylesheet
      for as long as its max-age allows while the HTML around it changes on every deploy, and new
      markup against an old stylesheet is not a stale cache — it is a broken page. That is exactly

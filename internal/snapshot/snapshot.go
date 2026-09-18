@@ -23,9 +23,9 @@ import (
 // Items is the newest list of every repository: the items of the last fetch that produced any,
 // plus — when that fetch failed for some repositories — the previous items of each repository it
 // returned nothing for. FetchedAt is the last fetch whose items are all current, and does not move
-// on a partial fetch: it is what the page states as "fetched at" and what "Mark all seen"
-// acknowledges, and neither may claim a repository that did not fetch (FR-1.2, FR-1.4). The one
-// exception is a partial first fetch, which has nothing older to fall back on and stamps now.
+// on a partial fetch: it is what the page states as "fetched at", and that may not claim a
+// repository that did not fetch (FR-1.4). The one exception is a partial first fetch, which has
+// nothing older to fall back on and stamps now.
 //
 // Err and ErrAt describe the last fetch that failed, and are cleared by the next fetch that does
 // not. So a page can say both "this list is from 11:50" and "GitHub has been failing since 12:04"

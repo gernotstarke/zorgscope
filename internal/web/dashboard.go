@@ -89,20 +89,16 @@ func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
 }
 
 // render assembles the dashboard from snap — the snapshot its caller already read from the cache —
-// and the visitor's session, and executes tmpl with it. It contacts no upstream service itself
-// (FR-1.1) and does not read the cache on its own: for a page, answeredWaiting has already dealt
-// with a fetch in flight before render runs, and snap is the very snapshot it decided that with;
-// the /items fragment is deliberately served from the current snapshot whatever the cache is
-// doing (FR-1.9 AC5).
-//
-// It is not a visit: only POST /seen moves the seen-mark, so rendering the page never clears a
-// badge on its own (FR-1.2 AC4).
+// and the filter the request's query carries, and executes tmpl with it. It contacts no upstream
+// service itself (FR-1.1) and does not read the cache on its own: for a page, answeredWaiting has
+// already dealt with a fetch in flight before render runs, and snap is the very snapshot it decided
+// that with; the /items fragment is deliberately served from the current snapshot whatever the
+// cache is doing (FR-1.9 AC5).
 func (s *Server) render(w http.ResponseWriter, r *http.Request, tmpl string, snap snapshot.Snapshot) {
-	sess, _ := s.session(r) // requireSession already admitted the request
 	now := s.clock.Now()
 
 	d := domain.BuildDashboard(domain.DashboardInput{
-		Now: now, LastVisitAt: sess.Seen, Items: snap.Items,
+		Now: now, Items: snap.Items,
 		Repos: s.cfg.GitHub.Repos, Filter: parseFilter(r.URL.Query(), s.loc),
 	})
 	view := s.dashboardView(d, snap, now, r)
@@ -111,65 +107,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, tmpl string, sna
 		s.writeFragment(w, r, view.Items)
 		return
 	}
-	s.execute(w, r, http.StatusOK, tmpl, pageData{
-		NewCount:  view.NewTotal,
-		Dashboard: &view,
-	})
-}
-
-// handleSeen re-mints the cookie with seen = the fetched-at of the snapshot the visitor was shown
-// and goes back to the page (FR-1.2).
-//
-// It is a plain form post and a redirect, so the badges clear whether or not JavaScript is running
-// (FR-1.2 AC4).
-//
-// The mark only ever moves forwards. A tab left open on an older fetch still carries that fetch's
-// seen_at, and pressing its button after a newer one was acknowledged elsewhere would otherwise turn
-// items already seen back into NEW ones. Keeping the later of the two is still never later than the
-// click, since the session's own mark was itself validated when it was set.
-func (s *Server) handleSeen(w http.ResponseWriter, r *http.Request) {
-	sess, _ := s.session(r)
-	if at := s.seenAt(r); at.After(sess.Seen) {
-		sess.Seen = at
-	}
-	s.setSession(w, sess)
-	// safeReturn is the sanitiser between the form field and the Location header; see handleTheme
-	// for why the annotation is a trailing comment.
-	http.Redirect(w, r, safeReturn(r.FormValue("return")), http.StatusSeeOther) // #nosec G710 -- sanitised by safeReturn
-}
-
-// seenAt is the moment "Mark all seen" stamps as seen: the "seen_at" field the form carries,
-// which the header template (templates/fragments/header.html) fills in with the fetched-at of
-// the snapshot that was actually on the page (see headerView.FetchedAtUnix) — not the moment
-// of the click.
-//
-// The two differ by up to the cache TTL: a visitor can click the button seconds after an item was
-// fetched that they never had the chance to see, or minutes after one that arrived in a fetch they
-// never asked for. Stamping seen at the click would mark such an item seen sight unseen, and it
-// would never show as NEW at all. Stamping it at the fetch instead means only what was actually on
-// the page counts as acknowledged.
-//
-// A missing, unparsable, non-positive or future value falls back to now — a visitor must never end
-// up with a seen-mark later than the moment they clicked, and a field this handler did not itself
-// produce is not trusted blindly. This is safe to get wrong: seen_at only ever narrows what counts
-// as NEW for this one visitor's own next view, and it travels inside the signed cookie only after
-// this function has validated it, so a tampered form field can do no more than move the visitor's
-// own watermark within these bounds.
-func (s *Server) seenAt(r *http.Request) time.Time {
-	now := s.clock.Now()
-	raw := r.FormValue("seen_at")
-	if raw == "" {
-		return now
-	}
-	unix, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || unix <= 0 {
-		return now
-	}
-	at := time.Unix(unix, 0)
-	if at.After(now) {
-		return now
-	}
-	return at
+	s.execute(w, r, http.StatusOK, tmpl, pageData{Dashboard: &view})
 }
 
 // handleRefresh throws the snapshot away so the redirected GET fetches (FR-1.3), and goes back to
@@ -215,24 +153,15 @@ type headerView struct {
 	// FetchedAt is when the snapshot's items were fetched, in the configured timezone, as
 	// "15:04" — or "never" before the first fetch has returned anything.
 	FetchedAt string
-	// FetchedAtUnix is the same moment as FetchedAt, in Unix seconds, and zero before the first
-	// fetch has returned anything. The "Mark all seen" form carries it as a hidden field so
-	// POST /seen can stamp seen at the fetch the visitor actually saw rather than at the click —
-	// see handleSeen's seenAt. The template omits the field entirely when it is zero.
-	FetchedAtUnix int64
 	// Error is the notice shown when the most recent fetch failed: what went wrong, scrubbed of
 	// every configured secret (QS-4.3), and when — empty when the last fetch succeeded. A failed
 	// fetch never discards the previous items (see internal/snapshot), so the page below it is
 	// still whatever was fetched last.
 	Error string
-	// NewTotal is counted over every item regardless of any filter. A filter that also moved the
-	// NEW total would make the page lie about what is new the moment somebody typed into the
-	// search box.
-	NewTotal int
 	// Return is the page the header sits on, as a path with its query — "/?kind=pr", "/sites" —
-	// which the "Mark all seen" and "Refresh" forms carry so each action comes back to where it was
-	// pressed (FR-1.8 AC4). It is what the browser asked for, so the handlers only ever use it
-	// through safeReturn.
+	// which the "Refresh" form carries so the action comes back to where it was pressed
+	// (FR-1.8 AC4). It is what the browser asked for, so the handlers only ever use it through
+	// safeReturn.
 	Return string
 }
 
@@ -266,14 +195,12 @@ type itemsView struct {
 	ShownLine string // "12 of 40 open" when filtered, "40 open" otherwise
 }
 
-// groupView is one repository's block of the list. NewCount and CountLine are taken before the
-// filter is applied, so narrowing the list never makes the page understate what is out there
-// (FR-1.2).
+// groupView is one repository's block of the list. CountLine is taken before the filter is
+// applied, so narrowing the list never makes the page understate what is out there (FR-2.1 AC3).
 type groupView struct {
 	Repo string
 	// Hue is the site's colour key, drawn as the group's stripe (FR-1.10 AC2).
 	Hue       string
-	NewCount  int
 	CountLine string // "3 of 7" when filtered, "7" otherwise
 	Items     []itemView
 }
@@ -305,7 +232,6 @@ type itemView struct {
 	Number  int
 	Kind    string
 	Author  string
-	New     bool
 	Created timeView
 	Updated timeView
 	// Labels are the item's chips, in GitHub's order (FR-1.10 AC3).
@@ -381,19 +307,13 @@ func errorNotice(secrets config.Secrets, snap snapshot.Snapshot, loc *time.Locat
 	return sentence
 }
 
-// headerView builds the shared header from the snapshot on screen, the visitor's NEW total and the
-// request the page answers.
-func (s *Server) headerView(snap snapshot.Snapshot, newTotal int, r *http.Request) headerView {
-	var fetchedAtUnix int64
-	if !snap.FetchedAt.IsZero() {
-		fetchedAtUnix = snap.FetchedAt.Unix()
-	}
+// headerView builds the shared header from the snapshot on screen and the request the page
+// answers.
+func (s *Server) headerView(snap snapshot.Snapshot, r *http.Request) headerView {
 	return headerView{
-		FetchedAt:     clockLabel(snap.FetchedAt, s.loc),
-		FetchedAtUnix: fetchedAtUnix,
-		Error:         errorNotice(s.cfg.Secrets, snap, s.loc),
-		NewTotal:      newTotal,
-		Return:        r.URL.RequestURI(),
+		FetchedAt: clockLabel(snap.FetchedAt, s.loc),
+		Error:     errorNotice(s.cfg.Secrets, snap, s.loc),
+		Return:    r.URL.RequestURI(),
 	}
 }
 
@@ -401,7 +321,7 @@ func (s *Server) headerView(snap snapshot.Snapshot, newTotal int, r *http.Reques
 // page's presentation data.
 func (s *Server) dashboardView(d domain.Dashboard, snap snapshot.Snapshot, now time.Time, r *http.Request) dashboardView {
 	return dashboardView{
-		headerView: s.headerView(snap, d.NewTotal, r),
+		headerView: s.headerView(snap, r),
 		Total:      d.Total,
 		Shown:      d.Shown,
 		Filter:     newFilterView(d.Filter),
@@ -411,8 +331,8 @@ func (s *Server) dashboardView(d domain.Dashboard, snap snapshot.Snapshot, now t
 }
 
 // itemsView turns the assembled dashboard into the list section. It preserves the order the
-// domain produced — BuildDashboard groups in configuration order and sorts each group new first,
-// then most recently updated — because re-sorting here would silently disagree with the counts the
+// domain produced — BuildDashboard groups in configuration order and sorts each group most
+// recently updated first — because re-sorting here would silently disagree with the counts the
 // same pass produced.
 func (s *Server) itemsView(d domain.Dashboard, now time.Time) itemsView {
 	v := itemsView{
@@ -425,12 +345,11 @@ func (s *Server) itemsView(d domain.Dashboard, now time.Time) itemsView {
 		gv := groupView{
 			Repo:      g.Repo,
 			Hue:       hueForRepo(s.cfg.GitHub, g.Repo),
-			NewCount:  g.NewCount,
 			CountLine: countLine(len(g.Items), g.Total, v.Filtered),
 			Items:     make([]itemView, 0, len(g.Items)),
 		}
 		for _, it := range g.Items {
-			gv.Items = append(gv.Items, newItemView(it, now, it.IsNew(d.LastVisitAt)))
+			gv.Items = append(gv.Items, newItemView(it, now))
 		}
 		v.Groups = append(v.Groups, gv)
 	}
@@ -447,7 +366,7 @@ func shownLine(d domain.Dashboard) string {
 }
 
 // countLine is the same figure per repository, and is drawn from the group's unfiltered total for
-// the reason FR-1.2 gives: the filter says what is being looked at, never what is out there.
+// the reason FR-2.1 AC3 gives: the filter says what is being looked at, never what is out there.
 func countLine(shown, total int, filtered bool) string {
 	if !filtered {
 		return strconv.Itoa(total)
@@ -503,9 +422,8 @@ func newTimeView(t, now time.Time) timeView {
 	}
 }
 
-// newItemView renders one item. isNew is passed in rather than recomputed because the seen-mark
-// belongs to the dashboard, not to the item.
-func newItemView(it domain.Item, now time.Time, isNew bool) itemView {
+// newItemView renders one item.
+func newItemView(it domain.Item, now time.Time) itemView {
 	return itemView{
 		Title:   it.Title,
 		Summary: summaryLine(it.Summary),
@@ -513,7 +431,6 @@ func newItemView(it domain.Item, now time.Time, isNew bool) itemView {
 		Number:  it.Number,
 		Kind:    kindLabel(it.Kind),
 		Author:  it.Author,
-		New:     isNew,
 		Created: newTimeView(it.CreatedAt, now),
 		Updated: newTimeView(it.UpdatedAt, now),
 		Labels:  labelViews(it.Labels),

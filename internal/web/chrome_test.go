@@ -240,7 +240,7 @@ func TestTheThemeSwitchKeepsAnOrdinaryPath(t *testing.T) {
 
 // The list shows a number, a title and a line of the item's own description, and each repository
 // says how many items it holds — the unfiltered figure, which is the one a filter must never be
-// able to change (FR-1.2).
+// able to change (FR-2.1 AC3).
 func TestTheListShowsNumbersDescriptionsAndCounts(t *testing.T) {
 	items := representativeItems()
 	items[0].Number = 4242

@@ -46,7 +46,6 @@ func TestEveryProtectedRouteRefusesAnonymousAccess(t *testing.T) {
 		{http.MethodGet, "/", http.StatusSeeOther},      // FR-8.3 AC1: redirect, not 401
 		{http.MethodGet, "/sites", http.StatusSeeOther}, // a page, so a redirect like / (FR-8.3 AC1)
 		{http.MethodGet, "/items", http.StatusUnauthorized},
-		{http.MethodPost, "/seen", http.StatusUnauthorized},
 		{http.MethodPost, "/refresh", http.StatusUnauthorized},
 		{http.MethodPost, "/logout", http.StatusUnauthorized},
 	}
@@ -153,7 +152,7 @@ func TestTamperedCookieIsRejected(t *testing.T) {
 		// ConstantTimeCompare of unequal lengths must not be treated as a match.
 		"short signature": payload + "." + sig[:len(sig)-4],
 		"long signature":  payload + "." + sig + "AAAA",
-		// A payload that is not "expiry:seen" cannot be a session.
+		// A payload that is not an integer cannot be a session.
 		"non-numeric payload": base64.RawURLEncoding.EncodeToString([]byte("tomorrow")) + "." + sig,
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -165,28 +164,22 @@ func TestTamperedCookieIsRejected(t *testing.T) {
 	}
 }
 
-// A cookie minted under the reset's predecessor — a single integer, no ":" — proves nothing this
-// codec ever signed: FR-8.3 AC4 read against the format change itself, not only the key rotation.
-func TestACookieFromTheOldSingleIntegerFormatIsRejected(t *testing.T) {
-	h := newTestServer(t).Handler()
+// A payload minted before 2026-09-18 carried "expiry:seen". It proves nothing this codec signs
+// now, and is refused like the pre-reset format was: the visitor signs in once more.
+func TestTheOldTwoIntegerPayloadIsRefused(t *testing.T) {
 	codec := newSessionCodec(testClientSecret)
-	// The old mint: base64(expiry) + "." + base64(HMAC(expiry)), no seen mark at all.
-	payload := strconv.FormatInt(testNow.Add(sessionTTL).Unix(), 10)
-	old := &http.Cookie{
-		Name: sessionCookieName,
-		Value: sessionEncoding.EncodeToString([]byte(payload)) + "." +
-			sessionEncoding.EncodeToString(codec.sign(payload)),
-	}
-	if got := getAs(h, "/", old); got.Code != http.StatusSeeOther {
-		t.Errorf("GET / with an old-format cookie = %d, want 303", got.Code)
+	payload := strconv.FormatInt(testNow.Add(sessionTTL).Unix(), 10) + ":0"
+	value := sessionEncoding.EncodeToString([]byte(payload)) + "." + sessionEncoding.EncodeToString(codec.sign(payload))
+	if _, ok := codec.decode(value, testNow); ok {
+		t.Error("a two-integer payload decoded; the seen mark is gone and its format with it")
 	}
 }
 
 // Step 1's round trip, directly against the codec: what mint writes for a session, decode reads
-// back unchanged — both Expiry and Seen, not only the field the pre-reset codec had.
-func TestSessionCodecRoundTripsExpiryAndSeen(t *testing.T) {
+// back unchanged.
+func TestSessionCodecRoundTripsTheExpiry(t *testing.T) {
 	codec := newSessionCodec(testClientSecret)
-	want := session{Expiry: testNow.Add(sessionTTL), Seen: testNow.Add(-3 * time.Hour)}
+	want := session{Expiry: testNow.Add(sessionTTL)}
 	got, ok := codec.decode(codec.mint(want), testNow)
 	if !ok {
 		t.Fatal("decode of a freshly minted session = false")
@@ -194,17 +187,14 @@ func TestSessionCodecRoundTripsExpiryAndSeen(t *testing.T) {
 	if !got.Expiry.Equal(want.Expiry) {
 		t.Errorf("decoded Expiry = %v, want %v", got.Expiry, want.Expiry)
 	}
-	if !got.Seen.Equal(want.Seen) {
-		t.Errorf("decoded Seen = %v, want %v", got.Seen, want.Seen)
-	}
 }
 
-// Seen sits inside the signed payload precisely so it cannot be moved independently of expiry: a
-// cookie whose seen digits are altered by one character, with the signature left exactly as it
-// was minted, must fail to decode — not merely disagree with what was minted.
-func TestACookieWithSeenAlteredByOneCharacterFails(t *testing.T) {
+// The expiry sits inside the signed payload precisely so it cannot be moved on its own: a cookie
+// whose expiry is altered by one character, with the signature left exactly as it was minted, must
+// fail to decode — not merely disagree with what was minted.
+func TestACookieWithTheExpiryAlteredByOneCharacterFails(t *testing.T) {
 	codec := newSessionCodec(testClientSecret)
-	value := codec.mint(session{Expiry: testNow.Add(sessionTTL), Seen: testNow.Add(-time.Hour)})
+	value := codec.mint(session{Expiry: testNow.Add(sessionTTL)})
 
 	encPayload, encSig, ok := strings.Cut(value, ".")
 	if !ok {
@@ -214,23 +204,19 @@ func TestACookieWithSeenAlteredByOneCharacterFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decoding payload: %v", err)
 	}
-	expStr, seenStr, ok := strings.Cut(string(payload), ":")
-	if !ok {
-		t.Fatalf("payload %q is not \"expiry:seen\"", payload)
-	}
 
-	// Flip the last digit of the seen half only; expiry and the signature are untouched.
-	seenDigits := []byte(seenStr)
-	last := len(seenDigits) - 1
-	if seenDigits[last] == '1' {
-		seenDigits[last] = '2'
+	// Flip the last digit of the payload; the signature is untouched.
+	digits := []byte(string(payload))
+	last := len(digits) - 1
+	if digits[last] == '1' {
+		digits[last] = '2'
 	} else {
-		seenDigits[last] = '1'
+		digits[last] = '1'
 	}
-	tampered := sessionEncoding.EncodeToString([]byte(expStr+":"+string(seenDigits))) + "." + encSig
+	tampered := sessionEncoding.EncodeToString(digits) + "." + encSig
 
 	if _, ok := codec.decode(tampered, testNow); ok {
-		t.Error("decode accepted a cookie whose seen mark was altered by one character without re-signing")
+		t.Error("decode accepted a cookie whose expiry was altered by one character without re-signing")
 	}
 }
 
@@ -698,16 +684,16 @@ func TestAuthenticatedResponsesAreNotStoredByTheBrowser(t *testing.T) {
 	}
 }
 
-// FR-1.2 AC4: "Mark all seen" is a plain form, so a visitor with JavaScript disabled and an
-// expired session sees this 401 body itself. It has to lead somewhere.
+// FR-1.3 AC2: "Refresh" is a plain form, so a visitor with JavaScript disabled and an expired
+// session sees this 401 body itself. It has to lead somewhere.
 func TestTheUnauthorisedFragmentBodyLeadsBackToSignIn(t *testing.T) {
 	h := newTestServer(t).Handler()
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/seen", nil))
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/refresh", nil))
 
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("POST /seen anonymously = %d, want 401 (QS-4.1)", rec.Code)
+		t.Fatalf("POST /refresh anonymously = %d, want 401 (QS-4.1)", rec.Code)
 	}
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
 		t.Errorf("Content-Type = %q, want text/html", ct)

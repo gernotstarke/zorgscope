@@ -156,32 +156,21 @@ func TestOtherTileWithOneRepoStillNamesItInItsLink(t *testing.T) {
 	}
 }
 
-// FR-1.8 AC1 with FR-1.2: the Sites view counts NEW exactly as the list does, in the header, the tab
-// title and the tile that holds the new item.
-func TestSitesPageCountsNewLikeTheList(t *testing.T) {
-	seen := testNow.Add(-2 * time.Hour)
+// FR-1.8 AC2 with the domain's ordering (2026-09-18): a tile's rows are the most recently updated
+// first, exactly as the list's groups are.
+func TestSitesPageOrdersTileRowsByLastUpdate(t *testing.T) {
 	src := &fakeSource{items: []domain.Item{
-		siteItem("arc42/quality", domain.KindIssue, 1, testNow.Add(-time.Hour)),
-		siteItem("arc42/org", domain.KindPR, 2, testNow.Add(-3*time.Hour)),
+		siteItem("arc42/quality", domain.KindIssue, 1, testNow.Add(-3*time.Hour)),
+		siteItem("arc42/quality", domain.KindIssue, 2, testNow.Add(-time.Hour)),
 	}}
-	h := sitesHandler(t, src)
-	c := mintSessionSeenAt(seen)
+	body := getAuthed(t, sitesHandler(t, src), "/sites").Body.String()
 
-	body := getAs(h, "/sites", c).Body.String()
-	if !strings.Contains(body, "<title>(1) Sites · zorgscope</title>") {
-		t.Errorf("tab title = %s", firstLineContaining(body, "<title>"))
+	later, earlier := strings.Index(body, "Item 2"), strings.Index(body, "Item 1")
+	if later < 0 || earlier < 0 {
+		t.Fatalf("a tile row is missing:\n%s", body)
 	}
-	if !strings.Contains(body, "NEW 1") {
-		t.Error("the Sites header does not carry the NEW total")
-	}
-	if !strings.Contains(tileSection(t, body, 3), "badge-new") {
-		t.Error("the new item's tile does not mark it NEW")
-	}
-	if strings.Contains(tileSection(t, body, 1), "badge-new") {
-		t.Error("an item created before the seen mark is marked NEW")
-	}
-	if list := getAs(h, "/", c).Body.String(); !strings.Contains(list, "NEW 1") {
-		t.Error("the list and the Sites view disagree about what is new")
+	if later > earlier {
+		t.Error("the tile lists the item updated longer ago first; rows go most recently updated first")
 	}
 }
 

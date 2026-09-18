@@ -1,6 +1,6 @@
 {{/* The header both views share (FR-1.8 AC4): when the list was fetched, the fetch error when there
-     is one, the NEW total, and the three actions. It is executed with a value that embeds
-     headerView — dashboardView and sitesView both do — so the two pages cannot drift apart. */}}
+     is one, and the two actions. It is executed with a value that embeds headerView —
+     dashboardView and sitesView both do — so the two pages cannot drift apart. */}}
 {{define "header"}}
 {{/* FR-1.1 AC4: when the snapshot was last fetched, in the configured timezone — "never" before
      the first fetch has returned anything. */}}
@@ -10,21 +10,13 @@
      is. Redacted of every configured secret before it ever reaches this template (QS-4.3). */}}
 {{with .Error}}<p class="notice notice-error" role="alert">{{.}}</p>{{end}}
 <div class="dash-actions">
-  {{/* FR-1.2 AC2: the total new count, stated once above the list — not the filtered count, so
-       narrowing the list with the search box never makes the badge lie about what is new. */}}
-  {{if gt .NewTotal 0}}<span class="badge badge-new">NEW {{.NewTotal}}</span>{{end}}
-  {{/* Three plain form posts, so the page is fully usable with JavaScript disabled (FR-1.2 AC4
-       for the first, FR-1.3 AC2 for the second; the third, logging out, needs no requirement of
-       its own to justify the same shape).
+  {{/* Two plain form posts, so the page is fully usable with JavaScript disabled (FR-1.3 AC2 for
+       the first; the second, logging out, needs no requirement of its own to justify the same
+       shape).
 
-       return names the page the form sits on, query included, so POST /seen and POST /refresh
-       come back to it rather than always to the list (FR-1.8 AC4). The handlers pass it through
-       safeReturn, which admits only a path of this site. */}}
-  {{/* seen_at names the fetch this page actually shows, so POST /seen (handleSeen's seenAt) can
-       stamp seen at that moment rather than at the click — an item that arrived in a fetch made
-       after this page was drawn was never on the page being acknowledged. Omitted before the
-       first fetch has ever returned anything, in which case the handler falls back to now. */}}
-  <form class="action" method="post" action="/seen">{{if .FetchedAtUnix}}<input type="hidden" name="seen_at" value="{{.FetchedAtUnix}}">{{end}}<input type="hidden" name="return" value="{{.Return}}"><button type="submit">Mark all seen</button></form>
+       return names the page the form sits on, query included, so POST /refresh comes back to it
+       rather than always to the list (FR-1.8 AC4). The handler passes it through safeReturn,
+       which admits only a path of this site. */}}
   <form class="action" method="post" action="/refresh"><input type="hidden" name="return" value="{{.Return}}"><button type="submit">Refresh</button></form>
   <form class="action" method="post" action="/logout"><button type="submit">Log out</button></form>
 </div>

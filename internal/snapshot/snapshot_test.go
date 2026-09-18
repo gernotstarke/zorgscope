@@ -320,7 +320,7 @@ func TestACallerThatGoesAwayDoesNotCancelTheFetch(t *testing.T) {
 
 // FR-1.4 AC1 and AC4: when one repository fails and another does not, the page keeps the failing
 // repository's previous items, and FetchedAt stays at the last fetch whose items are all current —
-// it is what "Mark all seen" acknowledges, and the failing repository's list is not current.
+// it is what the page states as "fetched at", and the failing repository's list is not current.
 func TestAPartialFetchKeepsTheFailingRepositorysItemsAndTheOldFetchedAt(t *testing.T) {
 	clock := &fakeClock{t: time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)}
 	src := &countingSource{items: []domain.Item{

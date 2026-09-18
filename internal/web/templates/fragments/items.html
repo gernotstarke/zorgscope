@@ -13,15 +13,13 @@
        class a tile carries, drawn here as a border rather than a band. */}}
   <section class="repo-group hue-{{.Hue}}">
     <h2 class="repo-title"><a href="https://github.com/{{.Repo}}" target="_blank" rel="noopener noreferrer">{{.Repo}}</a>
-      {{/* The new count and the total are taken before the filter is applied, so narrowing the
-           list never makes the page understate what is out there (FR-1.2). */}}
-      {{if gt .NewCount 0}}<span class="new-count">{{.NewCount}} new</span>{{end}}
+      {{/* The total is taken before the filter is applied, so narrowing the list never makes the
+           page understate what is out there (FR-2.1 AC3). */}}
       <span class="repo-count">{{.CountLine}}</span></h2>
     <ul class="items">
       {{range .Items}}
-      <li class="item{{if .New}} is-new{{end}}{{if .Quiet}} is-quiet{{end}}">
+      <li class="item{{if .Quiet}} is-quiet{{end}}">
         <p class="item-line">
-          {{if .New}}<span class="badge badge-new">NEW</span>{{end}}
           {{if .Number}}<span class="item-number">#{{.Number}}</span>{{end}}
           <a class="item-title" href="{{.URL}}" target="_blank" rel="noopener noreferrer">{{.Title}}</a>
           {{/* The item's labels as chips (FR-1.10 AC3). Key picks the colour class; the six names the arc42 repositories use get a colour of their own, everything else is a plain chip. The cue before the first chip gives a screen reader a spoken boundary between the title and the labels, since nothing else in the markup says where the title ends. */}}

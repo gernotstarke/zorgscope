@@ -309,7 +309,6 @@ func (s *Server) routes() []route {
 		// site. A page, so an anonymous visitor is redirected to sign in like at /.
 		{http.MethodGet, "/sites", authSessionPage, s.handleSites, ""},
 		{http.MethodGet, "/items", authSessionFragment, s.handleItems, ""},
-		{http.MethodPost, "/seen", authSessionFragment, s.handleSeen, ""},
 		{http.MethodPost, "/refresh", authSessionFragment, s.handleRefresh, ""},
 		{http.MethodPost, "/logout", authSessionFragment, s.handleLogout, ""},
 	}
@@ -465,7 +464,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 
 // handleLoginForm, handleAuthStart and handleAuthCallback live in signin.go.
 
-// handleDashboard, handleItems, handleSeen, handleRefresh and handleLogout live in dashboard.go.
+// handleDashboard, handleItems, handleRefresh and handleLogout live in dashboard.go.
 
 // handleStatic serves the embedded assets: the stylesheet and vendored htmx.
 //
@@ -703,8 +702,6 @@ type pageData struct {
 	// Title is the page's own name, joined to the site name in the tab title. The dashboard
 	// leaves it empty, because the dashboard is the site rather than a page within it.
 	Title string
-	// NewCount prefixes the tab title when it is greater than zero (FR-1.2 AC2).
-	NewCount int
 	// Dashboard is set only by handleDashboard. dashboard.html reads it for the header's fetched
 	// time, the error notice and the list; every other page leaves it nil.
 	Dashboard *dashboardView
