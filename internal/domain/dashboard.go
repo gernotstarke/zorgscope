@@ -3,43 +3,39 @@ package domain
 import "time"
 
 // RepoGroup is one repository's row of the dashboard's list: its filtered items, alongside the
-// unfiltered counts a filter must never be allowed to change (FR-1.2).
+// unfiltered count a filter must never be allowed to change (FR-2.1 AC3).
 type RepoGroup struct {
 	Repo  string
 	Items []Item
-	// NewCount and Total are taken over every item this repository holds, before the filter is
-	// applied — see BuildDashboard's own comment on why the badge cannot follow the filter.
-	NewCount int
-	Total    int
+	// Total is taken over every item this repository holds, before the filter is applied: it
+	// answers "what is out there", and the filter answers "what am I looking at right now".
+	Total int
 }
 
 // DashboardInput is everything BuildDashboard needs to assemble one dashboard: the current time,
-// the visitor's last-seen watermark (the signed cookie's seen-mark, zero on a first visit), every
-// item the snapshot currently holds, the configured repository list, and the filter narrowing
-// what is shown.
+// every item the snapshot currently holds, the configured repository list, and the filter
+// narrowing what is shown.
 type DashboardInput struct {
-	Now         time.Time
-	LastVisitAt time.Time
-	Items       []Item
+	Now   time.Time
+	Items []Item
 	// Repos is the configured repository list, in configuration order. It is what makes the
 	// list's own grouping able to report a repository that has never produced an item: without
 	// this a silent repository is indistinguishable from one nobody is watching.
 	Repos []string
-	// Filter narrows which items each group shows. It never changes NewCount or Total: those
-	// answer "what is out there", and the filter answers "what am I looking at right now".
+	// Filter narrows which items each group shows. It never changes Total: that answers "what is
+	// out there", and the filter answers "what am I looking at right now".
 	Filter Filter
 }
 
 // Dashboard is the fully assembled page: one filtered list, grouped by repository, plus the
-// header's counts (FR-1.1, FR-1.2).
+// header's counts (FR-1.1, FR-2.1 AC3).
 type Dashboard struct {
 	GeneratedAt time.Time
-	LastVisitAt time.Time
-	// NewTotal, Total and Shown are counted at three different points: NewTotal and Total over
-	// every item regardless of the filter, Shown over what the filter actually let through. A
-	// filter that also moved the badge or the tab title would make the dashboard lie about what
-	// is new the moment somebody typed into the search box.
-	NewTotal, Total, Shown int
+	// Total and Shown are counted at two different points: Total over every item regardless of
+	// the filter, Shown over what the filter actually let through. A filter that also moved the
+	// total would make the dashboard lie about what is out there the moment somebody typed into
+	// the search box.
+	Total, Shown int
 	// Filter is the filter that was applied, echoed back so the page can render it as the
 	// visitor left it.
 	Filter Filter
@@ -53,15 +49,11 @@ type Dashboard struct {
 func BuildDashboard(in DashboardInput) Dashboard {
 	d := Dashboard{
 		GeneratedAt: in.Now,
-		LastVisitAt: in.LastVisitAt,
 		Filter:      in.Filter,
 	}
 
 	d.Total = len(in.Items)
-	// Counted before filtering: the tab title and the summary say what is new, not what is
-	// visible, and a filter must never make the badge lie.
-	d.NewTotal = CountNew(in.Items, in.LastVisitAt)
-	d.Groups = groupByRepo(in.Items, in.Repos, in.Filter, in.LastVisitAt)
+	d.Groups = groupByRepo(in.Items, in.Repos, in.Filter)
 	for _, g := range d.Groups {
 		d.Shown += len(g.Items)
 	}
@@ -70,8 +62,8 @@ func BuildDashboard(in DashboardInput) Dashboard {
 
 // groupByRepo assembles one group per repository that has at least one item passing f, in the
 // order the repositories are configured; repositories that still hold items but are no longer
-// configured follow, in first-seen order. Total and NewCount are per repository before filtering.
-func groupByRepo(items []Item, repos []string, f Filter, lastVisit time.Time) []RepoGroup {
+// configured follow, in first-seen order. Total is per repository before filtering.
+func groupByRepo(items []Item, repos []string, f Filter) []RepoGroup {
 	order := append([]string(nil), repos...)
 	known := make(map[string]bool, len(repos))
 	for _, r := range repos {
@@ -89,9 +81,6 @@ func groupByRepo(items []Item, repos []string, f Filter, lastVisit time.Time) []
 			}
 		}
 		g.Total++
-		if it.IsNew(lastVisit) {
-			g.NewCount++
-		}
 		if f.Match(it) {
 			g.Items = append(g.Items, it)
 		}
@@ -102,7 +91,7 @@ func groupByRepo(items []Item, repos []string, f Filter, lastVisit time.Time) []
 		if !ok || len(g.Items) == 0 {
 			continue
 		}
-		SortItems(g.Items, lastVisit)
+		SortItems(g.Items)
 		out = append(out, *g)
 	}
 	return out

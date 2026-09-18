@@ -1,6 +1,7 @@
 package domain_test
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -15,72 +16,31 @@ func at(s string) time.Time {
 	return t
 }
 
-func TestIsNew(t *testing.T) {
-	seen := at("2026-08-17T10:00:00Z")
-	tests := []struct {
-		name      string
-		seen      time.Time
-		createdAt time.Time
-		want      bool
-	}{
-		{"created after seen is new", seen, at("2026-08-17T10:00:01Z"), true},
-		{"created before seen is not new", seen, at("2026-08-17T09:59:59Z"), false},
-		{"created exactly at seen is not new", seen, seen, false},
-		{"zero seen is not new, however recently created", time.Time{}, at("2026-08-17T10:00:01Z"), false},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			it := domain.Item{CreatedAt: tc.createdAt}
-			if got := it.IsNew(tc.seen); got != tc.want {
-				t.Errorf("IsNew() = %v, want %v", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestSortItemsPutsNewFirstThenNewestUpdate(t *testing.T) {
-	visit := at("2026-08-17T10:00:00Z")
+func TestSortItemsPutsTheNewestUpdateFirst(t *testing.T) {
+	now := at("2026-08-17T10:00:00Z")
 	items := []domain.Item{
-		{Title: "old-recent", CreatedAt: at("2026-08-01T00:00:00Z"), UpdatedAt: at("2026-08-17T12:00:00Z")},
-		{Title: "new-stale", CreatedAt: at("2026-08-17T11:00:00Z"), UpdatedAt: at("2026-08-02T00:00:00Z")},
-		{Title: "new-recent", CreatedAt: at("2026-08-17T11:00:00Z"), UpdatedAt: at("2026-08-17T13:00:00Z")},
+		{Number: 1, UpdatedAt: now.Add(-3 * time.Hour)},
+		{Number: 2, UpdatedAt: now.Add(-time.Hour)},
+		{Number: 3, UpdatedAt: now.Add(-2 * time.Hour)},
 	}
-
-	domain.SortItems(items, visit)
-
-	want := []string{"new-recent", "new-stale", "old-recent"}
-	for i, title := range want {
-		if items[i].Title != title {
-			t.Fatalf("position %d = %q, want %q (order: %v)", i, items[i].Title, title, titles(items))
-		}
+	domain.SortItems(items)
+	if got := []int{items[0].Number, items[1].Number, items[2].Number}; !reflect.DeepEqual(got, []int{2, 3, 1}) {
+		t.Errorf("order = %v, want [2 3 1] (most recently updated first)", got)
 	}
 }
 
 func TestSortItemsIsStableForEqualKeys(t *testing.T) {
-	visit := at("2026-08-17T10:00:00Z")
 	same := at("2026-08-17T12:00:00Z")
 	items := []domain.Item{
 		{Title: "a", UpdatedAt: same}, {Title: "b", UpdatedAt: same}, {Title: "c", UpdatedAt: same},
 	}
 
-	domain.SortItems(items, visit)
+	domain.SortItems(items)
 
 	for i, title := range []string{"a", "b", "c"} {
 		if items[i].Title != title {
 			t.Fatalf("sort is not stable: got %v", titles(items))
 		}
-	}
-}
-
-func TestCountNew(t *testing.T) {
-	visit := at("2026-08-17T10:00:00Z")
-	items := []domain.Item{
-		{CreatedAt: at("2026-08-17T11:00:00Z")},
-		{CreatedAt: at("2026-08-17T09:00:00Z")},
-		{CreatedAt: at("2026-08-17T12:00:00Z")},
-	}
-	if got := domain.CountNew(items, visit); got != 2 {
-		t.Errorf("CountNew() = %d, want 2", got)
 	}
 }
 

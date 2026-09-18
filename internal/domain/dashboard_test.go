@@ -17,7 +17,7 @@ func TestBuildDashboardGroupsByRepositoryInConfigurationOrder(t *testing.T) {
 		{Title: "orphan", Repo: "gone/repo", Kind: domain.KindIssue, CreatedAt: now.Add(-5 * time.Hour), UpdatedAt: now},
 	}
 	d := domain.BuildDashboard(domain.DashboardInput{
-		Now: now, LastVisitAt: now.Add(-2 * time.Hour), Items: items,
+		Now: now, Items: items,
 		Repos: []string{"arc42/a", "arc42/b"},
 	})
 
@@ -25,18 +25,18 @@ func TestBuildDashboardGroupsByRepositoryInConfigurationOrder(t *testing.T) {
 		t.Fatalf("group order = %v", got)
 	}
 	a := d.Groups[0]
-	if a.Total != 2 || a.NewCount != 1 || len(a.Items) != 2 {
-		t.Fatalf("arc42/a: total %d new %d shown %d", a.Total, a.NewCount, len(a.Items))
+	if a.Total != 2 || len(a.Items) != 2 {
+		t.Fatalf("arc42/a: total %d shown %d", a.Total, len(a.Items))
 	}
-	if a.Items[0].Title != "a2" { // new first, then most recently updated
-		t.Fatalf("arc42/a first item = %s, want the new one", a.Items[0].Title)
+	if a.Items[0].Title != "a2" { // most recently updated first
+		t.Fatalf("arc42/a first item = %s, want the most recently updated one", a.Items[0].Title)
 	}
-	if d.NewTotal != 1 || d.Total != 4 || d.Shown != 4 {
-		t.Fatalf("NewTotal %d Total %d Shown %d", d.NewTotal, d.Total, d.Shown)
+	if d.Total != 4 || d.Shown != 4 {
+		t.Fatalf("Total %d Shown %d", d.Total, d.Shown)
 	}
 }
 
-func TestBuildDashboardAppliesTheFilterButCountsNewUnfiltered(t *testing.T) {
+func TestBuildDashboardAppliesTheFilterButCountsTotalsUnfiltered(t *testing.T) {
 	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
 	items := []domain.Item{
 		{Title: "issue", Repo: "arc42/a", Kind: domain.KindIssue, CreatedAt: now, UpdatedAt: now},
@@ -44,13 +44,10 @@ func TestBuildDashboardAppliesTheFilterButCountsNewUnfiltered(t *testing.T) {
 		{Title: "pull", Repo: "arc42/b", Kind: domain.KindPR, CreatedAt: now.Add(-3 * time.Hour), UpdatedAt: now.Add(-3 * time.Hour)},
 	}
 	d := domain.BuildDashboard(domain.DashboardInput{
-		Now: now, LastVisitAt: now.Add(-time.Hour), Items: items,
+		Now: now, Items: items,
 		Repos:  []string{"arc42/a", "arc42/b"},
 		Filter: domain.Filter{Kind: domain.KindPR},
 	})
-	if d.NewTotal != 2 {
-		t.Fatalf("NewTotal = %d; the badge must not follow the filter", d.NewTotal)
-	}
 	if d.Total != 3 || d.Shown != 2 {
 		t.Fatalf("Total %d Shown %d", d.Total, d.Shown)
 	}
@@ -79,23 +76,9 @@ func TestBuildDashboardNeverMutatesItsInput(t *testing.T) {
 		{Title: "old", Repo: "r", CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour)},
 		{Title: "new", Repo: "r", CreatedAt: now, UpdatedAt: now},
 	}
-	_ = domain.BuildDashboard(domain.DashboardInput{Now: now, LastVisitAt: now.Add(-time.Minute), Items: items})
+	_ = domain.BuildDashboard(domain.DashboardInput{Now: now, Items: items})
 	if items[0].Title != "old" {
 		t.Fatal("BuildDashboard sorted the caller's slice")
-	}
-}
-
-// LastVisitAt is echoed back onto the assembled dashboard exactly as it came in: the page reads
-// it straight from here to decide, per item, whether the NEW marker is shown.
-func TestBuildDashboardEchoesLastVisitAt(t *testing.T) {
-	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
-	visit := now.Add(-3 * time.Hour)
-	d := domain.BuildDashboard(domain.DashboardInput{Now: now, LastVisitAt: visit})
-	if !d.LastVisitAt.Equal(visit) {
-		t.Fatalf("LastVisitAt = %v, want %v", d.LastVisitAt, visit)
-	}
-	if !d.GeneratedAt.Equal(now) {
-		t.Fatalf("GeneratedAt = %v, want %v", d.GeneratedAt, now)
 	}
 }
 
@@ -128,7 +111,7 @@ func TestBuildDashboardCarriesLabelsThrough(t *testing.T) {
 	}
 
 	sorted := slices.Clone(items)
-	domain.SortItems(sorted, time.Time{})
+	domain.SortItems(sorted)
 	for _, it := range sorted {
 		if it.Title == "labelled" && !slices.Equal(it.Labels, items[0].Labels) {
 			t.Errorf("SortItems dropped Labels: %v, want %v", it.Labels, items[0].Labels)

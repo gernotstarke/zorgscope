@@ -1,7 +1,5 @@
 package domain
 
-import "time"
-
 // SiteSpec is one tile's worth of configuration, as the web layer hands it to BuildSiteTiles: a
 // configured site with its one repository, or the Other tile holding every watched repository no
 // site claims (FR-1.8). Treating Other as just another spec is what lets one function build every
@@ -13,8 +11,6 @@ type SiteSpec struct {
 
 // SiteTilesInput is everything BuildSiteTiles needs.
 type SiteTilesInput struct {
-	// LastVisitAt is the visitor's seen-mark; zero means nothing is new.
-	LastVisitAt time.Time
 	// Items is every item the snapshot holds. It is shared with concurrent renders and is never
 	// modified.
 	Items []Item
@@ -35,13 +31,11 @@ type RepoCount struct {
 // SiteTile is one site's tile of the Sites view.
 type SiteTile struct {
 	Spec SiteSpec
-	// PRs and Issues are sorted new first, then most recently updated, and cut to MaxPRs and
-	// MaxIssues.
+	// PRs and Issues are sorted most recently updated first, and cut to MaxPRs and MaxIssues.
 	PRs, Issues []Item
-	// PRTotal, IssueTotal, NewCount and Counts are taken before the cut, so a tile never understates
-	// what is open — the rule the list already follows for its filter (FR-1.2).
+	// PRTotal, IssueTotal and Counts are taken before the cut, so a tile never understates what
+	// is open — the rule the list already follows for its filter (FR-2.1 AC3).
 	PRTotal, IssueTotal int
-	NewCount            int
 	Counts              []RepoCount
 	// More says the tile listed fewer items than it holds.
 	More bool
@@ -81,10 +75,9 @@ func BuildSiteTiles(in SiteTilesInput) []SiteTile {
 			tile.Counts = append(tile.Counts, count)
 		}
 
-		SortItems(prs, in.LastVisitAt)
-		SortItems(issues, in.LastVisitAt)
+		SortItems(prs)
+		SortItems(issues)
 		tile.PRTotal, tile.IssueTotal = len(prs), len(issues)
-		tile.NewCount = CountNew(prs, in.LastVisitAt) + CountNew(issues, in.LastVisitAt)
 		tile.PRs = prs[:min(len(prs), in.MaxPRs)]
 		tile.Issues = issues[:min(len(issues), in.MaxIssues)]
 		tile.More = tile.PRTotal > len(tile.PRs) || tile.IssueTotal > len(tile.Issues)

@@ -9,35 +9,26 @@ import (
 	"github.com/gernotstarke/zorgscope/internal/domain"
 )
 
-// FR-1.8 AC2: a tile lists at most MaxPRs pull requests and MaxIssues issues, new first and then
-// most recently updated, and counts its totals, per-repository counts and new count before the cut.
+// FR-1.8 AC2: a tile lists at most MaxPRs pull requests and MaxIssues issues, most recently
+// updated first, and counts its totals and per-repository counts before the cut.
 func TestBuildSiteTilesCutsEachKindAndCountsBeforeTheCut(t *testing.T) {
 	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
-	seen := now.Add(-24 * time.Hour)
 	var items []domain.Item
-	for i := range 5 { // five pull requests; the last is new
-		created := now.Add(-48 * time.Hour)
-		if i == 4 {
-			created = now.Add(-time.Hour)
-		}
+	for i := range 5 { // five pull requests
 		items = append(items, domain.Item{
 			Repo: "arc42/q", Kind: domain.KindPR, Number: 100 + i,
-			CreatedAt: created, UpdatedAt: now.Add(-time.Duration(i) * time.Hour),
+			UpdatedAt: now.Add(-time.Duration(i) * time.Hour),
 		})
 	}
-	for i := range 6 { // six issues; the first two are new
-		created := now.Add(-48 * time.Hour)
-		if i < 2 {
-			created = now.Add(-2 * time.Hour)
-		}
+	for i := range 6 { // six issues
 		items = append(items, domain.Item{
 			Repo: "arc42/q", Kind: domain.KindIssue, Number: 200 + i,
-			CreatedAt: created, UpdatedAt: now.Add(-time.Duration(10+i) * time.Hour),
+			UpdatedAt: now.Add(-time.Duration(10+i) * time.Hour),
 		})
 	}
 
 	tiles := domain.BuildSiteTiles(domain.SiteTilesInput{
-		LastVisitAt: seen, Items: items, MaxPRs: 3, MaxIssues: 4,
+		Items: items, MaxPRs: 3, MaxIssues: 4,
 		Sites: []domain.SiteSpec{{Name: "quality.arc42.org", Hue: "plum", Repos: []string{"arc42/q"}}},
 	})
 
@@ -51,17 +42,14 @@ func TestBuildSiteTilesCutsEachKindAndCountsBeforeTheCut(t *testing.T) {
 	if q.PRTotal != 5 || q.IssueTotal != 6 {
 		t.Errorf("totals = %d PRs, %d issues, want 5 and 6: counted after the cut", q.PRTotal, q.IssueTotal)
 	}
-	if q.NewCount != 3 {
-		t.Errorf("new count = %d, want 3: counted after the cut", q.NewCount)
-	}
 	if !q.More {
 		t.Error("More = false, but the tile cut two items")
 	}
-	if got := []int{q.PRs[0].Number, q.PRs[1].Number, q.PRs[2].Number}; !slices.Equal(got, []int{104, 100, 101}) {
-		t.Errorf("PR order = %v, want the new #104 first, then most recently updated", got)
+	if got := []int{q.PRs[0].Number, q.PRs[1].Number, q.PRs[2].Number}; !slices.Equal(got, []int{100, 101, 102}) {
+		t.Errorf("PR order = %v, want the most recently updated first", got)
 	}
-	if q.Issues[0].Number != 200 || q.Issues[1].Number != 201 {
-		t.Errorf("issue order starts %d, %d, want the two new ones first", q.Issues[0].Number, q.Issues[1].Number)
+	if got := []int{q.Issues[0].Number, q.Issues[1].Number}; !slices.Equal(got, []int{200, 201}) {
+		t.Errorf("issue order starts %v, want the most recently updated first", got)
 	}
 	if want := []domain.RepoCount{{Repo: "arc42/q", PRs: 5, Issues: 6}}; !slices.Equal(q.Counts, want) {
 		t.Errorf("counts = %+v, want %+v", q.Counts, want)
@@ -108,8 +96,8 @@ func TestBuildSiteTilesKeepsSpecOrderAndEmptyTiles(t *testing.T) {
 		t.Error("More = true on a tile that cut nothing")
 	}
 	other := tiles[2]
-	if other.PRTotal != 1 || other.IssueTotal != 1 || other.NewCount != 0 {
-		t.Errorf("Other = %d PRs, %d issues, %d new, want 1, 1, 0", other.PRTotal, other.IssueTotal, other.NewCount)
+	if other.PRTotal != 1 || other.IssueTotal != 1 {
+		t.Errorf("Other = %d PRs, %d issues, want 1, 1", other.PRTotal, other.IssueTotal)
 	}
 	want := []domain.RepoCount{{Repo: "arc42/template", PRs: 1}, {Repo: "gernotstarke/zorgscope", Issues: 1}}
 	if !slices.Equal(other.Counts, want) {

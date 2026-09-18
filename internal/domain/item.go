@@ -1,7 +1,6 @@
-// Package domain holds zorgscope's pure core: the types shared across every source, and the one
-// real rule of the product — what counts as NEW. It imports nothing but the standard library
-// (QS-5.1), so every function that needs the current time takes it as a parameter; nothing in
-// here calls time.Now().
+// Package domain holds zorgscope's pure core: the types shared across every source. It imports
+// nothing but the standard library (QS-5.1), so every function that needs the current time takes
+// it as a parameter; nothing in here calls time.Now().
 package domain
 
 import (
@@ -42,21 +41,10 @@ type Item struct {
 	UpdatedAt time.Time
 }
 
-// IsNew reports whether the item was created after seen. The zero seen means the visitor has
-// never marked the list, and then nothing is new: a first visit that shouts NEW at every item
-// says nothing.
-func (i Item) IsNew(seen time.Time) bool {
-	return !seen.IsZero() && i.CreatedAt.After(seen)
-}
-
-// SortItems orders items new-first, then by most recently updated within each group. The sort is
-// stable, so items with equal keys keep their original relative order.
-func SortItems(items []Item, lastVisit time.Time) {
+// SortItems orders items most recently updated first. The sort is stable, so items with equal
+// update times keep their original relative order.
+func SortItems(items []Item) {
 	sort.SliceStable(items, func(i, j int) bool {
-		iNew, jNew := items[i].IsNew(lastVisit), items[j].IsNew(lastVisit)
-		if iNew != jNew {
-			return iNew
-		}
 		return items[i].UpdatedAt.After(items[j].UpdatedAt)
 	})
 }
@@ -71,17 +59,6 @@ const QuietAfter = 90 * 24 * time.Hour
 // not idle.
 func (i Item) IsQuiet(now time.Time) bool {
 	return !i.UpdatedAt.IsZero() && now.Sub(i.UpdatedAt) >= QuietAfter
-}
-
-// CountNew reports how many items are new as of lastVisit.
-func CountNew(items []Item, lastVisit time.Time) int {
-	n := 0
-	for _, it := range items {
-		if it.IsNew(lastVisit) {
-			n++
-		}
-	}
-	return n
 }
 
 // AgeBucket classifies how long ago something happened, relative to a display cutoff.
