@@ -42,3 +42,17 @@ func TestBuildContributorsBreaksTiesByLoginCaseInsensitively(t *testing.T) {
 		t.Errorf("order = %s, %s", got[0].Login, got[1].Login)
 	}
 }
+
+// BuildContributors' doc comment promises purity; this is what keeps the promise true.
+func TestBuildContributorsNeverMutates(t *testing.T) {
+	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	items := []Item{
+		{Kind: KindPR, Repo: "o/b", Author: "bob", Labels: []string{"bug"}, UpdatedAt: now},
+		{Kind: KindIssue, Repo: "o/a", Author: "amy", UpdatedAt: now.Add(-time.Hour)},
+	}
+	before := append([]Item(nil), items...)
+	BuildContributors(items, []string{"o/a", "o/b"})
+	if !reflect.DeepEqual(items, before) {
+		t.Error("BuildContributors reordered or changed the caller's items")
+	}
+}

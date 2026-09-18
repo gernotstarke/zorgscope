@@ -24,6 +24,12 @@ const fragmentItemsTemplate = "fragments/items.html"
 // the poll is answered 204 while the fetch runs, the filter is answered from the snapshot.
 const waitingPollID = "waiting"
 
+// topbarSearchID is the id of the top bar's search form (layout.html). htmx sends it as the
+// HX-Trigger header of every search typed there, and that form replaces the whole <main>, so
+// during a fetch the request is answered like a navigation rather than like a fragment: see
+// answeredWaiting (FR-1.9 AC5, FR-12.1 AC4).
+const topbarSearchID = "topbar-search"
+
 // waitingView is what waiting.html renders: how many repositories are being asked, and the
 // page's own path and query, which the poll asks for again.
 type waitingView struct {
@@ -37,16 +43,20 @@ type waitingView struct {
 // call crossing the TTL a moment after the first, and rendering the ordinary page with Fetching
 // true. While a fetch is in flight it also answers the request itself and reports so:
 //
-//   - an ordinary page view gets the wait page;
+//   - an ordinary page view gets the wait page, and so does a search typed in the top bar: that
+//     form replaces the whole <main>, and htmx then selects the wait page's own <main>, whose
+//     poll asks for /search?q=… and swaps the results in when the fetch ends. Answering it from
+//     the snapshot instead would swap the poll away and strand the visitor on "Nothing matches";
 //   - the wait page's own poll gets 204, so htmx swaps nothing and the animation keeps running;
 //   - any other htmx request — the filter form — is not answered here at all, and the caller
 //     renders it from the current snapshot (AC5), since a wait page selected for #items would
 //     empty the list.
 //
-// This rule assumes htmx is used only for fragments: it is what a request either being, or not
-// being, the wait page's own poll comes down to. Adding hx-boost to the body would make ordinary
-// navigations carry HX-Request: true as well and be answered from the snapshot rather than with
-// the wait page, defeating FR-1.9 for every boosted link.
+// So what a request comes down to is which element issued it, which htmx names in HX-Trigger:
+// every htmx caller that swaps a whole page has to be named here. Adding hx-boost to the body
+// would make ordinary navigations carry HX-Request: true under the id of whatever link was
+// clicked, and they would be answered from the snapshot rather than with the wait page,
+// defeating FR-1.9 for every boosted link.
 //
 // When no fetch is in flight it answers nothing and the caller renders as it always has.
 func (s *Server) answeredWaiting(w http.ResponseWriter, r *http.Request) (snapshot.Snapshot, bool) {
@@ -54,7 +64,8 @@ func (s *Server) answeredWaiting(w http.ResponseWriter, r *http.Request) (snapsh
 	if !snap.Fetching {
 		return snap, false
 	}
-	if r.Header.Get("HX-Request") != "true" {
+	trigger := r.Header.Get("HX-Trigger")
+	if r.Header.Get("HX-Request") != "true" || trigger == topbarSearchID {
 		// requireSession already sets no-store on every session route (see its own comment); this
 		// Set restates, for a reader of this branch, that the guarantee covers the wait page too —
 		// it must never come back out of a browser cache, since it is only ever right now.
@@ -65,7 +76,7 @@ func (s *Server) answeredWaiting(w http.ResponseWriter, r *http.Request) (snapsh
 		})
 		return snap, true
 	}
-	if r.Header.Get("HX-Trigger") == waitingPollID {
+	if trigger == waitingPollID {
 		w.WriteHeader(http.StatusNoContent)
 		return snap, true
 	}
@@ -102,7 +113,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, tmpl string, sna
 		Now: now, Items: snap.Items,
 		Repos: s.cfg.GitHub.Repos, Filter: parseFilter(r.URL.Query(), s.loc),
 	})
-	view := s.dashboardView(d, snap, now, r)
+	view := s.dashboardView(d, snap, now)
 
 	if tmpl == fragmentItemsTemplate {
 		s.writeFragment(w, r, view.Items)
@@ -149,7 +160,8 @@ func (s *Server) writeFragment(w http.ResponseWriter, r *http.Request, items ite
 // nothing is ever a template.HTML: issue titles, repository names, summaries and upstream error
 // text are all attacker-influenceable in principle (QS-4.3, QS-4.4).
 
-// headerView is what the header both pages share needs (templates/fragments/header.html).
+// headerView is what the header every signed-in page shares needs
+// (templates/fragments/header.html).
 type headerView struct {
 	// FetchedAt is when the snapshot's items were fetched, in the configured timezone, as
 	// "15:04" — or "never" before the first fetch has returned anything.
@@ -337,7 +349,7 @@ func chromeFor(r *http.Request) *chromeView {
 
 // dashboardView turns the assembled domain dashboard and the snapshot it was built from into the
 // page's presentation data.
-func (s *Server) dashboardView(d domain.Dashboard, snap snapshot.Snapshot, now time.Time, r *http.Request) dashboardView {
+func (s *Server) dashboardView(d domain.Dashboard, snap snapshot.Snapshot, now time.Time) dashboardView {
 	return dashboardView{
 		headerView: s.headerView(snap),
 		Total:      d.Total,

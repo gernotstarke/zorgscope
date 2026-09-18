@@ -1,6 +1,8 @@
-// Package domain holds zorgscope's pure core: the types shared across every source. It imports
-// nothing but the standard library (QS-5.1), so every function that needs the current time takes
-// it as a parameter; nothing in here calls time.Now().
+// Package domain holds zorgscope's pure core: the types shared across every source, and the
+// product's own rules — grouping the list by repository, filtering it, ranking a search and
+// gathering the contributors. It imports nothing but the standard library (QS-5.1), so every
+// function that needs the current time takes it as a parameter; nothing in here calls
+// time.Now().
 package domain
 
 import (

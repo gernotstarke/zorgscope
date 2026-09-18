@@ -44,16 +44,25 @@
   </a>
   {{/* The chrome (FR-1.11). The search form carries htmx so a keystroke anywhere fetches the
        results page and swaps main; with script off Enter submits the same GET. Refresh and Log
-       out are plain posts, as before. */}}
+       out are plain posts, as before.
+
+       The form has an id because the server reads it: htmx sends it as HX-Trigger, which is how
+       a fetch in flight tells this form — which replaces the whole main, so it wants the wait
+       page — from the list's filter, which wants a fragment (see answeredWaiting, FR-1.9 AC5).
+
+       The switch sits outside main, so an htmx swap would leave it marking the page left behind:
+       hx-select-oob takes the switch out of the same response and swaps it by id, so /search
+       reached by typing marks exactly what /search reached by navigating marks. */}}
   {{with .Chrome}}
-  <nav class="view-switch" aria-label="View">
+  <nav class="view-switch" id="view-switch" aria-label="View">
     <a href="/"{{if eq .View "list"}} aria-current="page"{{end}}>List</a>
     <a href="/sites"{{if eq .View "sites"}} aria-current="page"{{end}}>Sites</a>
     <a href="/contributors"{{if eq .View "contributors"}} aria-current="page"{{end}}>Contributors</a>
   </nav>
-  <form class="search-form" role="search" method="get" action="/search"
+  <form class="search-form" id="topbar-search" role="search" method="get" action="/search"
         hx-get="/search" hx-trigger="input changed delay:300ms, submit"
-        hx-target="main" hx-select="main" hx-swap="outerHTML" hx-push-url="true">
+        hx-target="main" hx-select="main" hx-select-oob="#view-switch"
+        hx-swap="outerHTML" hx-push-url="true">
     <input type="search" name="q" value="{{.Query}}" placeholder="Search  &#8984;K" autocomplete="off"
            aria-label="Search titles, contributors, labels and repositories"
            title="Cmd-K or Ctrl-K" data-search>

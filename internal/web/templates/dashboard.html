@@ -8,10 +8,15 @@
      With htmx it fetches this same page rather than the fragment endpoint, selects the list out of
      the response and swaps only that. Fetching the page is what makes hx-push-url honest: what is
      pushed into the address bar is a URL that renders the very page being looked at, so a reload
-     or a bookmark of it shows the same narrowed list. */}}
+     or a bookmark of it shows the same narrowed list.
+
+     from: takes a CSS selector htmx resolves against the whole document, not against this form,
+     so a bare [name=q] also matched the top bar's search box once that existed — and every
+     keystroke there fired this filter as well, pushing / into the address bar while the results
+     page was arriving. find scopes the selector to this form's own input. */}}
 <form class="filter" method="get" action="/"
       hx-get="/" hx-select="#items"
-      hx-trigger="change, keyup changed delay:400ms from:[name=q], search"
+      hx-trigger="change, keyup changed delay:400ms from:find [name=q], search"
       hx-target="#items" hx-swap="outerHTML" hx-push-url="true">
   {{/* Bound to a variable rather than reached for as $.Filter inside the range: $ is the page's
        own data, not this block's, so a dollar there names a field pageData does not have. */}}

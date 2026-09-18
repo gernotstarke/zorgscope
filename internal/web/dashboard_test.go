@@ -318,6 +318,19 @@ func TestTheFilterFormIsAPlainGetFormWithHtmxOnTop(t *testing.T) {
 	}
 }
 
+// The filter listens to its own search box and to nothing else. htmx resolves a from: selector
+// against the whole document, so the bare from:[name=q] this form used to carry also matched the
+// top bar's search box once that existed: every keystroke there fired the filter as well, and
+// its hx-push-url raced the search's own, leaving the address bar naming / while the results page
+// was on screen (FR-2.1 AC2, FR-12.1 AC3).
+func TestTheFilterFormListensOnlyToItsOwnSearchBox(t *testing.T) {
+	h := dashHandler(t, &fakeSource{items: representativeItems()})
+	form := openingTag(t, getAs(h, "/", signIn(t, h)).Body.String(), `<form class="filter"`)
+	if !strings.Contains(form, "from:find [name=q]") {
+		t.Errorf("the filter's trigger does not scope from: to this form's own input:\n%s", form)
+	}
+}
+
 // FR-2.1 AC3: a repository's count line is taken before the filter is applied, so narrowing the
 // list never makes the page understate what is out there.
 func TestTheRepositoryTotalIgnoresTheFilter(t *testing.T) {

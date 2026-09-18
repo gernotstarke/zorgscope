@@ -45,7 +45,12 @@ type Hit struct {
 	Matched []string
 	// TitleSpans are the byte ranges [start, end) of Item.Title the words matched, merged where
 	// they touch or overlap, in order — what a page wraps in <mark>. nil when lower-casing the
-	// title changes its byte length, since then the ranges could not be mapped back.
+	// title changes its byte length, which is a cheap sufficient condition for the ranges mapping
+	// back rather than a guarantee of it: a title that mixes a rune growing with a rune shrinking
+	// — U+023A lower-cases from two bytes to three, U+212A from three to one — keeps its total
+	// length while the offsets between them shift. The cost of that title is one replacement
+	// character in the marked title and never markup, since each run is escaped on its own and
+	// the offsets stay inside the title.
 	TitleSpans [][2]int
 }
 
@@ -99,6 +104,8 @@ func Search(items []Item, q Query) []Hit {
 func match(it Item, words []string) (Hit, bool) {
 	h := Hit{Item: it}
 	title := strings.ToLower(it.Title)
+	// Equal byte length means the lower-cased offsets can be reused on the original; see
+	// Hit.TitleSpans for the exotic title this cheap check admits, and what it costs there.
 	mappable := len(title) == len(it.Title)
 	author := strings.ToLower(it.Author)
 	repo := strings.ToLower(it.Repo)

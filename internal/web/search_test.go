@@ -68,8 +68,10 @@ func TestSearchAnswersAnHtmxRequestWithThePage(t *testing.T) {
 	}
 }
 
-// FR-1.9 AC1 and AC5 hold for /search as for /: a navigation during a fetch waits, an htmx
-// request is answered from the current list.
+// FR-1.9 AC1 and AC5 hold for /search as for /: a navigation during a fetch waits, and so does a
+// search typed in the top bar, whose form replaces the whole main — answering that one from the
+// current list would swap the wait page's poll away and strand the visitor. A fragment request,
+// the filter form's kind, is still answered from the list.
 func TestSearchDuringAFetchWaitsForNavigationAndAnswersHtmx(t *testing.T) {
 	h, release := coldServer(t)
 	defer close(release)
@@ -78,9 +80,15 @@ func TestSearchDuringAFetchWaitsForNavigationAndAnswersHtmx(t *testing.T) {
 	if body := getAs(h, "/search?q=x", c).Body.String(); !strings.Contains(body, waitingMarker) || !strings.Contains(body, `hx-get="/search?q=x"`) {
 		t.Error("a navigation to /search during a fetch did not get the wait page polling itself")
 	}
-	rec := getWith(h, "/search?q=x", c, map[string]string{"HX-Request": "true"})
+	rec := getWith(h, "/search?q=x", c, map[string]string{"HX-Request": "true", "HX-Trigger": topbarSearchID})
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(body, waitingMarker) || !strings.Contains(body, `hx-get="/search?q=x"`) {
+		t.Errorf("a top-bar search during a fetch = %d, wait page: %v — it should get the wait page, whose poll brings the results in",
+			rec.Code, strings.Contains(body, waitingMarker))
+	}
+	rec = getWith(h, "/search?q=x", c, map[string]string{"HX-Request": "true"})
 	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), waitingMarker) {
-		t.Errorf("an htmx search during a fetch = %d, body has wait page: %v",
+		t.Errorf("an htmx request that is not the top-bar search = %d, body has wait page: %v",
 			rec.Code, strings.Contains(rec.Body.String(), waitingMarker))
 	}
 }

@@ -59,14 +59,15 @@ The markup, after the brand and before `<nav class="topbar-nav">`:
 
 ```html
 {{with .Chrome}}
-<nav class="view-switch" aria-label="View">
+<nav class="view-switch" id="view-switch" aria-label="View">
   <a href="/"{{if eq .View "list"}} aria-current="page"{{end}}>List</a>
   <a href="/sites"{{if eq .View "sites"}} aria-current="page"{{end}}>Sites</a>
   <a href="/contributors"{{if eq .View "contributors"}} aria-current="page"{{end}}>Contributors</a>
 </nav>
-<form class="search-form" role="search" method="get" action="/search"
+<form class="search-form" id="topbar-search" role="search" method="get" action="/search"
       hx-get="/search" hx-trigger="input changed delay:300ms, submit"
-      hx-target="main" hx-select="main" hx-swap="outerHTML" hx-push-url="true">
+      hx-target="main" hx-select="main" hx-select-oob="#view-switch"
+      hx-swap="outerHTML" hx-push-url="true">
   <input type="search" name="q" value="{{.Query}}" placeholder="Search  ⌘K" autocomplete="off"
          aria-label="Search titles, contributors, labels and repositories"
          title="Cmd-K or Ctrl-K" data-search>
@@ -77,6 +78,12 @@ The markup, after the brand and before `<nav class="topbar-nav">`:
 </div>
 {{end}}
 ```
+
+The two ids earn their keep on the server and in the response. The form's is what htmx sends as
+`HX-Trigger`, which is how `answeredWaiting` tells a whole-page search from a fragment (§6.2). The
+switch's is what `hx-select-oob` swaps: the switch sits outside `main` so the box keeps its focus
+and text across a swap, and without the out-of-band copy it would go on marking the page left
+behind — `/search` reached by typing would say List, `/search` reached by navigating says nothing.
 
 `fragments/viewswitch.html` is deleted; `fragments/header.html` keeps only the Fetched line and
 the error notice, which stay in the page body above the list, the tiles, the contributors and the
@@ -214,7 +221,12 @@ The kind, when set, filters and scores nothing. Hits are ordered by score descen
 `GET /search?q=…` is a session route like `/` (QS‑4.1: an anonymous navigation is redirected to
 sign-in, anything else gets 401). It goes through `answeredWaiting` like the other pages
 (FR‑1.9 AC1, AC5): a navigation during a fetch gets the wait page, which polls `/search?q=…`
-and swaps the results in; an htmx request during a fetch is answered from the current list.
+and swaps the results in; an htmx request for a fragment during a fetch is answered from the
+current list. The top-bar search is not such a fragment — its form replaces the whole page body —
+so it too gets the wait page: `answeredWaiting` recognises it by `HX-Trigger: topbar-search`
+(the form's id), htmx selects the wait page's own `main`, and the poll inside it brings the
+results in when the fetch ends. Answering it from the current list would swap that poll away and
+leave "Nothing matches" on screen with nothing left to fetch the data.
 
 `handleSearch` reads `q` (trimmed), parses it, searches `snap.Items`, and renders
 `search.html` with `Chrome{View: "search", Query: q, Return: "/search?q=…"}`: (`pageData` gains `Search *searchView` and `Contributors *contributorsView`, set only by their handlers, like `Sites`)
@@ -263,7 +275,7 @@ type titleRun struct {
 {{define "content"}}
 {{with .Search}}
 {{template "header" .}}
-<section class="search-results" id="results" aria-live="polite">
+<section class="search-results" id="results">
   <h1>Search</h1>
   {{if not .Query}}
   <p class="search-hint">Type a word from a title, a contributor's login, a label or a repository
@@ -308,7 +320,9 @@ swap. Enter submits through htmx the same way; with JavaScript off the plain GET
 with a full page.
 
 The existing list filter (FR‑2.1), its own text box included, stays as it is: narrowing the list
-is not searching.
+is not searching. Its one change is the scope of its trigger: `from:` is a selector htmx resolves
+against the whole document, so `from:[name=q]` matched this new box as well and fired the filter
+on every keystroke in it; the filter now says `from:find [name=q]`, which is its own input.
 
 Cmd‑K needs a key handler, and htmx's event filters need `unsafe-eval`, which the policy does not
 grant. So one script of our own, `internal/web/static/search.js`, served like `htmx.min.js`
@@ -319,10 +333,17 @@ under `script-src 'self'` and loaded from `layout.html` with `defer`:
 // Nothing else: the search itself is a form the server answers.
 (function () {
   "use strict";
+  // Ctrl-K inside another text field is the kill-line macOS text fields honour, so it is left to
+  // them; Cmd-K is ours everywhere.
+  function typingElsewhere(el, box) {
+    return !!el && el !== box &&
+      (el.isContentEditable || el.tagName === "INPUT" || el.tagName === "TEXTAREA");
+  }
   document.addEventListener("keydown", function (e) {
     var box = document.querySelector("input[data-search]");
     if (!box) { return; }
     if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "k") {
+      if (!e.metaKey && typingElsewhere(document.activeElement, box)) { return; }
       e.preventDefault();
       box.focus();
       box.select();

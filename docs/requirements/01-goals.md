@@ -21,7 +21,7 @@ and the cost/maintainability goals that assumed a database went with the reset i
 
 | Id | Quality goal | Why |
 |----|--------------|-----|
-| QG‑1 | **Completeness** — every open item of every watched repository is shown, and a failing repository never hides the others. | A dashboard that cries wolf, or silently hides something, is worse than no dashboard. |
+| QG‑1 | **Completeness** — every open item of every watched repository is shown, and a failing repository never hides the others. | A dashboard that silently hides an open item, or a whole failing repository, is worse than no dashboard. |
 | QG‑2 | **Speed** — the page stays light and a misbehaving upstream cannot hang it. | It is opened many times a day, for seconds at a time, from whatever connection is at hand. |
 | QG‑3 | **Frugality** — hosting stays inside the free tier and GitHub's rate limit is never a constraint. | The value of the tool does not justify a subscription or a throttled dashboard. |
 | QG‑4 | **Confidentiality** — upstream tokens never leave the backend and never appear in output. | The tokens grant write access to private repositories. |

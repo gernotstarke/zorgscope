@@ -310,7 +310,8 @@ func (s *Server) routes() []route {
 		{http.MethodGet, "/sites", authSessionPage, s.handleSites, ""},
 		// The results page (FR-12.1): a page, so an anonymous visitor is redirected to sign in.
 		{http.MethodGet, "/search", authSessionPage, s.handleSearch, ""},
-		// The Contributors page (FR-12.2): a page, so an anonymous visitor is redirected to sign in.
+		// The Contributors page (FR-12.2): the same snapshot again, grouped by who opened each
+		// item — the one view that lists people rather than items.
 		{http.MethodGet, "/contributors", authSessionPage, s.handleContributors, ""},
 		{http.MethodGet, "/items", authSessionFragment, s.handleItems, ""},
 		{http.MethodPost, "/refresh", authSessionFragment, s.handleRefresh, ""},

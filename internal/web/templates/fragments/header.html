@@ -1,6 +1,6 @@
-{{/* The header both views share (FR-1.8 AC4): when the list was fetched, and the fetch error when
-     there is one. It is executed with a value that embeds headerView — dashboardView and sitesView
-     both do — so the two pages cannot drift apart. The actions it used to carry moved into the top
+{{/* The header every signed-in page shares (FR-1.8 AC4): when the list was fetched, and the fetch
+     error when there is one. It is executed with a value that embeds headerView — dashboardView,
+     sitesView, searchView and contributorsView all do — so the pages cannot drift apart. The actions it used to carry moved into the top
      bar (FR-1.11), which layout.html draws. */}}
 {{define "header"}}
 {{/* FR-1.1 AC4: when the snapshot was last fetched, in the configured timezone — "never" before
