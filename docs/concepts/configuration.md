@@ -19,15 +19,15 @@ github:
   auth_repo: gernotstarke/zorgscope   # push access here admits a visitor
   cache_ttl: 5m                       # how old the fetched list may be before a page view refetches
   repos:
+    - arc42/arc42-template
     - arc42/arc42.org-site
-    - arc42/arc42.de-site
-    # … nine in total
+    # … ten in total
   sites:                              # the Sites view: one tile per entry, in this order
-    - name: quality.arc42.org
-      url: https://quality.arc42.org
-      repo: arc42/quality.arc42.org-site
-      hue: plum
-    # … seven in total
+    - name: arc42-template
+      url: https://github.com/arc42/arc42-template
+      repo: arc42/arc42-template
+      hue: slate
+    # … ten in total
 ```
 
 `github.auth_repo` is the one field that is not about what is watched: it names the repository whose
@@ -68,11 +68,12 @@ one would be a redirect to somebody else's host wearing a debugging switch's clo
 ## Sites and their colours
 
 `github.sites` is what the Sites view draws (FR‑1.8): one tile per entry, in the order written. Each
-site names exactly one repository that `github.repos` watches; the repositories no site names share a
-last tile called Other, so the Sites view never hides an item of a watched repository. The list is optional —
-without it the Sites view is the one Other tile. The list borrows the same colours: each repository group
-is striped in the hue of the site that claims it, slate when none does (FR‑1.10). The label palette is
-not configured; it is fixed in the stylesheet.
+site names exactly one repository that `github.repos` watches; a repository no site names would share
+a last tile called Other, so the Sites view never hides an item of a watched repository. The shipped
+configuration claims every repository it watches, so that Other tile is empty in production. The list
+is optional — without it the Sites view is the one Other tile. The list borrows the same colours: each
+repository group is striped in the hue of the site that claims it, slate when none does (FR‑1.10). The
+label palette is not configured; it is fixed in the stylesheet.
 
 `hue` is not a colour but a key into a fixed palette: `navy`, `blue`, `plum`, `teal`, `umber`, `rose`,
 `slate`. The colours behind the keys live in `internal/web/static/app.css` as `--hue-<key>` custom

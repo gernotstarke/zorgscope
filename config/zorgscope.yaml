@@ -15,24 +15,30 @@ github:
   #
   # QS-3.5 budgets 20 GraphQL queries per page view and the issue fetcher spends two per repository
   # (issues and pull requests paginate independently), so this list may hold at most ten entries.
-  # It holds nine.
+  # It holds ten: the budget exactly.
   # The repositories are fetched side by side, so the list's length costs no time, only requests.
   repos:
+    - arc42/arc42-template
     - arc42/arc42.org-site
     - arc42/arc42.de-site
-    - arc42/arc42-template
-    - arc42/docs.arc42.org-site
     - arc42/quality.arc42.org-site
+    - arc42/docs.arc42.org-site
     - arc42/faq.arc42.org-site
     - arc42/examples.arc42.org-site
     - arc42/trainings.arc42.org-site
+    - arc42/arc42-generator
     - gernotstarke/zorgscope
   # The Sites view (FR-1.8): one tile per entry, in this order. Each site names exactly one of the
-  # repositories above; the ones no site names share a tile of their own. hue is a key of the
-  # palette app.css defines from the arc42 brand registry (arc42/meta.arc42.org,
-  # wiki/concepts/brand.md): navy, blue, plum, teal, umber, rose or slate. tag tells apart two sites
-  # that share a hue, at most three characters.
+  # repositories above; a repository no site names would share an Other tile, which the shipped
+  # list leaves empty. hue is a key of the palette app.css defines from the arc42 brand registry
+  # (arc42/meta.arc42.org, wiki/concepts/brand.md): navy, blue, plum, teal, umber, rose or slate.
+  # The three without a brand hue take slate. tag tells apart two sites that share a hue, at most
+  # three characters.
   sites:
+    - name: arc42-template
+      url: https://github.com/arc42/arc42-template
+      repo: arc42/arc42-template
+      hue: slate
     - name: arc42.org
       url: https://arc42.org
       repo: arc42/arc42.org-site
@@ -62,3 +68,11 @@ github:
       url: https://trainings.arc42.org
       repo: arc42/trainings.arc42.org-site
       hue: rose
+    - name: arc42-generator
+      url: https://github.com/arc42/arc42-generator
+      repo: arc42/arc42-generator
+      hue: slate
+    - name: zorgscope
+      url: https://github.com/gernotstarke/zorgscope
+      repo: gernotstarke/zorgscope
+      hue: slate

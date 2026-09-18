@@ -330,9 +330,9 @@ func TestLoadRejectsBadSites(t *testing.T) {
 	}
 }
 
-// FR-1.8 AC1: the committed configuration names the seven arc42 sites, in the order their tiles
-// are drawn.
-func TestTheRealConfigNamesTheSevenSitesInOrder(t *testing.T) {
+// FR-1.8 AC1: the committed configuration names the ten arc42 and zorgscope sites, in the order
+// their tiles are drawn.
+func TestTheRealConfigNamesTheTenSitesInOrder(t *testing.T) {
 	cfg, err := config.Load("../../config/zorgscope.yaml", env(fullEnv()))
 	if err != nil {
 		t.Fatalf("Load(config/zorgscope.yaml): %v", err)
@@ -342,10 +342,27 @@ func TestTheRealConfigNamesTheSevenSitesInOrder(t *testing.T) {
 		names = append(names, s.Name)
 	}
 	want := []string{
-		"arc42.org", "arc42.de", "quality.arc42.org", "docs.arc42.org",
-		"faq.arc42.org", "examples.arc42.org", "trainings.arc42.org",
+		"arc42-template", "arc42.org", "arc42.de", "quality.arc42.org", "docs.arc42.org",
+		"faq.arc42.org", "examples.arc42.org", "trainings.arc42.org", "arc42-generator", "zorgscope",
 	}
 	if !slices.Equal(names, want) {
 		t.Errorf("sites = %v, want %v", names, want)
+	}
+}
+
+// FR-1.8 AC1: the shipped configuration claims every watched repository, so the Other tile it
+// ships with is empty — every entry of github.repos is named by exactly one github.sites entry,
+// in the same order.
+func TestTheRealConfigSitesClaimEveryRepoInOrder(t *testing.T) {
+	cfg, err := config.Load("../../config/zorgscope.yaml", env(fullEnv()))
+	if err != nil {
+		t.Fatalf("Load(config/zorgscope.yaml): %v", err)
+	}
+	var claimed []string
+	for _, s := range cfg.GitHub.Sites {
+		claimed = append(claimed, s.Repo)
+	}
+	if !slices.Equal(claimed, cfg.GitHub.Repos) {
+		t.Errorf("sites claim repos %v in order, want repos %v", claimed, cfg.GitHub.Repos)
 	}
 }
