@@ -40,15 +40,16 @@ func (s *Server) handleSites(w http.ResponseWriter, r *http.Request) {
 		MaxPRs: tileMaxPRs, MaxIssues: tileMaxIssues,
 	})
 	view := sitesView{
-		headerView: s.headerView(snap, r),
+		headerView: s.headerView(snap),
 		Tiles:      make([]tileView, 0, len(tiles)),
 	}
 	for i, tile := range tiles {
 		view.Tiles = append(view.Tiles, newTileView(i+1, tile, now))
 	}
 	s.execute(w, r, http.StatusOK, "sites.html", pageData{
-		Title: "Sites",
-		Sites: &view,
+		Title:  "Sites",
+		Sites:  &view,
+		Chrome: chromeFor(r),
 	})
 }
 

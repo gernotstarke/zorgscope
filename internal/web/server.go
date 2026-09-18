@@ -711,6 +711,10 @@ type pageData struct {
 	// Waiting is set only by answeredWaiting. waiting.html reads it for the repository count and
 	// the path to poll; every other page leaves it nil.
 	Waiting *waitingView
+	// Chrome is the signed-in top bar: which view is current, what the search box shows and
+	// where Refresh comes back to (FR-1.11). nil on the sign-in and refusal pages, which have no
+	// session to act for, so layout.html draws only the brand and the appearance control there.
+	Chrome *chromeView
 	// Error is a message written for the visitor. It is never an error's own text: those can
 	// carry a token (QS-4.3).
 	Error string

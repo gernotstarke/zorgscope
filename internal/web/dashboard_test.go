@@ -727,12 +727,12 @@ func TestRefreshReturnsToThePageItWasPressedOn(t *testing.T) {
 	}
 }
 
-// FR-1.8 AC4: the header's Refresh form carries the page it sits on, query included, so a filtered
-// list comes back filtered — true of a request rendered whole, without JavaScript. Under an
-// htmx-driven filter change, hx-push-url updates the address bar but the header sits outside the
-// swapped #items fragment, so its form keeps carrying the return value from the last full page
+// FR-1.8 AC4: the top bar's Refresh form carries the page it sits on, query included, so a
+// filtered list comes back filtered — true of a request rendered whole, without JavaScript. Under
+// an htmx-driven filter change, hx-push-url updates the address bar but the top bar sits outside
+// the swapped #items fragment, so its form keeps carrying the return value from the last full page
 // load, not the filter now showing.
-func TestHeaderFormsCarryTheCurrentPageAsTheirReturn(t *testing.T) {
+func TestTopBarFormsCarryTheCurrentPageAsTheirReturn(t *testing.T) {
 	h := dashHandler(t, &fakeSource{items: []domain.Item{ghItem(1, "Anything", testNow)}})
 	body := getAuthed(t, h, "/?kind=pr").Body.String()
 	const want = `<input type="hidden" name="return" value="/?kind=pr">`

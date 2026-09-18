@@ -1,6 +1,7 @@
-{{/* The header both views share (FR-1.8 AC4): when the list was fetched, the fetch error when there
-     is one, and the two actions. It is executed with a value that embeds headerView —
-     dashboardView and sitesView both do — so the two pages cannot drift apart. */}}
+{{/* The header both views share (FR-1.8 AC4): when the list was fetched, and the fetch error when
+     there is one. It is executed with a value that embeds headerView — dashboardView and sitesView
+     both do — so the two pages cannot drift apart. The actions it used to carry moved into the top
+     bar (FR-1.11), which layout.html draws. */}}
 {{define "header"}}
 {{/* FR-1.1 AC4: when the snapshot was last fetched, in the configured timezone — "never" before
      the first fetch has returned anything. */}}
@@ -9,15 +10,4 @@
      says so — when GitHub went unreachable and, when there is one, how old the list on screen
      is. Redacted of every configured secret before it ever reaches this template (QS-4.3). */}}
 {{with .Error}}<p class="notice notice-error" role="alert">{{.}}</p>{{end}}
-<div class="dash-actions">
-  {{/* Two plain form posts, so the page is fully usable with JavaScript disabled (FR-1.3 AC2 for
-       the first; the second, logging out, needs no requirement of its own to justify the same
-       shape).
-
-       return names the page the form sits on, query included, so POST /refresh comes back to it
-       rather than always to the list (FR-1.8 AC4). The handler passes it through safeReturn,
-       which admits only a path of this site. */}}
-  <form class="action" method="post" action="/refresh"><input type="hidden" name="return" value="{{.Return}}"><button type="submit">Refresh</button></form>
-  <form class="action" method="post" action="/logout"><button type="submit">Log out</button></form>
-</div>
 {{end}}

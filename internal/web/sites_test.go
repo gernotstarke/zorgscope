@@ -184,18 +184,23 @@ func TestNoTileCarriesAStyleAttribute(t *testing.T) {
 	}
 }
 
-// FR-1.8 AC4: both views carry the switch, marking the view being shown.
+// FR-1.8 AC4, FR-1.11: every view carries the switch in the top bar, marking the view being
+// shown. Contributors is the third link; the page behind it arrives with FR-12.1.
 func TestViewSwitchMarksTheCurrentView(t *testing.T) {
 	h := sitesHandler(t, &fakeSource{})
 	c := signIn(t, h)
-	for _, tc := range []struct{ path, list, sites string }{
-		{"/", `<a href="/" aria-current="page">List</a>`, `<a href="/sites">Sites</a>`},
-		{"/sites", `<a href="/">List</a>`, `<a href="/sites" aria-current="page">Sites</a>`},
+	for _, tc := range []struct{ path, list, sites, contributors string }{
+		{"/", `<a href="/" aria-current="page">List</a>`, `<a href="/sites">Sites</a>`, `<a href="/contributors">Contributors</a>`},
+		{"/sites", `<a href="/">List</a>`, `<a href="/sites" aria-current="page">Sites</a>`, `<a href="/contributors">Contributors</a>`},
 	} {
 		body := getAs(h, tc.path, c).Body.String()
-		if !strings.Contains(body, tc.list) || !strings.Contains(body, tc.sites) {
-			t.Errorf("GET %s: the switch does not mark the current view:\n%s",
-				tc.path, firstLineContaining(body, "view-switch"))
+		// The switch is part of the top bar now, not of the page body.
+		header := body[strings.Index(body, "<header"):strings.Index(body, "</header>")]
+		for _, want := range []string{tc.list, tc.sites, tc.contributors} {
+			if !strings.Contains(header, want) {
+				t.Errorf("GET %s: the top bar's switch lacks %s:\n%s",
+					tc.path, want, firstLineContaining(header, "view-switch"))
+			}
 		}
 	}
 }

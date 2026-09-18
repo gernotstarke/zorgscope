@@ -1,9 +1,0 @@
-{{/* The List | Sites switch (FR-1.8 AC4): two links, not a script, with the view being shown
-     marked for assistive technology as well as for the eye. It is executed with the name of the
-     current view, "list" or "sites". */}}
-{{define "viewswitch"}}
-<nav class="view-switch" aria-label="View">
-  <a href="/"{{if eq . "list"}} aria-current="page"{{end}}>List</a>
-  <a href="/sites"{{if eq . "sites"}} aria-current="page"{{end}}>Sites</a>
-</nav>
-{{end}}

@@ -50,6 +50,51 @@ func TestTheHeaderCarriesTheLogoAndAnInertSettingsControl(t *testing.T) {
 	}
 }
 
+// FR-1.11: the view switch, the search box, Refresh and Log out live in the top bar of every
+// signed-in page, above the rainbow band, and nowhere on the sign-in page.
+func TestTopBarCarriesTheChromeOnlyWhenSignedIn(t *testing.T) {
+	h := dashHandler(t, &fakeSource{})
+	body := getAuthed(t, h, "/").Body.String()
+	header := body[strings.Index(body, "<header"):strings.Index(body, "</header>")]
+	for _, want := range []string{`class="view-switch"`, `href="/contributors"`, `role="search"`, `action="/refresh"`, `action="/logout"`, `data-search`} {
+		if !strings.Contains(header, want) {
+			t.Errorf("the top bar lacks %s", want)
+		}
+	}
+	if strings.Index(body, "</header>") > strings.Index(body, `class="rainbow"`) {
+		t.Error("the rainbow band is not below the top bar")
+	}
+	main := body[strings.Index(body, "<main"):]
+	for _, gone := range []string{`class="view-switch"`, `action="/refresh"`, `action="/logout"`} {
+		if strings.Contains(main, gone) {
+			t.Errorf("the page body still carries %s", gone)
+		}
+	}
+	login := get(h, "/login").Body.String() // unauthenticated
+	for _, gone := range []string{`class="view-switch"`, `role="search"`, `action="/refresh"`, `action="/logout"`} {
+		if strings.Contains(login, gone) {
+			t.Errorf("the sign-in page carries %s", gone)
+		}
+	}
+}
+
+// The search box echoes the query only where the query is a search: the list's own filter also
+// uses q, and its text is not a search (FR-1.11).
+func TestTheSearchBoxEchoesTheQueryOnlyOnTheResultsPage(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/?q=header&kind=pr", nil)
+	if c := chromeFor(r); c.View != "list" || c.Query != "" || c.Return != "/?q=header&kind=pr" {
+		t.Errorf("chromeFor(list) = %+v", *c)
+	}
+	r = httptest.NewRequest(http.MethodGet, "/search?q=+bug+", nil)
+	if c := chromeFor(r); c.View != "search" || c.Query != "bug" {
+		t.Errorf("chromeFor(search) = %+v", *c)
+	}
+	r = httptest.NewRequest(http.MethodGet, "/sites", nil)
+	if c := chromeFor(r); c.View != "sites" || c.Return != "/sites" {
+		t.Errorf("chromeFor(sites) = %+v", *c)
+	}
+}
+
 // The footer is on every page, including the ones an anonymous visitor can reach, and it carries
 // the build's identity. "Which version am I looking at?" is not a question a deployment should
 // need a shell to answer.

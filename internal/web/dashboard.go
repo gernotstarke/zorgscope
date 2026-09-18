@@ -61,6 +61,7 @@ func (s *Server) answeredWaiting(w http.ResponseWriter, r *http.Request) (snapsh
 		w.Header().Set("Cache-Control", "no-store")
 		s.execute(w, r, http.StatusOK, "waiting.html", pageData{
 			Waiting: &waitingView{Repos: len(s.cfg.GitHub.Repos), Path: r.URL.RequestURI()},
+			Chrome:  chromeFor(r),
 		})
 		return snap, true
 	}
@@ -107,7 +108,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, tmpl string, sna
 		s.writeFragment(w, r, view.Items)
 		return
 	}
-	s.execute(w, r, http.StatusOK, tmpl, pageData{Dashboard: &view})
+	s.execute(w, r, http.StatusOK, tmpl, pageData{Dashboard: &view, Chrome: chromeFor(r)})
 }
 
 // handleRefresh throws the snapshot away so the redirected GET fetches (FR-1.3), and goes back to
@@ -158,10 +159,17 @@ type headerView struct {
 	// fetch never discards the previous items (see internal/snapshot), so the page below it is
 	// still whatever was fetched last.
 	Error string
-	// Return is the page the header sits on, as a path with its query — "/?kind=pr", "/sites" —
-	// which the "Refresh" form carries so the action comes back to where it was pressed
-	// (FR-1.8 AC4). It is what the browser asked for, so the handlers only ever use it through
-	// safeReturn.
+}
+
+// chromeView is what layout.html draws between the brand and the appearance control.
+type chromeView struct {
+	// View is "list", "sites", "contributors" or "search"; the switch marks the first three.
+	View string
+	// Query is the search box's text: the query on the results page, empty everywhere else —
+	// the list's own filter also uses q, and its text is not a search.
+	Query string
+	// Return is the page the Refresh form comes back to, path and query (FR-1.8 AC4). It is what
+	// the browser asked for, so handleRefresh only ever uses it through safeReturn.
 	Return string
 }
 
@@ -307,21 +315,31 @@ func errorNotice(secrets config.Secrets, snap snapshot.Snapshot, loc *time.Locat
 	return sentence
 }
 
-// headerView builds the shared header from the snapshot on screen and the request the page
-// answers.
-func (s *Server) headerView(snap snapshot.Snapshot, r *http.Request) headerView {
+// headerView builds the shared header from the snapshot on screen.
+func (s *Server) headerView(snap snapshot.Snapshot) headerView {
 	return headerView{
 		FetchedAt: clockLabel(snap.FetchedAt, s.loc),
 		Error:     errorNotice(s.cfg.Secrets, snap, s.loc),
-		Return:    r.URL.RequestURI(),
 	}
+}
+
+// views maps a page's path to the name the switch marks.
+var views = map[string]string{"/": "list", "/sites": "sites", "/contributors": "contributors", "/search": "search"}
+
+// chromeFor is the top bar for the signed-in page answering r.
+func chromeFor(r *http.Request) *chromeView {
+	c := &chromeView{View: views[r.URL.Path], Return: r.URL.RequestURI()}
+	if r.URL.Path == "/search" {
+		c.Query = strings.TrimSpace(r.URL.Query().Get("q"))
+	}
+	return c
 }
 
 // dashboardView turns the assembled domain dashboard and the snapshot it was built from into the
 // page's presentation data.
 func (s *Server) dashboardView(d domain.Dashboard, snap snapshot.Snapshot, now time.Time, r *http.Request) dashboardView {
 	return dashboardView{
-		headerView: s.headerView(snap, r),
+		headerView: s.headerView(snap),
 		Total:      d.Total,
 		Shown:      d.Shown,
 		Filter:     newFilterView(d.Filter),

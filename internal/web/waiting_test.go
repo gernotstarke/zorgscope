@@ -106,7 +106,9 @@ func TestWaitPageWhileFetching(t *testing.T) {
 			" status line below it from assistive technology; aria-busy belongs on the decorative"+
 			" orbit stage alone", got)
 	}
-	for _, forbidden := range []string{`id="items"`, `class="filter"`, `class="tiles"`, `class="dash-actions"`} {
+	// The chrome in the top bar stays — it is the layout's, not the list's (FR-1.11); what must
+	// be gone is everything the page below would have shown, the Fetched line included.
+	for _, forbidden := range []string{`id="items"`, `class="filter"`, `class="tiles"`, `class="fetched-line"`} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("wait page shows %s; it must show nothing of the list while the fetch runs (FR-1.9 AC1)", forbidden)
 		}

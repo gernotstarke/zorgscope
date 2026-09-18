@@ -39,6 +39,34 @@
     <img class="logo" src="{{.Asset "logo.png"}}" width="36" height="36" alt="" decoding="async">
     <span class="brand-name">zorgscope</span>
   </a>
+  {{/* The chrome (FR-1.11). The search form carries htmx so a keystroke anywhere fetches the
+       results page and swaps main; with script off Enter submits the same GET. Refresh and Log
+       out are plain posts, as before. */}}
+  {{with .Chrome}}
+  <nav class="view-switch" aria-label="View">
+    <a href="/"{{if eq .View "list"}} aria-current="page"{{end}}>List</a>
+    <a href="/sites"{{if eq .View "sites"}} aria-current="page"{{end}}>Sites</a>
+    <a href="/contributors"{{if eq .View "contributors"}} aria-current="page"{{end}}>Contributors</a>
+  </nav>
+  <form class="search-form" role="search" method="get" action="/search"
+        hx-get="/search" hx-trigger="input changed delay:300ms, submit"
+        hx-target="main" hx-select="main" hx-swap="outerHTML" hx-push-url="true">
+    <input type="search" name="q" value="{{.Query}}" placeholder="Search  &#8984;K" autocomplete="off"
+           aria-label="Search titles, contributors, labels and repositories"
+           title="Cmd-K or Ctrl-K" data-search>
+  </form>
+  <div class="topbar-actions">
+    {{/* Two plain form posts, so the page is fully usable with JavaScript disabled (FR-1.3 AC2
+         for the first; the second, logging out, needs no requirement of its own to justify the
+         same shape).
+
+         return names the page the bar sits on, query included, so POST /refresh comes back to it
+         rather than always to the list (FR-1.8 AC4). The handler passes it through safeReturn,
+         which admits only a path of this site. */}}
+    <form class="action" method="post" action="/refresh"><input type="hidden" name="return" value="{{.Return}}"><button type="submit">Refresh</button></form>
+    <form class="action" method="post" action="/logout"><button type="submit">Log out</button></form>
+  </div>
+  {{end}}
   <nav class="topbar-nav">
     {{/* The appearance switch: a plain form post, so it works with JavaScript switched off
          (FR-1.5) and needs no inline handler the CSP would forbid. It cycles
