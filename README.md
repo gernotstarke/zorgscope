@@ -3,8 +3,8 @@
 One page that answers *does anything need me right now?*
 
 **zorgscope** is Gernot Starke's ("zorg") personal status dashboard. It collects the open issues and
-pull requests of the arc42 sites' repositories on GitHub, behind a GitHub sign-in, and marks what is
-new since the last look.
+pull requests of the arc42 sites' repositories on GitHub, behind a GitHub sign-in, and finds any of
+them, and the people behind them, in seconds.
 
 (screenshot placeholder)
 
@@ -65,7 +65,7 @@ CI — CI only tests (design §9, [ADR‑0010](docs/decisions/0010-stateless-no-
 | `docs/superpowers/` | The design spec of the stateless reset and its implementation plan |
 | `cmd/zorgscope/` | The binary |
 | `cmd/fakesources/` | Fixture-backed GitHub, including the OAuth endpoints |
-| `internal/domain/` | The rules — items, new-detection, dashboard assembly. Standard library only |
+| `internal/domain/` | The rules — items, search, contributors, dashboard assembly. Standard library only |
 | `internal/ports/` | `Source`, `AccessChecker`, `Clock` |
 | `internal/adapters/github/` | The GitHub GraphQL fetcher and the access checker |
 | `internal/snapshot/` | The in-memory cache of the last fetched item list |

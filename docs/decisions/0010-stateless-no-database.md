@@ -1,6 +1,6 @@
 # 0010. Stateless: no database, no refresh pipeline
 
-* Status: accepted
+* Status: accepted; its seen-mark half superseded by [0012](0012-no-seen-mark.md)
 * Date: 2026-09-15
 * Requirements: FR‑1.1, FR‑1.2, FR‑1.3, FR‑1.4, C‑3
 

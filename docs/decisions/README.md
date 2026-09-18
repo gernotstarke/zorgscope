@@ -15,8 +15,9 @@ the old record stays, because the reasoning is the point.
 | 0007 | Token sign-in with a session cookie derived from the token | `0007-token-sign-in-derived-cookie.md` | superseded by 0009 |
 | 0008 | Docker and make as the only local toolchain | `0008-docker-and-make-only.md` | accepted |
 | 0009 | GitHub sign-in gated on push access to the repository | `0009-github-sign-in-push-access.md` | accepted |
-| 0010 | Stateless: no database, no refresh pipeline | `0010-stateless-no-database.md` | accepted |
+| 0010 | Stateless: no database, no refresh pipeline | `0010-stateless-no-database.md` | accepted; its seen-mark half superseded by 0012 |
 | 0011 | The fetch runs in a goroutine a request started, never a ticker; pages never wait for it | `0011-request-triggered-fetch-never-a-ticker.md` | accepted |
+| 0012 | No seen mark: the page shows what is open, not what is new | `0012-no-seen-mark.md` | accepted |
 
 The records are kept current with the design specs. A spec that decides something — the reset
 design of 2026-08-17, the GitHub sign-in and focus design of 2026-09-14, the stateless reset design

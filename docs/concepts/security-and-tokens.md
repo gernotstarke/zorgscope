@@ -68,12 +68,12 @@ would be blocked; a link navigation is not subject to `form-action`.
 Signing in does not create a server-side session record. The cookie's value is:
 
 ```text
-base64(expiry:seen) + "." + base64(HMAC-SHA256(key, expiry:seen))
+base64(expiry) + "." + base64(HMAC-SHA256(key, expiry))
 where key = SHA256("zorgscope-session-v2" + GITHUB_OAUTH_CLIENT_SECRET)
 ```
 
-`expiry` and `seen` are both Unix seconds. `seen` is the moment of the visitor's last "Mark all
-seen"; it is `0` on a fresh sign-in, so nothing is `NEW` until the first mark (design §4). Verifying
+`expiry` is Unix seconds, and it is the whole of the payload: the seen mark that used to sit beside
+it went with `NEW` on 2026-09-18 ([ADR‑0012](../decisions/0012-no-seen-mark.md)). Verifying
 a request recomputes the HMAC from the *current* `GITHUB_OAUTH_CLIENT_SECRET` and compares it
 against the cookie's signature with `subtle.ConstantTimeCompare`. This gives three properties for
 free, without a database:
@@ -86,18 +86,14 @@ free, without a database:
   secret, regenerating that secret on GitHub changes the key, and every cookie signed under the old
   key fails verification immediately — everywhere, on every device, without a sign-out action or a
   revocation list.
-* **The seen mark cannot be forged, only moved within safe bounds.** `POST /seen` re-mints the
-  cookie with `seen` set to the fetched-at time of the list the visitor was actually shown, sent as
-  a hidden form field and clamped to now; a missing, unparsable or future value falls back to now
-  (`internal/web/dashboard.go`'s `seenAt`). Because the value only ever reaches the cookie after
-  that clamp, and the cookie is signed afterwards, a visitor editing the form field before submitting
-  it can only move their own future seen mark somewhere inside those bounds — never forge one signed
-  by an earlier state, and never affect anyone else's session.
+* **Nothing in the payload is worth forging.** The cookie carries no identity, no preference and no
+  mark a visitor could move to their advantage — only the moment it stops being accepted. Extending
+  that moment is exactly what the signature prevents, and there is nothing else in it to tamper with.
 
 The cookie carries HttpOnly, Secure and SameSite=Lax (FR‑8.3 AC2) and holds a signature over an
-expiry and a seen mark and nothing else — no identity, no login name, and above all not the
-visitor's GitHub token, which was dropped at the end of the callback. A leaked cookie therefore
-leaks a thirty-day session and whatever seen mark it carried, and nothing else.
+expiry and nothing else — no identity, no login name, and above all not the visitor's GitHub token,
+which was dropped at the end of the callback. A leaked cookie therefore leaks a thirty-day session,
+and nothing else.
 
 ## Constant-time comparison and rate limiting
 
