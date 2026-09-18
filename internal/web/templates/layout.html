@@ -23,6 +23,9 @@
 <link rel="icon" href="{{.Asset "favicon.ico"}}" sizes="16x16 32x32">
 <link rel="apple-touch-icon" href="{{.Asset "apple-touch-icon.png"}}">
 <script src="{{.Asset "htmx.min.js"}}" defer></script>
+{{/* Cmd-K (FR-12.1 AC3). A file of our own, since htmx's event filters would need unsafe-eval,
+     which the policy does not grant. */}}
+<script src="{{.Asset "search.js"}}" defer></script>
 {{/* A page may add to the head. Only the wait page does: a meta refresh inside noscript, so a
      browser without JavaScript still gets the page once the fetch has ended (FR-1.9 AC2). The
      element is permitted inside head and may hold meta, so it applies only when script is off. */}}

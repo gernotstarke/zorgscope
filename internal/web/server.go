@@ -47,7 +47,7 @@ var embedded embed.FS
 // pageFiles are the page templates, each of which supplies the "content" block that layout.html
 // wraps. They are parsed one page at a time — layout plus that page — because every page defines a
 // block of the same name, so a single template set would have them overwrite each other.
-var pageFiles = []string{"login.html", "dashboard.html", "sites.html", "waiting.html"}
+var pageFiles = []string{"login.html", "dashboard.html", "sites.html", "search.html", "waiting.html"}
 
 // fragmentGlob matches the templates that are both part of a page and answerable on their own.
 // They are parsed twice on purpose: into every page set, so that dashboard.html can compose the
@@ -308,6 +308,8 @@ func (s *Server) routes() []route {
 		// The Sites view (FR-1.8): the same snapshot and session as the list, drawn as one tile per
 		// site. A page, so an anonymous visitor is redirected to sign in like at /.
 		{http.MethodGet, "/sites", authSessionPage, s.handleSites, ""},
+		// The results page (FR-12.1): a page, so an anonymous visitor is redirected to sign in.
+		{http.MethodGet, "/search", authSessionPage, s.handleSearch, ""},
 		{http.MethodGet, "/items", authSessionFragment, s.handleItems, ""},
 		{http.MethodPost, "/refresh", authSessionFragment, s.handleRefresh, ""},
 		{http.MethodPost, "/logout", authSessionFragment, s.handleLogout, ""},
@@ -708,6 +710,9 @@ type pageData struct {
 	// Sites is set only by handleSites. sites.html reads it for the header and the tiles; every
 	// other page leaves it nil.
 	Sites *sitesView
+	// Search is set only by handleSearch. search.html reads it for the header, the count line and
+	// the hits; every other page leaves it nil.
+	Search *searchView
 	// Waiting is set only by answeredWaiting. waiting.html reads it for the repository count and
 	// the path to poll; every other page leaves it nil.
 	Waiting *waitingView

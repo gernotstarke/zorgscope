@@ -1,0 +1,32 @@
+{{/* The results page (FR-12.1). Every string is computed in search.go; the runs are escaped text
+     and <mark> is this template's own markup. */}}
+{{define "content"}}
+{{with .Search}}
+{{template "header" .}}
+<section class="search-results" id="results" aria-live="polite">
+  <h1>Search</h1>
+  {{if not .Query}}
+  <p class="search-hint">Type a word from a title, a contributor's login, a label or a repository
+    name. <code>issue</code> or <code>pr</code> narrows to that kind: <code>pr gernot</code> is the
+    pull requests gernot opened.</p>
+  {{else}}
+  <p class="source-line">{{.CountLine}}</p>
+  <ol class="hits">
+    {{range .Hits}}
+    <li class="hit hue-{{.Hue}}{{if .Quiet}} is-quiet{{end}}">
+      <p class="item-line">
+        <span class="hit-kind">{{.Kind}}</span>
+        <span class="hit-repo">{{.Repo}}</span>
+        {{if .Number}}<span class="item-number">#{{.Number}}</span>{{end}}
+        <a class="item-title" href="{{.URL}}" target="_blank" rel="noopener noreferrer">{{range .Title}}{{if .Mark}}<mark>{{.Text}}</mark>{{else}}{{.Text}}{{end}}{{end}}</a>
+        {{if .Labels}}<span class="visually-hidden">Labels:</span>{{end}}
+        {{range .Labels}}<span class="label label-{{.Key}}">{{.Name}}</span>{{end}}
+      </p>
+      <p class="item-meta">{{if .Author}}{{.Author}} · {{end}}{{if .Updated.Known}}updated <time datetime="{{.Updated.Absolute}}">{{.Updated.Relative}}</time>{{else}}updated at an unknown time{{end}}{{if .Quiet}}, quiet{{end}}{{with .Matched}} · {{.}}{{end}}</p>
+    </li>
+    {{end}}
+  </ol>
+  {{end}}
+</section>
+{{end}}
+{{end}}
