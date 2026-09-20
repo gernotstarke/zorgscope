@@ -17,7 +17,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	view := s.searchView(snap, q, s.clock.Now())
+	view := s.searchView(snap, q, s.clock.Now(), settingsOf(r).Quiet)
 	s.execute(w, r, http.StatusOK, "search.html", pageData{
 		Title:  "Search",
 		Chrome: chromeFor(r),
@@ -60,7 +60,7 @@ type titleRun struct {
 }
 
 // searchView ranks the snapshot against q and renders the hits.
-func (s *Server) searchView(snap snapshot.Snapshot, q string, now time.Time) searchView {
+func (s *Server) searchView(snap snapshot.Snapshot, q string, now time.Time, quiet time.Duration) searchView {
 	hits := domain.Search(snap.Items, domain.ParseQuery(q))
 	v := searchView{
 		headerView: s.headerView(snap),
@@ -79,7 +79,7 @@ func (s *Server) searchView(snap snapshot.Snapshot, q string, now time.Time) sea
 			Labels:  labelViews(h.Item.Labels),
 			Author:  h.Item.Author,
 			Updated: newTimeView(h.Item.UpdatedAt, now),
-			Quiet:   h.Item.IsQuiet(now, domain.QuietAfter),
+			Quiet:   h.Item.IsQuiet(now, quiet),
 			Matched: matchedLine(h.Matched),
 		})
 	}

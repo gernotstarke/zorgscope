@@ -46,10 +46,7 @@ const (
 )
 
 // path is where this landing view lives. landingList is "/" itself, so it is the one value that
-// never redirects. Nothing calls it yet: this task only stores the preference, and the landing
-// redirect that reads it is a later task's.
-//
-//nolint:unused // called by the landing redirect a later task adds
+// never redirects.
 func (l landing) path() string {
 	switch l {
 	case landingSites:

@@ -100,6 +100,21 @@ func (s *Server) answeredWaiting(w http.ResponseWriter, r *http.Request) (snapsh
 // answeredWaiting, and handleItems reads its own, since GET /items answers on its own rather than
 // as part of a page view.
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	// The visitor's landing view (FR-1.12 AC3). "/" is where the list lives, so only the other
+	// two redirect; landingList falling through is what keeps "/" from bouncing to itself.
+	//
+	// The cache is asked before redirecting, and that is the whole reason this is three lines
+	// rather than one. A fetch is started by whichever handler asks the cache, so a redirect that
+	// only redirected would push the first ask into the *next* request — costing a cold Machine
+	// exactly the round trip ADR-0013 exists to save. Asking here starts it just as early as
+	// rendering would, and the answer is deliberately discarded: the page the visitor lands on
+	// asks again and will find either the fetch in flight or its result.
+	if target := settingsOf(r).Landing.path(); target != "/" {
+		_ = s.cache.Get(r.Context())
+		http.Redirect(w, r, target, http.StatusSeeOther)
+		return
+	}
+
 	snap, waiting := s.answeredWaiting(w, r)
 	if waiting {
 		return
@@ -118,12 +133,13 @@ func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
 // cache is doing (FR-1.9 AC5).
 func (s *Server) render(w http.ResponseWriter, r *http.Request, tmpl string, snap snapshot.Snapshot) {
 	now := s.clock.Now()
+	quiet := settingsOf(r).Quiet
 
 	d := domain.BuildDashboard(domain.DashboardInput{
 		Now: now, Items: snap.Items,
 		Repos: s.cfg.GitHub.Repos, Filter: parseFilter(r.URL.Query(), s.loc),
 	})
-	view := s.dashboardView(d, snap, now)
+	view := s.dashboardView(d, snap, now, quiet)
 
 	if tmpl == fragmentItemsTemplate {
 		s.writeFragment(w, r, view.Items)
@@ -275,7 +291,8 @@ type itemView struct {
 	Updated timeView
 	// Labels are the item's chips, in GitHub's order (FR-1.10 AC3).
 	Labels []labelView
-	// Quiet marks an item nothing has touched for domain.QuietAfter (FR-1.10 AC4).
+	// Quiet marks an item nothing has touched for the visitor's chosen threshold, domain.QuietAfter
+	// by default (FR-1.10 AC4, FR-1.12 AC4).
 	Quiet bool
 }
 
@@ -368,14 +385,14 @@ func chromeFor(r *http.Request) *chromeView {
 
 // dashboardView turns the assembled domain dashboard and the snapshot it was built from into the
 // page's presentation data.
-func (s *Server) dashboardView(d domain.Dashboard, snap snapshot.Snapshot, now time.Time) dashboardView {
+func (s *Server) dashboardView(d domain.Dashboard, snap snapshot.Snapshot, now time.Time, quiet time.Duration) dashboardView {
 	return dashboardView{
 		headerView: s.headerView(snap),
 		Total:      d.Total,
 		Shown:      d.Shown,
 		Filter:     newFilterView(d.Filter),
 		Repos:      filterRepos(s.cfg.GitHub.Repos, d.Filter.Repo),
-		Items:      s.itemsView(d, snap, now),
+		Items:      s.itemsView(d, snap, now, quiet),
 	}
 }
 
@@ -383,7 +400,7 @@ func (s *Server) dashboardView(d domain.Dashboard, snap snapshot.Snapshot, now t
 // domain produced — BuildDashboard groups in configuration order and sorts each group most
 // recently updated first — because re-sorting here would silently disagree with the counts the
 // same pass produced.
-func (s *Server) itemsView(d domain.Dashboard, snap snapshot.Snapshot, now time.Time) itemsView {
+func (s *Server) itemsView(d domain.Dashboard, snap snapshot.Snapshot, now time.Time, quiet time.Duration) itemsView {
 	v := itemsView{
 		Query:     template.URL(queryString(d.Filter)), // #nosec G203 -- see the field's comment
 		Groups:    make([]groupView, 0, len(d.Groups)),
@@ -400,7 +417,7 @@ func (s *Server) itemsView(d domain.Dashboard, snap snapshot.Snapshot, now time.
 			Items:     make([]itemView, 0, len(g.Items)),
 		}
 		for _, it := range g.Items {
-			gv.Items = append(gv.Items, newItemView(it, now))
+			gv.Items = append(gv.Items, newItemView(it, now, quiet))
 		}
 		v.Groups = append(v.Groups, gv)
 	}
@@ -474,7 +491,7 @@ func newTimeView(t, now time.Time) timeView {
 }
 
 // newItemView renders one item.
-func newItemView(it domain.Item, now time.Time) itemView {
+func newItemView(it domain.Item, now time.Time, quiet time.Duration) itemView {
 	return itemView{
 		Title:   it.Title,
 		Summary: summaryLine(it.Summary),
@@ -485,7 +502,7 @@ func newItemView(it domain.Item, now time.Time) itemView {
 		Created: newTimeView(it.CreatedAt, now),
 		Updated: newTimeView(it.UpdatedAt, now),
 		Labels:  labelViews(it.Labels),
-		Quiet:   it.IsQuiet(now, domain.QuietAfter),
+		Quiet:   it.IsQuiet(now, quiet),
 	}
 }
 
