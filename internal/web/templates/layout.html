@@ -7,7 +7,7 @@
      data-cache-epoch travels the same way and for the same reason: the policy grants no
      'unsafe-inline', so there is no inline script to put a value in, and an attribute is what a
      static file can read. See cache_epoch.go for what it is for. */}}
-<html lang="en"{{with .ThemeAttr}} data-theme="{{.}}"{{end}} data-cache-epoch="{{.CacheEpoch}}">
+<html lang="en"{{with .ThemeAttr}} data-theme="{{.}}"{{end}} data-cache-epoch="{{.CacheEpoch}}"{{with .CacheAttr}} data-cache="{{.}}"{{end}}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -87,58 +87,86 @@
   </div>
   {{end}}
   <nav class="topbar-nav">
-    {{/* The appearance switch: a plain form post, so it works with JavaScript switched off
-         (FR-1.5) and needs no inline handler the CSP would forbid. It cycles
-         follow-system → light → dark → follow-system; "follow system" stays in the cycle because
-         without it a visitor who ever pressed the control could never get back to the behaviour
-         the site had before it existed. The return field carries the page to come back to, and is
-         validated server-side — a form field is submitted by the browser and could otherwise
-         redirect this site's visitors somewhere else entirely (see safeReturn). */}}
-    <form class="theme-form" method="post" action="/theme">
-      <input type="hidden" name="return" value="{{.Path}}">
-      <input type="hidden" name="theme" value="{{.NextTheme}}">
-      <button type="submit" class="icon-button"
-              title="Appearance: {{.ThemeLabel}} — switch to {{.NextThemeLabel}}"
-              aria-label="Appearance: {{.ThemeLabel}} — switch to {{.NextThemeLabel}}">
-        {{if eq .ThemeName "light"}}
-        {{/* A sun: the light theme is on. */}}
-        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"
+    {{/* The appearance switch on the pages that have no popover to hold it — the sign-in page and
+         the refusal page, which have no session and therefore no preferences, and where the
+         appearance is the only thing there is to set. The signed-in pages draw the same form
+         inside the panel below. */}}
+    {{if not .Chrome}}{{template "theme-control" .}}{{end}}
+
+    {{if .Chrome}}
+    {{/* The settings panel (FR-1.12 AC1). A <details> so it opens, closes and is announced
+         without a line of script, which the Content-Security-Policy would forbid in any case: it
+         grants no 'unsafe-inline' (QS-4.4).
+
+         The id is what reopens it. Every form in here redirects to <page>#settings, and a browser
+         opens a <details> whose subtree contains the fragment it was sent to — so changing a
+         setting leaves the panel open, with nothing scripted and nothing remembered on the
+         server. */}}
+    <details class="settings" id="settings">
+      <summary class="icon-button settings-button" title="Settings" aria-label="Settings">
+        <svg class="cog" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"
              fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-          <circle cx="12" cy="12" r="4.2"></circle>
-          <path d="M12 2.5v2.6M12 18.9v2.6M2.5 12h2.6M18.9 12h2.6M5.2 5.2l1.9 1.9M16.9 16.9l1.9 1.9M18.8 5.2l-1.9 1.9M7.1 16.9l-1.9 1.9"></path>
+          <circle cx="12" cy="12" r="6.5"></circle>
+          <circle cx="12" cy="12" r="2.5"></circle>
+          <path d="M18.5 12h3M16.6 16.6l2.12 2.12M12 18.5v3M7.4 16.6l-2.12 2.12M5.5 12h-3M7.4 7.4 5.28 5.28M12 5.5v-3M16.6 7.4l2.12-2.12"></path>
         </svg>
-        {{else if eq .ThemeName "dark"}}
-        {{/* A crescent: the dark theme is on. */}}
-        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"
-             fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round">
-          <path d="M20.5 14.8A8.8 8.8 0 0 1 9.2 3.5a8.8 8.8 0 1 0 11.3 11.3z"></path>
-        </svg>
-        {{else}}
-        {{/* A circle half filled: the appearance follows the operating system, so it is both. */}}
-        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"
-             fill="none" stroke="currentColor" stroke-width="1.8">
-          <circle cx="12" cy="12" r="8.5"></circle>
-          <path d="M12 3.5a8.5 8.5 0 0 0 0 17z" fill="currentColor" stroke="none"></path>
-        </svg>
-        {{end}}
-      </button>
-    </form>
-    {{/* The settings control, deliberately inert: there is no configuration page in v1 —
-         configuration is a YAML file and Fly secrets (FR-8.1) — and the button says so rather than
-         leading to a 404. It is a disabled <button> rather than a styled <span> so that the
-         browser gives it the right semantics for free: it is not focusable, it is announced as an
-         unavailable button, and nothing has to be scripted, which the Content-Security-Policy
-         would forbid anyway (QS-4.4). */}}
-    <button type="button" class="icon-button settings-button" disabled
-            title="Settings — there is no configuration page yet"
-            aria-label="Settings — there is no configuration page yet">
-      <svg class="cog" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"
-           fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-        <circle cx="12" cy="12" r="6.5"></circle>
-        <circle cx="12" cy="12" r="2.5"></circle>
-        <path d="M18.5 12h3M16.6 16.6l2.12 2.12M12 18.5v3M7.4 16.6l-2.12 2.12M5.5 12h-3M7.4 7.4 5.28 5.28M12 5.5v-3M16.6 7.4l2.12-2.12"></path>
-      </svg>
-    </button>
+      </summary>
+      <div class="settings-panel">
+
+        <fieldset class="setting">
+          <legend>Open at</legend>
+          {{/* Three buttons in one form rather than a select and a submit: with JavaScript off a
+               select needs a button beside it anyway, and a button says what it does. There are
+               exactly three views and there is no fourth coming, so they are written out. */}}
+          <form method="post" action="/settings">
+            <input type="hidden" name="name" value="landing">
+            <input type="hidden" name="return" value="{{$.Path}}">
+            <button type="submit" name="value" value="list"{{if $.LandingIs "list"}} aria-current="true"{{end}}>List</button>
+            <button type="submit" name="value" value="sites"{{if $.LandingIs "sites"}} aria-current="true"{{end}}>Sites</button>
+            <button type="submit" name="value" value="contributors"{{if $.LandingIs "contributors"}} aria-current="true"{{end}}>Contributors</button>
+          </form>
+        </fieldset>
+
+        <fieldset class="setting">
+          <legend>Call an item quiet after</legend>
+          <form method="post" action="/settings">
+            <input type="hidden" name="name" value="quiet">
+            <input type="hidden" name="return" value="{{$.Path}}">
+            {{range $.QuietChoices}}
+            <button type="submit" name="value" value="{{.Value}}"{{if .Selected}} aria-current="true"{{end}}>{{.Label}}</button>
+            {{end}}
+          </form>
+        </fieldset>
+
+        <fieldset class="setting">
+          <legend>This browser</legend>
+          {{/* Turning it off is the clear: warm-start.js reads data-cache and goes to the branch
+               that empties the store, so a separate "forget now" button would do the same thing
+               by a second name (design §4.3). */}}
+          <form method="post" action="/settings">
+            <input type="hidden" name="name" value="cache">
+            <input type="hidden" name="return" value="{{$.Path}}">
+            {{if $.Settings.Cache}}
+            <button type="submit" name="value" value="off">Stop keeping my last list here</button>
+            <p class="setting-note">Your last list is kept in this browser so a cold start has something to show.</p>
+            {{else}}
+            <button type="submit" name="value" value="on">Keep my last list here</button>
+            <p class="setting-note">Nothing is kept in this browser.</p>
+            {{end}}
+          </form>
+        </fieldset>
+
+        <fieldset class="setting">
+          <legend>Appearance</legend>
+          {{template "theme-control" $}}
+        </fieldset>
+
+        {{/* Said rather than offered: ending every session everywhere means rotating the OAuth
+             client secret, which is a deployment operation and not a button (FR-8.3 AC4). */}}
+        <p class="setting-note">Signing out everywhere means rotating the OAuth client secret.</p>
+      </div>
+    </details>
+    {{end}}
   </nav>
 </header>
 {{/* The arc42 family's rainbow, as status.arc42.org draws it, on every page (FR-1.10 AC1). One
@@ -161,4 +189,38 @@
 </footer>
 </body>
 </html>
+{{end}}
+
+{{/* The appearance switch, drawn either bare in the top bar (signed out) or inside the settings
+     panel (signed in). It is one template so the two can never drift apart. */}}
+{{define "theme-control"}}
+<form class="theme-form" method="post" action="/theme">
+  <input type="hidden" name="return" value="{{.Path}}">
+  <input type="hidden" name="theme" value="{{.NextTheme}}">
+  <button type="submit" class="icon-button"
+          title="Appearance: {{.ThemeLabel}} — switch to {{.NextThemeLabel}}"
+          aria-label="Appearance: {{.ThemeLabel}} — switch to {{.NextThemeLabel}}">
+    {{if eq .ThemeName "light"}}
+    {{/* A sun: the light theme is on. */}}
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"
+         fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+      <circle cx="12" cy="12" r="4.2"></circle>
+      <path d="M12 2.5v2.6M12 18.9v2.6M2.5 12h2.6M18.9 12h2.6M5.2 5.2l1.9 1.9M16.9 16.9l1.9 1.9M18.8 5.2l-1.9 1.9M7.1 16.9l-1.9 1.9"></path>
+    </svg>
+    {{else if eq .ThemeName "dark"}}
+    {{/* A crescent: the dark theme is on. */}}
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"
+         fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round">
+      <path d="M20.5 14.8A8.8 8.8 0 0 1 9.2 3.5a8.8 8.8 0 1 0 11.3 11.3z"></path>
+    </svg>
+    {{else}}
+    {{/* A circle half filled: the appearance follows the operating system, so it is both. */}}
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"
+         fill="none" stroke="currentColor" stroke-width="1.8">
+      <circle cx="12" cy="12" r="8.5"></circle>
+      <path d="M12 3.5a8.5 8.5 0 0 0 0 17z" fill="currentColor" stroke="none"></path>
+    </svg>
+    {{end}}
+  </button>
+</form>
 {{end}}

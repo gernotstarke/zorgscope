@@ -377,6 +377,28 @@ button:hover,
 
 .cog { display: block; }
 
+/* The settings panel (FR-1.12). A <details> gives the open and closed states for free; all this
+   does is take the marker off the summary, so the cog is the control rather than a cog with a
+   triangle beside it, and float the panel under it. */
+.settings > summary { list-style: none; cursor: pointer; }
+.settings > summary::-webkit-details-marker { display: none; }
+.settings { position: relative; }
+.settings-panel {
+  position: absolute;
+  right: 0;
+  z-index: 20;
+  min-width: 16rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--surface);
+  text-align: left;
+}
+.setting { margin: 0 0 0.75rem; padding: 0; border: 0; }
+.setting legend { padding: 0; color: var(--muted); font-size: 0.8rem; }
+.setting button[aria-current="true"] { font-weight: 600; text-decoration: underline; }
+.setting-note { margin: 0.35rem 0 0; color: var(--muted); font-size: 0.78rem; }
+
 /* ---------------------------------------------------------------- the footer */
 
 .footer-made { color: var(--muted); }

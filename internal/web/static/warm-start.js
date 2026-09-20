@@ -79,9 +79,11 @@
     mount.appendChild(holder);
   }
 
-  // Exactly one of the three applies to any page: the sign-in page clears, the wait page restores,
-  // and a page with a list saves.
-  if (document.getElementById("signed-out")) {
+  // The visitor asked this browser to keep nothing (FR-1.12 AC5). Turning the setting off is the
+  // clear, so this branch empties the store rather than merely declining to add to it.
+  if (document.documentElement.getAttribute("data-cache") === "off") {
+    clear();
+  } else if (document.getElementById("signed-out")) {
     clear();
   } else if (document.getElementById("placeholder")) {
     restore();

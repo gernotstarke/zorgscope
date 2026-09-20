@@ -24,10 +24,11 @@ func getWithCookies(h http.Handler, path string, cookies ...*http.Cookie) *httpt
 	return rec
 }
 
-// The header carries the mark and the settings control. The control is inert for the whole of v1 —
-// configuration is a YAML file and Fly secrets (FR-8.1) — and saying so is the point: a cog that led
-// to a 404 would be worse than no cog at all.
-func TestTheHeaderCarriesTheLogoAndAnInertSettingsControl(t *testing.T) {
+// The header carries the mark and the settings control. The control opens the settings popover
+// (FR-1.12) rather than sitting disabled as it did before that panel existed — TestTheCogIsLive in
+// settings_test.go covers the panel's own contents; this test keeps its original job of guarding
+// the logo and the favicon link, and now also guards that the control is live rather than a link.
+func TestTheHeaderCarriesTheLogoAndALiveSettingsControl(t *testing.T) {
 	body := getAuthed(t, dashHandler(t, &fakeSource{items: representativeItems()}), "/").Body.String()
 
 	if !strings.Contains(body, `src="/static/logo.png?`) {
@@ -41,12 +42,14 @@ func TestTheHeaderCarriesTheLogoAndAnInertSettingsControl(t *testing.T) {
 	if cog == "" {
 		t.Fatal("the header has no settings control")
 	}
-	if !strings.Contains(cog, "disabled") {
-		t.Errorf("the settings control is not disabled: %s", cog)
+	// The control used to be a disabled <button>; it is now the <summary> of a <details>, which
+	// opens the panel without a line of script.
+	if strings.Contains(cog, "disabled") {
+		t.Errorf("the settings control is still disabled: %s", cog)
 	}
-	// Whatever it is, it must not be a link — there is nowhere for it to go.
+	// Whatever it is, it must not be a link — the panel opens in place, not by navigation.
 	if strings.Contains(cog, "<a ") || strings.Contains(cog, "href=") {
-		t.Errorf("the settings control links somewhere, but there is no configuration page: %s", cog)
+		t.Errorf("the settings control links somewhere, but it should open the panel in place: %s", cog)
 	}
 }
 

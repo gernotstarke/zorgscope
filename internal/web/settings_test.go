@@ -245,3 +245,70 @@ func TestTheQuietThresholdChangesTheMarks(t *testing.T) {
 		}
 	}
 }
+
+// The cog opens something now, so it is no longer disabled and no longer says there is no
+// configuration page.
+func TestTheCogIsLive(t *testing.T) {
+	h := newTestServer(t).Handler()
+	page := getAuthed(t, h, "/").Body.String()
+
+	if strings.Contains(page, "there is no configuration page") {
+		t.Error("the cog still says there is no configuration page")
+	}
+	if !strings.Contains(page, `id="settings"`) {
+		t.Error("the page has no settings panel for the cog to open")
+	}
+	// The panel must open without script: <details> does that, a div plus a handler does not, and
+	// the policy grants no 'unsafe-inline' for the handler anyway.
+	if !strings.Contains(page, "<details") {
+		t.Error("the settings panel is not a <details>, so it cannot open without JavaScript")
+	}
+	// Every control in it posts to the one route, discriminated by its hidden "name" field's
+	// value — the form field is literally named "name" (handleSettings reads r.FormValue("name")),
+	// so what appears in the markup is value="landing", not name="landing".
+	for _, want := range []string{
+		`action="/settings"`, `value="landing"`, `value="quiet"`, `value="cache"`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the settings panel is missing %s", want)
+		}
+	}
+	// The appearance switch moved inside; it still posts to its own route.
+	if !strings.Contains(page, `action="/theme"`) {
+		t.Error("the appearance switch is gone from the signed-in page")
+	}
+}
+
+// The sign-in page has no session and therefore no preferences, but appearance is all there is
+// there — so it keeps the bare control and shows no panel.
+func TestTheSignInPageHasNoPanel(t *testing.T) {
+	page := get(newTestServer(t).Handler(), "/login").Body.String()
+	if strings.Contains(page, `id="settings"`) {
+		t.Error("the sign-in page shows a settings panel it has no session for")
+	}
+	if !strings.Contains(page, `action="/theme"`) {
+		t.Error("the sign-in page lost its appearance switch")
+	}
+}
+
+// FR-1.12 AC5: with the browser list turned off the document says so, which is what sends
+// warm-start.js to its clearing branch.
+func TestTheCacheSettingReachesTheDocument(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler()
+	c := signIn(t, h)
+
+	on := getAs(h, "/", c).Body.String()
+	if strings.Contains(on, `data-cache="off"`) {
+		t.Error("the document says the browser list is off when it is on")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(c)
+	req.AddCookie(&http.Cookie{Name: cacheCookieName, Value: "off"})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if !strings.Contains(rec.Body.String(), `data-cache="off"`) {
+		t.Error("the document does not say the browser list is off")
+	}
+}
