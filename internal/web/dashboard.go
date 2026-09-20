@@ -41,7 +41,8 @@ type waitingView struct {
 // starts a fetch when one is due and never waits for it (QS-2.6) — and hands the snapshot back to
 // the caller either way, so a page never has to ask the cache a second time and risk that second
 // call crossing the TTL a moment after the first, and rendering the ordinary page with Fetching
-// true. While a fetch is in flight it also answers the request itself and reports so:
+// true. While a fetch is in flight and the snapshot is empty it also answers the request itself
+// and reports so:
 //
 //   - an ordinary page view gets the wait page, and so does a search typed in the top bar: that
 //     form replaces the whole <main>, and htmx then selects the wait page's own <main>, whose
@@ -61,7 +62,16 @@ type waitingView struct {
 // When no fetch is in flight it answers nothing and the caller renders as it always has.
 func (s *Server) answeredWaiting(w http.ResponseWriter, r *http.Request) (snapshot.Snapshot, bool) {
 	snap := s.cache.Get(r.Context())
-	if !snap.Fetching {
+	// A fetch in flight is not by itself a reason to withhold the page. What is, is having
+	// nothing to put on it: an empty snapshot can only draw an empty list, and "nothing is open"
+	// is a wrong answer rather than a stale one — which is the whole reason the wait page exists.
+	// With items in hand the page is drawn from them and says that a fetch is running (FR-1.9
+	// AC1, AC6), and the poll inside the list swaps the fresh one in when it lands (ADR-0013).
+	//
+	// This is deliberately blind to why the snapshot is stale. POST /refresh invalidates and
+	// redirects, so the redirected GET sees exactly what an aged-out TTL leaves behind, and
+	// telling them apart would need a field in Snapshot that nothing else wants.
+	if !snap.Fetching || len(snap.Items) > 0 {
 		return snap, false
 	}
 	trigger := r.Header.Get("HX-Trigger")
@@ -213,6 +223,15 @@ type itemsView struct {
 	// matches this filter" and "nothing is open".
 	Filtered  bool
 	ShownLine string // "12 of 40 open" when filtered, "40 open" otherwise
+	// Fetching says a fetch is in flight, so the list draws the poll that will replace it and
+	// states that it is not current (FR-1.9 AC2, AC6). It lives on the items view rather than on
+	// the page, because GET /items renders this struct alone: putting it on the page would mean
+	// the swapped-in fragment could not carry the poll, and the list would stop updating after
+	// the first swap.
+	Fetching bool
+	// Repos is how many repositories the running fetch is asking, for the status line. The wait
+	// page names the same number, from the same configuration.
+	Repos int
 }
 
 // groupView is one repository's block of the list. CountLine is taken before the filter is
@@ -356,7 +375,7 @@ func (s *Server) dashboardView(d domain.Dashboard, snap snapshot.Snapshot, now t
 		Shown:      d.Shown,
 		Filter:     newFilterView(d.Filter),
 		Repos:      filterRepos(s.cfg.GitHub.Repos, d.Filter.Repo),
-		Items:      s.itemsView(d, now),
+		Items:      s.itemsView(d, snap, now),
 	}
 }
 
@@ -364,12 +383,14 @@ func (s *Server) dashboardView(d domain.Dashboard, snap snapshot.Snapshot, now t
 // domain produced — BuildDashboard groups in configuration order and sorts each group most
 // recently updated first — because re-sorting here would silently disagree with the counts the
 // same pass produced.
-func (s *Server) itemsView(d domain.Dashboard, now time.Time) itemsView {
+func (s *Server) itemsView(d domain.Dashboard, snap snapshot.Snapshot, now time.Time) itemsView {
 	v := itemsView{
 		Query:     template.URL(queryString(d.Filter)), // #nosec G203 -- see the field's comment
 		Groups:    make([]groupView, 0, len(d.Groups)),
 		Filtered:  !d.Filter.Empty(),
 		ShownLine: shownLine(d),
+		Fetching:  snap.Fetching,
+		Repos:     len(s.cfg.GitHub.Repos),
 	}
 	for _, g := range d.Groups {
 		gv := groupView{

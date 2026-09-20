@@ -900,18 +900,30 @@ func warmCache(t testing.TB, c *snapshot.Cache) {
 // waitingMarker is what only the wait page carries: the id of its polling element.
 const waitingMarker = `id="waiting"`
 
+// refreshingMarker is the list's own "a fetch is running" element, the layer-1 counterpart of
+// waitingMarker. A test asserting the list is shown during a fetch has to assert this too:
+// showing a stale list without saying it is stale is the one outcome FR-1.9 rules out.
+const refreshingMarker = `class="refreshing"`
+
 // getSettled is getAs for a request that may find a fetch in flight — after Refresh, or after the
-// clock moved past the TTL. It asks again until the answer is not the wait page.
+// clock moved past the TTL. It asks again until the answer shows no fetch running.
+//
+// Both marks have to be waited out, because a fetch in flight now has two appearances (ADR-0013):
+// an empty snapshot draws the wait page, and a populated one draws its list with the refreshing
+// line. Waiting only for the wait page to go would return the moment the first request started the
+// fetch, handing the caller a page whose fetch has not landed — which is not what any caller of
+// this helper means by settled.
 func getSettled(t *testing.T, h http.Handler, path string, c *http.Cookie) *httptest.ResponseRecorder {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		rec := getAs(h, path, c)
-		if !strings.Contains(rec.Body.String(), waitingMarker) {
+		body := rec.Body.String()
+		if !strings.Contains(body, waitingMarker) && !strings.Contains(body, refreshingMarker) {
 			return rec
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("GET %s kept answering the wait page", path)
+			t.Fatalf("GET %s kept answering with a fetch in flight", path)
 		}
 		time.Sleep(time.Millisecond)
 	}

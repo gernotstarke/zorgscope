@@ -216,7 +216,11 @@ func (s *refetchBlockSource) Fetch(ctx context.Context) ([]domain.Item, error) {
 
 // FR-1.9 AC1, and the decision behind it (design §2): the wait page appears on every fetch, a
 // Refresh included — a list already held is not shown while a fresh one is on its way.
-func TestRefreshShowsTheWaitPageEvenThoughAListIsAlreadyHeld(t *testing.T) {
+// FR-1.9 AC1: a list already held is shown while the refetch is on its way, marked, rather than
+// taken away. Refresh is covered by the same rule as the TTL (ADR-0013): POST /refresh invalidates
+// and redirects, and the redirected GET cannot tell an invalidated snapshot from one the TTL aged
+// out, nor should it.
+func TestRefreshKeepsTheListAndMarksItRefreshing(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
 	src := &refetchBlockSource{
@@ -237,11 +241,14 @@ func TestRefreshShowsTheWaitPageEvenThoughAListIsAlreadyHeld(t *testing.T) {
 	}
 
 	body := getAs(h, "/", c).Body.String()
-	if !strings.Contains(body, waitingMarker) {
-		t.Error("GET / after Refresh did not show the wait page")
+	if strings.Contains(body, waitingMarker) {
+		t.Error("GET / after Refresh showed the wait page instead of the list it already held")
 	}
-	if strings.Contains(body, "Held already") {
-		t.Error("GET / after Refresh showed the list already held, instead of waiting for the fresh one")
+	if !strings.Contains(body, "Held already") {
+		t.Error("GET / after Refresh did not show the list it already held")
+	}
+	if !strings.Contains(body, refreshingMarker) {
+		t.Error("the list was shown without saying that a fetch is running")
 	}
 
 	release <- struct{}{} // unblocks the refetch; the deferred close is only cleanup once the test ends
@@ -249,11 +256,14 @@ func TestRefreshShowsTheWaitPageEvenThoughAListIsAlreadyHeld(t *testing.T) {
 	if !strings.Contains(body, "Held already") {
 		t.Error("once the refetch landed the list did not come back")
 	}
+	if strings.Contains(body, refreshingMarker) {
+		t.Error("the settled list still claims a fetch is running")
+	}
 }
 
-// FR-1.9 AC1: the same rule holds for a TTL that has expired as for a Refresh — a list already held
-// is not shown while the TTL's own refetch is on its way.
-func TestAnExpiredTTLShowsTheWaitPageNotTheOldList(t *testing.T) {
+// FR-1.9 AC1: the same rule for a TTL that has expired. The visitor did nothing here — the clock
+// did — so taking their list away is even less defensible than it is after Refresh.
+func TestAnExpiredTTLShowsTheOldListMarkedRefreshing(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
 	src := &refetchBlockSource{
@@ -273,11 +283,14 @@ func TestAnExpiredTTLShowsTheWaitPageNotTheOldList(t *testing.T) {
 	clock.Advance(2 * time.Minute) // past the one-minute TTL
 
 	body := getAs(h, "/", c).Body.String()
-	if !strings.Contains(body, waitingMarker) {
-		t.Error("GET / past the TTL did not show the wait page")
+	if strings.Contains(body, waitingMarker) {
+		t.Error("GET / past the TTL showed the wait page instead of the list it already held")
 	}
-	if strings.Contains(body, "Held already") {
-		t.Error("GET / past the TTL showed the old list, instead of waiting for the fresh one")
+	if !strings.Contains(body, "Held already") {
+		t.Error("GET / past the TTL did not show the list it already held")
+	}
+	if !strings.Contains(body, refreshingMarker) {
+		t.Error("the list was shown without saying that a fetch is running")
 	}
 
 	release <- struct{}{} // unblocks the refetch; the deferred close is only cleanup once the test ends
@@ -285,6 +298,79 @@ func TestAnExpiredTTLShowsTheWaitPageNotTheOldList(t *testing.T) {
 	if !strings.Contains(body, "Held already") {
 		t.Error("once the refetch landed the list did not come back")
 	}
+}
+
+// The poll lives inside the fragment it replaces, which is what makes it stop without anything
+// counting: the first fragment rendered after the fetch has landed carries no poll and takes the
+// running one away with it. If a fragment ever carried the poll unconditionally, the list would
+// ask for itself every 500 ms for ever.
+func TestTheItemsFragmentCarriesThePollOnlyWhileFetching(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	src := &refetchBlockSource{
+		items:   []domain.Item{ghItem(1, "Held already", testNow.Add(-time.Hour))},
+		release: release,
+	}
+	var clock *ports.FixedClock
+	s, cache := newColdServerWith(t, func(o *Options) {
+		clock = o.Clock.(*ports.FixedClock)
+		o.Cache = snapshot.New(src, time.Minute, o.Clock)
+	})
+	warmCache(t, cache)
+	h := s.Handler()
+	c := signIn(t, h)
+
+	settled := getAs(h, "/items", c).Body.String()
+	if strings.Contains(settled, refreshingMarker) {
+		t.Error("a fragment drawn with no fetch in flight carries the refresh poll; it would never stop")
+	}
+
+	clock.Advance(2 * time.Minute)
+	fetching := getAs(h, "/items", c).Body.String()
+	if !strings.Contains(fetching, refreshingMarker) {
+		t.Error("a fragment drawn during a fetch carries no refresh poll, so the list would never update")
+	}
+	// It has to ask for the fragment, and replace the section it lives in. Targeting anything
+	// else would leave the poll behind and start a second one on every swap.
+	for _, want := range []string{`hx-get="/items"`, `hx-target="#items"`, `hx-swap="outerHTML"`} {
+		if !strings.Contains(fetching, want) {
+			t.Errorf("the refresh poll is missing %s", want)
+		}
+	}
+
+	release <- struct{}{}
+	getSettled(t, h, "/", c)
+}
+
+// FR-1.9 AC6: a stale list is honest about its age. It states the time its items were fetched at,
+// which is the header's own line, and does not claim never to have fetched.
+func TestAStaleListStatesWhenItWasFetched(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	src := &refetchBlockSource{
+		items:   []domain.Item{ghItem(1, "Held already", testNow.Add(-time.Hour))},
+		release: release,
+	}
+	var clock *ports.FixedClock
+	s, cache := newColdServerWith(t, func(o *Options) {
+		clock = o.Clock.(*ports.FixedClock)
+		o.Cache = snapshot.New(src, time.Minute, o.Clock)
+	})
+	warmCache(t, cache)
+	h := s.Handler()
+	c := signIn(t, h)
+
+	clock.Advance(2 * time.Minute)
+	body := getAs(h, "/", c).Body.String()
+	if !strings.Contains(body, "Fetched ") {
+		t.Error("the stale page does not say when its items were fetched")
+	}
+	if strings.Contains(body, "Fetched never") {
+		t.Error("the stale page says its items were never fetched, though it is showing some")
+	}
+
+	release <- struct{}{}
+	getSettled(t, h, "/", c)
 }
 
 // FR-1.9 AC3: a fetch that fails ends the waiting the ordinary way — the page with the notice.

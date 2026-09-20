@@ -5,6 +5,19 @@
      page nothing while it is being read and the Content-Security-Policy is unaffected. */}}
 {{define "items"}}
 <section class="items-section" id="items">
+  {{/* While a fetch runs, the list says so and asks for itself again (FR-1.9 AC2, AC6,
+       ADR-0013). The polling element sits inside the section it replaces, so the first fragment
+       rendered after the fetch has landed carries no poll and takes this one away with it: the
+       poll stops because the thing that polls is gone, not because anything counted.
+
+       role="status" with aria-live="polite" announces it without interrupting, and the text says
+       it in words — motion and colour are never the only signal (FR-1.9 AC4). */}}
+  {{if .Fetching}}
+  <p class="refreshing" role="status" aria-live="polite"
+     hx-get="/items" hx-trigger="every 500ms" hx-target="#items" hx-swap="outerHTML">
+    Asking GitHub about {{.Repos}} repositories…
+  </p>
+  {{end}}
   <p class="source-line">
     <span class="shown-count">{{.ShownLine}}</span>
   </p>

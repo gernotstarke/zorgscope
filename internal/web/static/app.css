@@ -217,6 +217,28 @@ button:hover,
 /* ---------------------------------------------------------------- the list */
 
 /* The count, on one quiet line above the groups. */
+/* The list's own "a fetch is running" line (FR-1.9 AC6, ADR-0013). It reads as secondary to the
+   list below it — this is a note about the list's age, not a headline — and it never relies on
+   colour alone: the words say it, and the dot beside them is decorative. */
+.refreshing {
+  margin: 0 0 0.5rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.refreshing::before {
+  content: "";
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-right: 0.5ch;
+  border-radius: 50%;
+  background: currentColor;
+  animation: refreshing-pulse 1.2s ease-in-out infinite;
+}
+@keyframes refreshing-pulse {
+  50% { opacity: 0.25; }
+}
+
 .source-line {
   display: flex;
   flex-wrap: wrap;
@@ -677,6 +699,10 @@ button:hover,
     animation: none;
     opacity: 0.82;
     transform: translate(-50%, -50%) scale(1.08);
+  }
+  /* The dot stays, so the refreshing line keeps its mark; it simply holds still. */
+  .refreshing::before {
+    animation: none;
   }
 }
 
