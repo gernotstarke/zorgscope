@@ -51,16 +51,21 @@ func SortItems(items []Item) {
 	})
 }
 
-// QuietAfter is how long an item may go without an update before the page calls it quiet
-// (FR-1.10 AC4). Three months: long enough that a maintainer's own pause does not trip it, short
-// enough that a forgotten issue shows up before the year is out.
+// QuietAfter is the default threshold: how long an item may go without an update before the page
+// calls it quiet (FR-1.10 AC4). Three months: long enough that a maintainer's own pause does not
+// trip it, short enough that a forgotten issue shows up before the year is out. It is the value
+// the web layer falls back to when the visitor has expressed no preference (FR-1.12 AC4), so the
+// number keeps one home even though the threshold is now chosen per visitor.
 const QuietAfter = 90 * 24 * time.Hour
 
-// IsQuiet reports whether nothing has happened to the item for QuietAfter or longer, measured
-// from its last update to now. An item whose update time is unknown is never quiet: unknown is
-// not idle.
-func (i Item) IsQuiet(now time.Time) bool {
-	return !i.UpdatedAt.IsZero() && now.Sub(i.UpdatedAt) >= QuietAfter
+// IsQuiet reports whether nothing has happened to the item for after or longer, measured from its
+// last update to now. An item whose update time is unknown is never quiet: unknown is not idle.
+//
+// An after of zero or less means nothing is ever quiet. That is what the "never" setting asks
+// for, and making it the zero value's meaning is deliberate: a caller that forgot to pass a
+// threshold marks nothing rather than marking everything.
+func (i Item) IsQuiet(now time.Time, after time.Duration) bool {
+	return after > 0 && !i.UpdatedAt.IsZero() && now.Sub(i.UpdatedAt) >= after
 }
 
 // AgeBucket classifies how long ago something happened, relative to a display cutoff.

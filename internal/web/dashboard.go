@@ -485,7 +485,7 @@ func newItemView(it domain.Item, now time.Time) itemView {
 		Created: newTimeView(it.CreatedAt, now),
 		Updated: newTimeView(it.UpdatedAt, now),
 		Labels:  labelViews(it.Labels),
-		Quiet:   it.IsQuiet(now),
+		Quiet:   it.IsQuiet(now, domain.QuietAfter),
 	}
 }
 

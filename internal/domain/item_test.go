@@ -70,6 +70,42 @@ func titles(items []domain.Item) []string {
 	return out
 }
 
+// The threshold is a parameter because it is a preference (FR-1.12 AC4), not a property of an
+// item. Zero means nothing is ever quiet, which is what the "never" setting asks for — and it has
+// to be the zero value's meaning, because a caller that forgets to pass one must not silently
+// mark everything quiet.
+func TestIsQuietHonoursTheThreshold(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	item := func(daysAgo int) domain.Item {
+		return domain.Item{UpdatedAt: now.AddDate(0, 0, -daysAgo)}
+	}
+	day := 24 * time.Hour
+
+	for _, tc := range []struct {
+		name      string
+		daysAgo   int
+		after     time.Duration
+		wantQuiet bool
+	}{
+		{"60 days against 30 is quiet", 60, 30 * day, true},
+		{"60 days against 90 is not", 60, 90 * day, false},
+		{"exactly at the threshold is quiet", 90, 90 * day, true},
+		{"a day short of it is not", 89, 90 * day, false},
+		{"180 days against 180 is quiet", 180, 180 * day, true},
+		{"never: a year old is still not quiet", 365, 0, false},
+		{"never: even a decade", 3650, 0, false},
+	} {
+		if got := item(tc.daysAgo).IsQuiet(now, tc.after); got != tc.wantQuiet {
+			t.Errorf("%s: IsQuiet = %v, want %v", tc.name, got, tc.wantQuiet)
+		}
+	}
+
+	// An unknown update time is never quiet, whatever the threshold: unknown is not idle.
+	if (domain.Item{}).IsQuiet(now, 30*day) {
+		t.Error("an item with no update time was called quiet")
+	}
+}
+
 // FR-1.10 AC4: quiet is 90 days without an update, measured to the second; an item whose update
 // time is unknown is never quiet — unknown is not idle.
 func TestIsQuietAtTheBoundary(t *testing.T) {
@@ -86,7 +122,7 @@ func TestIsQuietAtTheBoundary(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := (domain.Item{UpdatedAt: c.updated}).IsQuiet(now); got != c.want {
+			if got := (domain.Item{UpdatedAt: c.updated}).IsQuiet(now, domain.QuietAfter); got != c.want {
 				t.Errorf("IsQuiet = %v, want %v", got, c.want)
 			}
 		})

@@ -79,7 +79,7 @@ func (s *Server) searchView(snap snapshot.Snapshot, q string, now time.Time) sea
 			Labels:  labelViews(h.Item.Labels),
 			Author:  h.Item.Author,
 			Updated: newTimeView(h.Item.UpdatedAt, now),
-			Quiet:   h.Item.IsQuiet(now),
+			Quiet:   h.Item.IsQuiet(now, domain.QuietAfter),
 			Matched: matchedLine(h.Matched),
 		})
 	}
