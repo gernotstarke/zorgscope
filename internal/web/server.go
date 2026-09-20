@@ -320,6 +320,11 @@ func (s *Server) routes() []route {
 		{http.MethodGet, "/items", authSessionFragment, s.handleItems, ""},
 		{http.MethodPost, "/refresh", authSessionFragment, s.handleRefresh, ""},
 		{http.MethodPost, "/logout", authSessionFragment, s.handleLogout, ""},
+		// The visitor's own preferences (FR-1.12). authSessionFragment rather than the public
+		// treatment POST /theme gets: the appearance switch is public because the sign-in page is
+		// the one page where appearance is all there is, and none of these three settings means
+		// anything to a visitor who is not signed in.
+		{http.MethodPost, "/settings", authSessionFragment, s.handleSettings, ""},
 	}
 }
 
@@ -739,6 +744,10 @@ type pageData struct {
 	// than none at all.
 	Theme theme
 	Path  string
+	// Settings is what the visitor's preference cookies say (FR-1.12). execute fills it in for
+	// every page, the way it fills in Theme, because the popover is drawn by the shared layout and
+	// a page that lost it would draw every control in its default position.
+	Settings settings
 	// Version is the build's semantic version, shown in the footer of every page. execute fills
 	// it in for every page rather than each handler doing so, because a footer that silently
 	// lost its version on one page is exactly the kind of omission nobody notices until they
@@ -787,6 +796,7 @@ func (s *Server) execute(w http.ResponseWriter, r *http.Request, status int, pag
 	data.Version = version.String()
 	data.Theme = themeOf(r)
 	data.Path = r.URL.Path
+	data.Settings = settingsOf(r)
 	data.CacheEpoch = s.cacheEpoch
 	data.assets = s.assetURLs()
 	var buf bytes.Buffer
