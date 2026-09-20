@@ -18,6 +18,7 @@ the old record stays, because the reasoning is the point.
 | 0010 | Stateless: no database, no refresh pipeline | `0010-stateless-no-database.md` | accepted; its seen-mark half superseded by 0012 |
 | 0011 | The fetch runs in a goroutine a request started, never a ticker; pages never wait for it | `0011-request-triggered-fetch-never-a-ticker.md` | accepted |
 | 0012 | No seen mark: the page shows what is open, not what is new | `0012-no-seen-mark.md` | accepted |
+| 0013 | Stale while revalidating: the page shows what it has, and says it is refreshing | `0013-stale-while-revalidating.md` | accepted |
 
 The records are kept current with the design specs. A spec that decides something — the reset
 design of 2026-08-17, the GitHub sign-in and focus design of 2026-09-14, the stateless reset design
