@@ -30,6 +30,9 @@
 {{/* Cmd-K (FR-12.1 AC3). A file of our own, since htmx's event filters would need unsafe-eval,
      which the policy does not grant. */}}
 <script src="{{.Asset "search.js"}}" defer></script>
+{{/* The visitor's last list, saved here and restored on the wait page (ADR-0013). A file of our
+     own for the same reason search.js is one: the policy grants no 'unsafe-inline'. */}}
+<script src="{{.Asset "warm-start.js"}}" defer></script>
 {{/* A page may add to the head. Only the wait page does: a meta refresh inside noscript, so a
      browser without JavaScript still gets the page once the fetch has ended (FR-1.9 AC2). The
      element is permitted inside head and may hold meta, so it applies only when script is off. */}}

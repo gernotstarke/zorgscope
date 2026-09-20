@@ -13,7 +13,8 @@ func TestTheEpochChangesWithTheSecret(t *testing.T) {
 	if newCacheEpoch("one") == newCacheEpoch("two") {
 		t.Error("two secrets produced the same epoch; a rotation would not invalidate a stored list")
 	}
-	if newCacheEpoch("one") != newCacheEpoch("one") {
+	stable := newCacheEpoch("one")
+	if stable != newCacheEpoch("one") {
 		t.Error("the epoch is not stable for one secret; every page view would discard the cache")
 	}
 }

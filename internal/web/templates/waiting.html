@@ -21,6 +21,10 @@
     <span class="polling-pulse" aria-hidden="true"></span>
   </div>
   <p class="waiting-status" role="status" aria-live="polite">Asking GitHub about {{.Repos}} repositories…</p>
+  {{/* Where warm-start.js puts the visitor's own last list, when they have one and its epoch
+       still matches. Empty in the markup and empty without JavaScript: the placeholder is
+       advisory, and its absence is exactly the wait page as it was before it existed. */}}
+  <div id="placeholder"></div>
   <div id="waiting" hx-get="{{.Path}}" hx-trigger="every 500ms" hx-target="main" hx-swap="outerHTML" hx-select="main"></div>
 </section>
 {{end}}

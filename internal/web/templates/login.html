@@ -1,5 +1,10 @@
 {{define "content"}}
 <section class="signin">
+  {{/* Reaching this page means there is no session — whether Log out was pressed or the cookie
+       simply expired — and a stored list has no business outliving one. warm-start.js clears it
+       here rather than on a click, so a session that ends by expiring is covered too, and so that
+       nothing depends on catching a form submission. */}}
+  <div id="signed-out" hidden></div>
   <h1>Sign in</h1>
   {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
   <p>zorgscope is for the people who can push to its repository.</p>

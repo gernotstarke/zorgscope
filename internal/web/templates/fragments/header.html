@@ -5,7 +5,7 @@
 {{define "header"}}
 {{/* FR-1.1 AC4: when the snapshot was last fetched, in the configured timezone — "never" before
      the first fetch has returned anything. */}}
-<p class="fetched-line">Fetched {{.FetchedAt}}</p>
+<p class="fetched-line" data-fetched-at="{{.FetchedAt}}">Fetched {{.FetchedAt}}</p>
 {{/* FR-1.4: a failed fetch keeps showing the previous list rather than blanking the page, and
      says so — when GitHub went unreachable and, when there is one, how old the list on screen
      is. Redacted of every configured secret before it ever reaches this template (QS-4.3). */}}

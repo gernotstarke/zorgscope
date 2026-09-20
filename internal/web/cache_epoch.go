@@ -1,3 +1,10 @@
+package web
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+)
+
 // How a rotated client secret reaches a list sitting in a browser's localStorage.
 //
 // requireSession sets Cache-Control: no-store on every session route precisely so that rotating
@@ -8,13 +15,7 @@
 // is restored only when the two agree. Rotate the secret and every stored list, in every browser,
 // becomes unreadable at once — without a session table, a revocation list, or anything else that
 // would have to survive the Machine being stopped (ADR-0013).
-package web
-
-import (
-	"crypto/sha256"
-	"encoding/hex"
-)
-
+//
 // cacheEpochContext domain-separates this value from the session signing key, which is derived
 // from the same secret. The epoch is published in the page's markup; the signing key must never be
 // derivable from it, and a distinct context string is what guarantees one hash says nothing about

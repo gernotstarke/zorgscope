@@ -127,8 +127,8 @@ type Server struct {
 	// cacheEpoch is stamped on every page so the browser can tell a stored list minted under the
 	// current client secret from one minted before a rotation. See cache_epoch.go.
 	cacheEpoch string
-	signIn *rateLimiter
-	access ports.AccessChecker
+	signIn     *rateLimiter
+	access     ports.AccessChecker
 	// httpClient is the client the code-for-token exchange runs on. It is an option rather than a
 	// constant so that a test can point the exchange at an in-process GitHub; a deployment hands
 	// in the same client its adapters use.
