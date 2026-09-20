@@ -2,8 +2,12 @@
 {{/* The appearance is decided on the server, from a cookie, so the document is in the right theme
      from its first byte. A class added by script after load would flash the other theme first, and
      there is no script to add it with: the CSP carries no 'unsafe-inline' (QS-4.4). Following the
-     system leaves the attribute off entirely — see app.css. */}}
-<html lang="en"{{with .ThemeAttr}} data-theme="{{.}}"{{end}}>
+     system leaves the attribute off entirely — see app.css.
+
+     data-cache-epoch travels the same way and for the same reason: the policy grants no
+     'unsafe-inline', so there is no inline script to put a value in, and an attribute is what a
+     static file can read. See cache_epoch.go for what it is for. */}}
+<html lang="en"{{with .ThemeAttr}} data-theme="{{.}}"{{end}} data-cache-epoch="{{.CacheEpoch}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">

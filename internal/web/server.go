@@ -123,7 +123,10 @@ type Server struct {
 	fragments *template.Template
 	assets    map[string]staticAsset
 	// codec mints and verifies the session cookie.
-	codec  *sessionCodec
+	codec *sessionCodec
+	// cacheEpoch is stamped on every page so the browser can tell a stored list minted under the
+	// current client secret from one minted before a rotation. See cache_epoch.go.
+	cacheEpoch string
 	signIn *rateLimiter
 	access ports.AccessChecker
 	// httpClient is the client the code-for-token exchange runs on. It is an option rather than a
@@ -212,6 +215,7 @@ func New(o Options) (*Server, error) {
 		fragments:        fragments,
 		assets:           assets,
 		codec:            newSessionCodec(o.Config.Secrets.OAuthClientSecret),
+		cacheEpoch:       newCacheEpoch(o.Config.Secrets.OAuthClientSecret),
 		signIn:           newRateLimiter(signInAttempts, signInWindow),
 		access:           o.Access,
 		httpClient:       o.HTTPClient,
@@ -740,6 +744,11 @@ type pageData struct {
 	// lost its version on one page is exactly the kind of omission nobody notices until they
 	// need to know which build they are looking at.
 	Version string
+	// CacheEpoch is the document's data-cache-epoch: which client secret this page was rendered
+	// under. execute fills it in for every page, the way it fills in Theme and Version, because a
+	// page that silently lost it would have its stored list refused for ever — and the failure
+	// would look like the cache simply not working.
+	CacheEpoch string
 	// assets maps a static file name to its versioned URL. It is unexported and reached through
 	// the Asset method, so a template cannot accidentally link an unversioned path by indexing
 	// the map with a name that is not in it.
@@ -778,6 +787,7 @@ func (s *Server) execute(w http.ResponseWriter, r *http.Request, status int, pag
 	data.Version = version.String()
 	data.Theme = themeOf(r)
 	data.Path = r.URL.Path
+	data.CacheEpoch = s.cacheEpoch
 	data.assets = s.assetURLs()
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, "layout", data); err != nil {
