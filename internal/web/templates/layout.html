@@ -62,7 +62,16 @@
        reached by typing marks exactly what /search reached by navigating marks. */}}
   {{with .Chrome}}
   <nav class="view-switch" id="view-switch" aria-label="View">
-    <a href="/"{{if eq .View "list"}} aria-current="page"{{end}}>List</a>
+    {{/* ?view=list is inert: parseFilter (filter.go) reads only repo, kind, since and q, so an
+         unknown key changes nothing about what is shown — the page renders exactly as "/" does,
+         and Filter.Empty() (domain/filter.go) still reports true so an empty list still says
+         "Nothing open" rather than "Nothing matches this filter". It exists only so the redirect
+         above (dashboard.go) lets the request through: with a landing preference other than
+         "list", a bare "/" bounces onward, and without a query of its own this link would bounce
+         with it, making the list — and its filters (FR-2.1) — unreachable from the switch. The
+         parameter says "take me to the list now", which is what the switch means; the landing
+         preference says "this is where I arrive", which is a different question. */}}
+    <a href="/?view=list"{{if eq .View "list"}} aria-current="page"{{end}}>List</a>
     <a href="/sites"{{if eq .View "sites"}} aria-current="page"{{end}}>Sites</a>
     <a href="/contributors"{{if eq .View "contributors"}} aria-current="page"{{end}}>Contributors</a>
   </nav>
@@ -98,11 +107,14 @@
          without a line of script, which the Content-Security-Policy would forbid in any case: it
          grants no 'unsafe-inline' (QS-4.4).
 
-         The id is what reopens it. Every form in here redirects to <page>#settings, and a browser
-         opens a <details> whose subtree contains the fragment it was sent to — so changing a
-         setting leaves the panel open, with nothing scripted and nothing remembered on the
-         server. */}}
-    <details class="settings" id="settings">
+         The id on the panel div, not on the <details> itself, is what reopens it. Every form in
+         here redirects to <page>#settings, and a browser's ancestor details revealing algorithm
+         starts at the fragment target and walks up to its *ancestors* looking for a <details> to
+         open — an element is never its own ancestor, so a fragment naming the <details> directly
+         would never open it. Naming a descendant instead — the panel div — is what lets that walk
+         find the <details> and open it, so changing a setting leaves the panel open, with nothing
+         scripted and nothing remembered on the server. */}}
+    <details class="settings">
       <summary class="icon-button settings-button" title="Settings" aria-label="Settings">
         <svg class="cog" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"
              fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
@@ -111,7 +123,7 @@
           <path d="M18.5 12h3M16.6 16.6l2.12 2.12M12 18.5v3M7.4 16.6l-2.12 2.12M5.5 12h-3M7.4 7.4 5.28 5.28M12 5.5v-3M16.6 7.4l2.12-2.12"></path>
         </svg>
       </summary>
-      <div class="settings-panel">
+      <div class="settings-panel" id="settings">
 
         <fieldset class="setting">
           <legend>Open at</legend>
@@ -120,7 +132,13 @@
                exactly three views and there is no fourth coming, so they are written out. */}}
           <form method="post" action="/settings">
             <input type="hidden" name="name" value="landing">
-            <input type="hidden" name="return" value="{{$.Path}}">
+            {{/* $.Chrome.Return, not $.Path: Path is r.URL.Path alone, and would drop a query
+                 the visitor was relying on — a search, a filter — leaving handleSettings' redirect
+                 to strand them on an empty version of the page they were adjusting. Chrome.Return
+                 is r.URL.RequestURI(), query included, which is exactly what Refresh already uses
+                 two doors up for the same reason (FR-1.8 AC4). Chrome is never nil here: these
+                 three forms are inside {{if .Chrome}} above. */}}
+            <input type="hidden" name="return" value="{{$.Chrome.Return}}">
             <button type="submit" name="value" value="list"{{if $.LandingIs "list"}} aria-current="true"{{end}}>List</button>
             <button type="submit" name="value" value="sites"{{if $.LandingIs "sites"}} aria-current="true"{{end}}>Sites</button>
             <button type="submit" name="value" value="contributors"{{if $.LandingIs "contributors"}} aria-current="true"{{end}}>Contributors</button>
@@ -131,7 +149,7 @@
           <legend>Call an item quiet after</legend>
           <form method="post" action="/settings">
             <input type="hidden" name="name" value="quiet">
-            <input type="hidden" name="return" value="{{$.Path}}">
+            <input type="hidden" name="return" value="{{$.Chrome.Return}}">
             {{range $.QuietChoices}}
             <button type="submit" name="value" value="{{.Value}}"{{if .Selected}} aria-current="true"{{end}}>{{.Label}}</button>
             {{end}}
@@ -145,7 +163,7 @@
                by a second name (design §4.3). */}}
           <form method="post" action="/settings">
             <input type="hidden" name="name" value="cache">
-            <input type="hidden" name="return" value="{{$.Path}}">
+            <input type="hidden" name="return" value="{{$.Chrome.Return}}">
             {{if $.Settings.Cache}}
             <button type="submit" name="value" value="off">Stop keeping my last list here</button>
             <p class="setting-note">Your last list is kept in this browser so a cold start has something to show.</p>

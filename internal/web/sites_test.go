@@ -189,9 +189,13 @@ func TestNoTileCarriesAStyleAttribute(t *testing.T) {
 func TestViewSwitchMarksTheCurrentView(t *testing.T) {
 	h := sitesHandler(t, &fakeSource{})
 	c := signIn(t, h)
+	// List links to "/?view=list" rather than bare "/": with a landing preference other than
+	// List, a bare "/" redirects on to the landing view (FR-1.12 AC3), and the query is what lets
+	// the dashboard's redirect (dashboard.go) leave this link alone. The parameter is inert —
+	// parseFilter does not read "view" — so it changes nothing about what the list shows.
 	for _, tc := range []struct{ path, list, sites, contributors string }{
-		{"/", `<a href="/" aria-current="page">List</a>`, `<a href="/sites">Sites</a>`, `<a href="/contributors">Contributors</a>`},
-		{"/sites", `<a href="/">List</a>`, `<a href="/sites" aria-current="page">Sites</a>`, `<a href="/contributors">Contributors</a>`},
+		{"/", `<a href="/?view=list" aria-current="page">List</a>`, `<a href="/sites">Sites</a>`, `<a href="/contributors">Contributors</a>`},
+		{"/sites", `<a href="/?view=list">List</a>`, `<a href="/sites" aria-current="page">Sites</a>`, `<a href="/contributors">Contributors</a>`},
 	} {
 		body := getAs(h, tc.path, c).Body.String()
 		// The switch is part of the top bar now, not of the page body.

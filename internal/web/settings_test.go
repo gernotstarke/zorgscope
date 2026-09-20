@@ -178,6 +178,57 @@ func TestLandingViewRedirects(t *testing.T) {
 	}
 }
 
+// Finding 1 (blocking, whole-branch review): a request that carries a query string must not be
+// redirected away by the landing preference. sites.go's "N more" link builds exactly such a
+// request — "/?repo=org/repository-number-0" — and a visitor whose landing view is Sites must
+// still be able to follow it to the filtered list (FR-1.8 AC3) rather than being bounced back to
+// /sites with the filter thrown away.
+func TestLandingRedirectLeavesAQueryAlone(t *testing.T) {
+	h := dashHandler(t, &fakeSource{items: representativeItems()})
+	c := signIn(t, h)
+
+	req := httptest.NewRequest(http.MethodGet, "/?repo=org%2Frepository-number-0", nil)
+	req.AddCookie(c)
+	req.AddCookie(&http.Cookie{Name: landingCookieName, Value: "sites"})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("landing sites, GET /?repo=... = %d, want 200 (no redirect)", rec.Code)
+	}
+}
+
+// Finding 2 (blocking, whole-branch review): the view switch's List entry links to "/?view=list",
+// so this is the request that link now sends. With a non-default landing view it must still reach
+// the list (FR-1.1) and its filters (FR-2.1) rather than being redirected on to the landing page —
+// which would make List unreachable from the switch entirely.
+//
+// It also settles the question the review raised about parseFilter: "view" is a key parseFilter
+// (filter.go) does not read, so it must narrow nothing. The body is checked for both halves of
+// that — no "Nothing matches this filter" (which would mean a filter was wrongly judged to be in
+// force) and the ordinary unfiltered count line, exactly as a bare "/" would render it.
+func TestLandingRedirectLeavesTheViewSwitchAlone(t *testing.T) {
+	h := dashHandler(t, &fakeSource{items: representativeItems()})
+	c := signIn(t, h)
+
+	req := httptest.NewRequest(http.MethodGet, "/?view=list", nil)
+	req.AddCookie(c)
+	req.AddCookie(&http.Cookie{Name: landingCookieName, Value: "sites"})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("landing sites, GET /?view=list = %d, want 200 (no redirect)", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "Nothing matches this filter") {
+		t.Error("?view=list was treated as narrowing the list, but view is a key parseFilter does not read")
+	}
+	if !strings.Contains(body, "150 open") {
+		t.Errorf("?view=list did not render the ordinary unfiltered list; body: %s", firstLineContaining(body, "open"))
+	}
+}
+
 // The redirect must not cost the fetch a round trip. A cold cache reached through a redirecting
 // GET / has to be fetching by the time the redirect is written, or a landing view would quietly
 // undo what the warm start bought.
@@ -242,6 +293,48 @@ func TestTheQuietThresholdChangesTheMarks(t *testing.T) {
 
 		if got := strings.Contains(rec.Body.String(), "is-quiet"); got != tc.wantQuiet {
 			t.Errorf("quiet=%s: item marked quiet = %v, want %v", tc.cookie, got, tc.wantQuiet)
+		}
+	}
+}
+
+// Finding 5 (minor, whole-branch review): the design asks for the threshold to be proven on / and
+// on /search alike, and until now only / had a test — search.go's own call site was correct by
+// inspection, but nothing would have caught a refactor that quietly dropped the cookie's threshold
+// back to the default there. This mirrors TestTheQuietThresholdChangesTheMarks exactly, but drives
+// /search with a query that matches the item on its title, so a real search hit is what carries
+// the mark.
+func TestTheQuietThresholdChangesTheMarksOnSearch(t *testing.T) {
+	// An item last touched 120 days ago, matched by "untouched" in its own title: quiet at 30 and
+	// 90, not at 180, never at "never" — the same shape as the dashboard's own test.
+	old := ghItem(1, "Long untouched issue", testNow.AddDate(0, 0, -120))
+	h := dashHandler(t, &fakeSource{items: []domain.Item{old}})
+	c := signIn(t, h)
+
+	for _, tc := range []struct {
+		cookie    string
+		wantQuiet bool
+	}{
+		{"30", true},
+		{"90", true},
+		{"180", false},
+		{"never", false},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/search?q=untouched", nil)
+		req.AddCookie(c)
+		req.AddCookie(&http.Cookie{Name: quietCookieName, Value: tc.cookie})
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		// Not the literal title: a matched word is wrapped in <mark>, which splits "Long
+		// untouched issue" into runs and breaks a plain substring check on the whole title —
+		// exactly as TestSearchPageRendersHitsWithMarks checks "#7" rather than a title for the
+		// same reason. "#1" is ghItem's own number for this fixture.
+		if !strings.Contains(rec.Body.String(), "#1") {
+			t.Fatalf("quiet=%s: the search for %q did not match the fixture item; body: %s",
+				tc.cookie, "untouched", firstLineContaining(rec.Body.String(), "result"))
+		}
+		if got := strings.Contains(rec.Body.String(), "is-quiet"); got != tc.wantQuiet {
+			t.Errorf("quiet=%s: search hit marked quiet = %v, want %v", tc.cookie, got, tc.wantQuiet)
 		}
 	}
 }

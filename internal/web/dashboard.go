@@ -109,7 +109,14 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	// exactly the round trip ADR-0013 exists to save. Asking here starts it just as early as
 	// rendering would, and the answer is deliberately discarded: the page the visitor lands on
 	// asks again and will find either the fetch in flight or its result.
-	if target := settingsOf(r).Landing.path(); target != "/" {
+	//
+	// A request that carries a query string is left alone, whatever the landing preference says.
+	// A query is asking for a specific list — a Sites tile's "N more" link (FR-1.8 AC3), a
+	// bookmark, or the filter form's own GET — and a landing preference is about where a visitor
+	// *arrives*, not a veto on where they just asked to go. Redirecting one away would make every
+	// filtered link and every bookmark of a filtered list unreachable for anyone whose landing
+	// view is not the list.
+	if target := settingsOf(r).Landing.path(); target != "/" && r.URL.RawQuery == "" {
 		_ = s.cache.Get(r.Context())
 		http.Redirect(w, r, target, http.StatusSeeOther)
 		return
