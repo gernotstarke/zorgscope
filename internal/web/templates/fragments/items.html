@@ -31,8 +31,9 @@
       <span class="repo-count">{{.CountLine}}</span></h2>
     <ul class="items">
       {{range .Items}}
-      <li class="item{{if .Quiet}} is-quiet{{end}}">
+      <li class="item{{if .Quiet}} is-quiet{{end}}{{with .Tier.Name}} tier-{{.}}{{end}}">
         <p class="item-line">
+          {{template "item-tier" .Tier}}
           {{if .Number}}<span class="item-number">#{{.Number}}</span>{{end}}
           <a class="item-title" href="{{.URL}}" target="_blank" rel="noopener noreferrer">{{.Title}}</a>
           {{/* The item's labels as chips (FR-1.10 AC3). Key picks the colour class; the six names the arc42 repositories use get a colour of their own, everything else is a plain chip. The cue before the first chip gives a screen reader a spoken boundary between the title and the labels, since nothing else in the markup says where the title ends. */}}

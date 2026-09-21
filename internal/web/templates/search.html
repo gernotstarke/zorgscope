@@ -13,8 +13,9 @@
   <p class="source-line">{{.CountLine}}</p>
   <ol class="hits">
     {{range .Hits}}
-    <li class="hit hue-{{.Hue}}{{if .Quiet}} is-quiet{{end}}">
+    <li class="hit hue-{{.Hue}}{{if .Quiet}} is-quiet{{end}}{{with .Tier.Name}} tier-{{.}}{{end}}">
       <p class="item-line">
+        {{template "item-tier" .Tier}}
         <span class="hit-kind">{{.Kind}}</span>
         <span class="hit-repo">{{.Repo}}</span>
         {{if .Number}}<span class="item-number">#{{.Number}}</span>{{end}}

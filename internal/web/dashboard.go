@@ -301,6 +301,8 @@ type itemView struct {
 	// Quiet marks an item nothing has touched for the visitor's chosen threshold, domain.QuietAfter
 	// by default (FR-1.10 AC4, FR-1.12 AC4).
 	Quiet bool
+	// Tier is how loudly the row is marked (FR-1.13), shared with the search results' rows.
+	Tier tierView
 }
 
 // labelView is one chip: the name as GitHub spells it, and the key that picks its colour class.
@@ -432,12 +434,18 @@ func (s *Server) itemsView(d domain.Dashboard, snap snapshot.Snapshot, now time.
 }
 
 // shownLine is the count above the list. It names the total whenever a filter is in force,
-// because "12 open" and "12 of 150 open" are different news and only one of them is true.
+// because "12 open" and "12 of 150 open" are different news and only one of them is true. When
+// any security item is open it says so, counted over everything whatever the filter
+// (FR-1.13 AC4), and says nothing when there are none.
 func shownLine(d domain.Dashboard) string {
-	if d.Filter.Empty() {
-		return strconv.Itoa(d.Total) + " open"
+	line := strconv.Itoa(d.Total) + " open"
+	if !d.Filter.Empty() {
+		line = strconv.Itoa(d.Shown) + " of " + strconv.Itoa(d.Total) + " open"
 	}
-	return strconv.Itoa(d.Shown) + " of " + strconv.Itoa(d.Total) + " open"
+	if d.Security > 0 {
+		line += " · " + strconv.Itoa(d.Security) + " security"
+	}
+	return line
 }
 
 // countLine is the same figure per repository, and is drawn from the group's unfiltered total for
@@ -509,7 +517,8 @@ func newItemView(it domain.Item, now time.Time, quiet time.Duration) itemView {
 		Created: newTimeView(it.CreatedAt, now),
 		Updated: newTimeView(it.UpdatedAt, now),
 		Labels:  labelViews(it.Labels),
-		Quiet:   it.IsQuiet(now, quiet),
+		Quiet:   it.ShowsQuiet(now, quiet),
+		Tier:    newTierView(it),
 	}
 }
 

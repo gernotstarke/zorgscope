@@ -49,6 +49,8 @@ type hitView struct {
 	Author  string
 	Updated timeView
 	Quiet   bool
+	// Tier is how loudly the row is marked (FR-1.13), shared with the list's rows.
+	Tier tierView
 	// Matched is the evidence line, "matched: title, label", or "" when only the kind matched.
 	Matched string
 }
@@ -79,7 +81,8 @@ func (s *Server) searchView(snap snapshot.Snapshot, q string, now time.Time, qui
 			Labels:  labelViews(h.Item.Labels),
 			Author:  h.Item.Author,
 			Updated: newTimeView(h.Item.UpdatedAt, now),
-			Quiet:   h.Item.IsQuiet(now, quiet),
+			Quiet:   h.Item.ShowsQuiet(now, quiet),
+			Tier:    newTierView(h.Item),
 			Matched: matchedLine(h.Matched),
 		})
 	}

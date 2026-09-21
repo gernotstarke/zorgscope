@@ -781,6 +781,44 @@ button:hover,
   background: color-mix(in srgb, var(--label) 10%, transparent);
 }
 
+/* The tier chips (FR-1.13). The word carries the meaning; the colour and the shield only make it
+   easier to spot. Security is loud because it means a published vulnerability; Dependency is quiet
+   because a routine update is maintenance, and a mark that is always loud is read as noise. */
+.tier-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25em;
+  margin-right: 0.35rem;
+  padding: 0 0.4em;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.5;
+  vertical-align: 0.1em;
+}
+.tier-chip-security { color: var(--danger); }
+.tier-chip-dependency { color: var(--muted); font-weight: 500; }
+.tier-shield { flex: none; }
+
+/* The red rule for a Security row (FR-1.13 AC2). It is an inset box-shadow rather than a border
+   because both rows already have a left edge that means something else: a search result carries
+   the site's colour stripe as its own border (FR-1.10 AC2), and a list row sits inside a group
+   that carries it. A border would replace that colour; a shadow is drawn beside it.
+
+   A search result already has a gutter between its stripe and its text, so the shadow needs
+   nothing more. A list row has none — its group's gutter is outside it — so the row reaches into
+   that gutter and pads itself back by the same amount: the red lands against the site stripe and
+   the text stays aligned with the rows around it. */
+.hit.tier-security {
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+.item.tier-security {
+  margin-left: -0.75rem;
+  padding-left: 0.75rem;
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+
 /* Quiet: nothing has happened here for three months (FR-1.10 AC4). The title dims, and the meta
    line says the word, so the state is readable without the colour. */
 .is-quiet .item-title { color: var(--muted); }

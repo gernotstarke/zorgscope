@@ -1,0 +1,9 @@
+{{/* The tier chip (FR-1.13 AC2), drawn by the list and by the search results alike. It is one
+     definition in a fragment file because fragmentGlob parses every file here into every page and
+     into the fragment set, so the list, GET /items and /search all reach the same markup and the
+     three cannot drift.
+
+     The word is what carries the meaning; the shield is decorative and hidden from assistive
+     technology. The title names the evidence, so a red row always answers "why?". It is called
+     with the tierView itself. */}}
+{{define "item-tier"}}{{if .Name}}<span class="tier-chip tier-chip-{{.Name}}"{{with .Evidence}} title="{{.}}"{{end}}>{{if eq .Name "security"}}<svg class="tier-shield" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false"><path d="M8 1.2 2.5 3.3v4.2c0 3.4 2.3 6.3 5.5 7.3 3.2-1 5.5-3.9 5.5-7.3V3.3z" fill="currentColor"/></svg>{{end}}{{.Label}}</span>{{end}}{{end}}
