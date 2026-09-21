@@ -74,6 +74,7 @@ var githubRepoFiles = map[string]string{
 	"org/repo":  "testdata/github/repos/org-repo.json",
 	"org/paged": "testdata/github/repos/org-paged.json",
 	"org/bad":   "testdata/github/repos/org-bad.json",
+	"org/deps":  "testdata/github/repos/org-deps.json",
 }
 
 // loadFixtures reads every embedded fixture document fresh and returns a new, independent copy of

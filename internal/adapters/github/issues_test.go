@@ -9,6 +9,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -407,6 +408,46 @@ func TestIssueBodyTextReachesTheItem(t *testing.T) {
 	}
 	if empty.Summary != "" {
 		t.Errorf("Summary = %q for an issue with no body, want empty", empty.Summary)
+	}
+}
+
+// FR-1.13 AC1: the advisories a body cites reach the item through the real decode path, scanned
+// from the whole bodyText before it is cut to a summary. The fixture's org/deps is a separate
+// repository from org/repo on purpose, so this test's counts never move org/repo's.
+func TestFetchCarriesAdvisories(t *testing.T) {
+	srv := httptest.NewServer(fakesources.NewServer())
+	defer srv.Close()
+
+	f := github.NewIssueFetcher(github.Config{
+		Token: "x", BaseURL: srv.URL + "/graphql", Repos: []string{"org/deps"},
+	}, srv.Client())
+
+	items, err := f.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	byID := byKey(items)
+
+	security, ok := byID["pr:org/deps#20"]
+	if !ok {
+		t.Fatalf("pr:org/deps#20 missing from %d items", len(items))
+	}
+	wantAdvisories := []string{"CVE-2026-54904", "GHSA-6wx8-w4f5-wwcr"}
+	if !reflect.DeepEqual(security.Advisories, wantAdvisories) {
+		t.Errorf("Advisories = %v, want %v", security.Advisories, wantAdvisories)
+	}
+	if strings.Contains(security.Summary, "CVE-2026-54904") {
+		t.Errorf("Summary = %q contains the CVE — the scan must reach past the summary, not read it", security.Summary)
+	}
+
+	for _, key := range []string{"pr:org/deps#21", "pr:org/deps#22"} {
+		it, ok := byID[key]
+		if !ok {
+			t.Fatalf("%s missing from %d items", key, len(items))
+		}
+		if it.Advisories != nil {
+			t.Errorf("%s Advisories = %v, want nil", key, it.Advisories)
+		}
 	}
 }
 

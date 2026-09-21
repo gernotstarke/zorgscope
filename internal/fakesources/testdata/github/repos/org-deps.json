@@ -1,0 +1,58 @@
+{
+  "issues": [],
+  "pullRequests": [
+    {
+      "number": 20,
+      "title": "Bump concurrent-ruby from 1.2.2 to 1.3.7",
+      "bodyText": "Bumps concurrent-ruby from 1.2.2 to 1.3.7. This release rolls up several months of upstream maintenance: internal buffer handling was tightened, a handful of deprecated APIs were removed in favour of their modern replacements, and the test suite was expanded to cover additional JRuby and TruffleRuby edge cases. Packaging metadata was refreshed and the changelog entries below summarise every intermediate release between the two versions this pull request spans, so reviewers can see exactly what changed without following external links. This release also fixes CVE-2026-54904 and GHSA-6wx8-w4f5-wwcr.",
+      "url": "https://github.com/org/deps/pull/20",
+      "author": {
+        "login": "dependabot"
+      },
+      "createdAt": "2026-09-01T09:00:00Z",
+      "updatedAt": "2026-09-02T10:00:00Z",
+      "state": "OPEN",
+      "labels": {
+        "nodes": [
+          {
+            "name": "dependencies"
+          },
+          {
+            "name": "ruby"
+          }
+        ]
+      }
+    },
+    {
+      "number": 21,
+      "title": "Bump uri from 1.0.3 to 1.0.4",
+      "bodyText": "Bumps uri from 1.0.3 to 1.0.4. Updates the gem to the latest patch release, tracking upstream's regular maintenance cadence with no functional changes for this project.",
+      "url": "https://github.com/org/deps/pull/21",
+      "author": {
+        "login": "dependabot"
+      },
+      "createdAt": "2026-09-03T09:00:00Z",
+      "updatedAt": "2026-09-03T09:00:00Z",
+      "state": "OPEN",
+      "labels": {
+        "nodes": [
+          {
+            "name": "dependencies"
+          }
+        ]
+      }
+    },
+    {
+      "number": 22,
+      "title": "Fix broken include",
+      "bodyText": "Fixes a broken include directive in the build configuration that pointed at a file moved in a previous refactor.",
+      "url": "https://github.com/org/deps/pull/22",
+      "author": {
+        "login": "copilot-swe-agent"
+      },
+      "createdAt": "2026-09-04T09:00:00Z",
+      "updatedAt": "2026-09-04T09:30:00Z",
+      "state": "OPEN"
+    }
+  ]
+}

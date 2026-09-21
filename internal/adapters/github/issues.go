@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -315,17 +316,18 @@ func toItem(owner, name string, kind domain.Kind, n ghIssueNode) domain.Item {
 	repo := owner + "/" + name
 	number := int(n.Number)
 	return domain.Item{
-		Kind:      kind,
-		Repo:      repo,
-		Number:    number,
-		Title:     string(n.Title),
-		Summary:   summarise(string(n.BodyText)),
-		URL:       n.URL.String(),
-		Author:    string(n.Author.Login),
-		Labels:    labelNames(n.Labels),
-		State:     string(n.State),
-		CreatedAt: n.CreatedAt.UTC(),
-		UpdatedAt: n.UpdatedAt.UTC(),
+		Kind:       kind,
+		Repo:       repo,
+		Number:     number,
+		Title:      string(n.Title),
+		Summary:    summarise(string(n.BodyText)),
+		Advisories: advisoryIDs(string(n.Title), string(n.BodyText)),
+		URL:        n.URL.String(),
+		Author:     string(n.Author.Login),
+		Labels:     labelNames(n.Labels),
+		State:      string(n.State),
+		CreatedAt:  n.CreatedAt.UTC(),
+		UpdatedAt:  n.UpdatedAt.UTC(),
 	}
 }
 
@@ -385,6 +387,46 @@ func splitRepo(repo string) (owner, name string, ok bool) {
 		return "", "", false
 	}
 	return repo[:i], repo[i+1:], true
+}
+
+// maxAdvisories bounds how many advisory identifiers an item keeps. One is enough to explain why
+// a row is red, and three keeps the chip's title readable; a Dependabot group update can cite a
+// dozen.
+const maxAdvisories = 3
+
+// advisoryPattern matches the two identifier schemes GitHub's own advisories use: CVE, with at
+// least four digits after the year as the scheme requires, and GHSA, three groups of four.
+var advisoryPattern = regexp.MustCompile(`(?i)\b(CVE-\d{4}-\d{4,}|GHSA(?:-[0-9a-z]{4}){3})\b`)
+
+// advisoryIDs returns the CVE and GHSA identifiers the texts cite, in the order first seen,
+// without duplicates, at most maxAdvisories (FR-1.13 AC1).
+//
+// It exists because of where Dependabot puts them: in the release notes it quotes, far past the
+// 300 bytes zorgscope keeps as a summary. So it has to run on the whole body, before summarise
+// cuts it — which costs nothing, because the body already arrives whole in the query that runs
+// today (QS-3.5). The identifiers are normalised so that the same advisory spelled in two cases is
+// one advisory: CVE upper-case, as the scheme writes it, and GHSA with a lower-case body, as GitHub
+// writes it.
+func advisoryIDs(texts ...string) []string {
+	var out []string
+	seen := make(map[string]bool)
+	for _, text := range texts {
+		for _, m := range advisoryPattern.FindAllString(text, -1) {
+			id := strings.ToUpper(m)
+			if strings.HasPrefix(id, "GHSA-") {
+				id = "GHSA-" + strings.ToLower(id[len("GHSA-"):])
+			}
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			out = append(out, id)
+			if len(out) == maxAdvisories {
+				return out
+			}
+		}
+	}
+	return out
 }
 
 // maxSummaryLen bounds what is stored of an item's body text. The dashboard renders roughly eighty
