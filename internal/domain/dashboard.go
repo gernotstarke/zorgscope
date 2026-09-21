@@ -36,6 +36,10 @@ type Dashboard struct {
 	// total would make the dashboard lie about what is out there the moment somebody typed into
 	// the search box.
 	Total, Shown int
+	// Security is how many open items are Security tier, counted over every item regardless of
+	// the filter, like Total (FR-1.13 AC4). A visitor filtered to one repository still needs to
+	// know that another has an open vulnerability.
+	Security int
 	// Filter is the filter that was applied, echoed back so the page can render it as the
 	// visitor left it.
 	Filter Filter
@@ -53,6 +57,11 @@ func BuildDashboard(in DashboardInput) Dashboard {
 	}
 
 	d.Total = len(in.Items)
+	for _, it := range in.Items {
+		if it.Tier() == TierSecurity {
+			d.Security++
+		}
+	}
 	d.Groups = groupByRepo(in.Items, in.Repos, in.Filter)
 	for _, g := range d.Groups {
 		d.Shown += len(g.Items)

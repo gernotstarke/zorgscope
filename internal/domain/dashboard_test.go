@@ -119,6 +119,27 @@ func TestBuildDashboardCarriesLabelsThrough(t *testing.T) {
 	}
 }
 
+// FR-1.13 AC4: the security count is taken over every item, whatever the filter. A visitor
+// filtered to one repository still needs to know that another has an open vulnerability — the
+// principle FR-2.1 AC3 already applies to Total.
+func TestDashboardCountsSecurityOverEverything(t *testing.T) {
+	items := []domain.Item{
+		{Repo: "a/one", Number: 1, Advisories: []string{"CVE-2026-1111"}},
+		{Repo: "a/two", Number: 2, Labels: []string{"security"}},
+		{Repo: "a/two", Number: 3, Author: "dependabot"},
+		{Repo: "a/two", Number: 4},
+	}
+	d := domain.BuildDashboard(domain.DashboardInput{
+		Now:    time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC),
+		Items:  items,
+		Repos:  []string{"a/one", "a/two"},
+		Filter: domain.Filter{Repo: "a/two"},
+	})
+	if d.Security != 2 {
+		t.Errorf("Security = %d, want 2: one of them is in a repository the filter excludes", d.Security)
+	}
+}
+
 func repoNames(gs []domain.RepoGroup) []string {
 	out := make([]string, 0, len(gs))
 	for _, g := range gs {

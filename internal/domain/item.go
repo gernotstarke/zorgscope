@@ -7,6 +7,7 @@ package domain
 
 import (
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -37,10 +38,16 @@ type Item struct {
 	// Labels are the item's GitHub labels as GitHub spells them, in GitHub's order — at most ten,
 	// which covers every arc42 item there is. nil when the item has none. The domain carries the
 	// names and nothing else; which of them get a colour is the page's business (FR-1.10 AC3).
-	Labels    []string
-	State     string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	Labels []string
+	// Advisories are the CVE and GHSA identifiers the item cites, in its title or anywhere in its
+	// body — deduplicated, in the order they were first seen, at most three. The adapter extracts
+	// them before the body is cut to its summary, because Dependabot cites them in the release
+	// notes, far past the part zorgscope keeps. nil when the item cites none. Like Title, it is
+	// borrowed text and is escaped, never trusted.
+	Advisories []string
+	State      string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // SortItems orders items most recently updated first. The sort is stable, so items with equal
@@ -66,6 +73,76 @@ const QuietAfter = 90 * 24 * time.Hour
 // threshold marks nothing rather than marking everything.
 func (i Item) IsQuiet(now time.Time, after time.Duration) bool {
 	return after > 0 && !i.UpdatedAt.IsZero() && now.Sub(i.UpdatedAt) >= after
+}
+
+// Tier is how loudly the page marks an item (FR-1.13). The zero value is TierNone, so an item
+// nobody classified is simply not marked.
+type Tier int
+
+// The tiers, from quietest to loudest.
+const (
+	TierNone Tier = iota
+	TierDependency
+	TierSecurity
+)
+
+// String is the tier as the page names it in a class, and so is fixed text: never anything an
+// upstream said.
+func (t Tier) String() string {
+	switch t {
+	case TierSecurity:
+		return "security"
+	case TierDependency:
+		return "dependency"
+	default:
+		return ""
+	}
+}
+
+// dependencyBots are the logins of the bots whose pull requests update dependencies. They are
+// compared without regard to case. A bot that is not listed here — Copilot, GitHub Actions — is
+// deliberately not a dependency update: what marks an item is what it does, not what opened it.
+var dependencyBots = []string{"dependabot", "renovate"}
+
+// Tier classifies the item from evidence (FR-1.13 AC1).
+//
+// Security needs evidence of a vulnerability: a cited advisory, or a label a person applied. A
+// Dependabot pull request that cites a CVE is therefore Security, not Dependency — it is the fix
+// for a published vulnerability, which is the thing the red exists to say. One that cites nothing
+// is maintenance, and gets the quiet mark, so that the red keeps meaning something: a mark that is
+// always on is read as noise, which is what retired the NEW badge (ADR-0012).
+func (i Item) Tier() Tier {
+	if len(i.Advisories) > 0 || i.hasLabel("security") {
+		return TierSecurity
+	}
+	if i.hasLabel("dependencies") {
+		return TierDependency
+	}
+	for _, bot := range dependencyBots {
+		if strings.EqualFold(i.Author, bot) {
+			return TierDependency
+		}
+	}
+	return TierNone
+}
+
+// hasLabel reports whether the item carries a label spelled name in any case. Labels keep
+// GitHub's spelling, and repositories spell the same label differently.
+func (i Item) hasLabel(name string) bool {
+	for _, l := range i.Labels {
+		if strings.EqualFold(l, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// ShowsQuiet is IsQuiet, except that a Security item is never quiet (FR-1.13 AC3). An old, unfixed
+// vulnerability is exactly the item a reader most needs to see, and dimming it would hide it.
+// The list and the search results both call this rather than IsQuiet, so that the override lives
+// in one place and the two cannot disagree.
+func (i Item) ShowsQuiet(now time.Time, after time.Duration) bool {
+	return i.Tier() != TierSecurity && i.IsQuiet(now, after)
 }
 
 // AgeBucket classifies how long ago something happened, relative to a display cutoff.
