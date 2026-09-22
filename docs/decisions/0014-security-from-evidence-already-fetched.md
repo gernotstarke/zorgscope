@@ -102,6 +102,10 @@ Dependency itself still fires often enough to be the mark most bumps get — see
   nobody labels, is drawn as Dependency, not Security.
 * Bad: a routine bump whose quoted release notes happen to cite an unrelated advisory is drawn
   as Security. On these repositories that errs towards visible, which is the safer mistake.
+* Bad: a false positive is now twice as prominent: the Sites view opens with a Security tile
+  gathering every marked item, so an issue that only mentions a CVE in passing sits at the top of
+  that page as well as in the list, and — being a Security item — never goes quiet. That is the
+  price of the tile answering "is anything security-related open?" without being read past.
 * Bad: a person's issue that mentions a CVE only in passing — "not affected by
   CVE-2021-44228" — turns red on the strength of the mention alone, and because a Security item
   is never marked quiet (FR‑1.10 AC4), that false positive stays just as loud however old it gets.
@@ -115,6 +119,28 @@ Dependency itself still fires often enough to be the mark most bumps get — see
   tier fires then depends on label order rather than on the label being there at all.
 * Neutral: Dependabot's pull requests are short-lived and none is open at the time of writing,
   so the highlight is usually dormant — until the next run makes it fire.
+
+### Amendment, 2026-09-22: the Security tile and the tier filter
+
+Marking the items in place left the marks spread over up to ten site tiles, so "is anything
+security-related open anywhere?" still had to be answered by reading the whole page. `/sites` now
+opens with one Security tile gathering every marked item wherever it is open (FR‑1.13 AC6), and
+the list gained a tier axis (FR‑1.13 AC7) that the tile and the list's own security count link to.
+
+Three choices inside that, and why:
+
+* The tier axis is a **floor**, not an equality: `tier=dependency` keeps the Security items too.
+  A bump that fixes a vulnerability is still a bump, and the tile needs one link meaning
+  "everything I mark".
+* The tile is **always drawn**, saying "No security or dependency items open." when nothing is
+  marked, which ADR-0014 expects to be the ordinary state. A tile that appeared only when it had
+  something to say could not be told apart from a check that had stopped running, and it would
+  move the tiles below it on the days it fired. This does not reopen ADR-0012's lesson: what is
+  always on is a calm sentence, and the red rule appears only with a Security item.
+* The tile's heading band is **neutral**, not red, and the alarm is a rule down its edge. White on
+  the dark appearance's `--danger` is about 2.3:1, well under the 4.5:1 FR‑1.8 AC5 requires, so a
+  red band could not have carried the heading's text; the rule is a non-text signal and needs only
+  3:1, which it has in both appearances.
 
 ## Pros and cons of the options
 
