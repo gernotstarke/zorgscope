@@ -441,61 +441,66 @@ func TestTheSecurityTilesRuleIsVisibleInBothAppearances(t *testing.T) {
 	}
 }
 
-// FR-1.8 AC5 covers every tile, including the one that carries no brand colour: the Security
-// tile's heading band is the page's border colour, and the page's text is written on it.
-func TestTheSecurityTilesHeadingKeepsTextReadable(t *testing.T) {
+// FR-1.8 AC5 covers every tile, including the one that carries no site colour. The Security
+// tile's heading is hazard tape — two deep reds, diagonally striped — with white written on it,
+// so the word has to stay readable over *both* stripes. The band is one fixed pair of colours in
+// both appearances, like the rainbow band: it is a warning, not a theme.
+func TestTheSecurityTilesStripedHeadingKeepsTextReadable(t *testing.T) {
 	raw, err := fs.ReadFile(embedded, "static/app.css")
 	if err != nil {
 		t.Fatalf("reading the embedded app.css: %v", err)
 	}
 	css := string(raw)
-	//nolint:misspell // "color" is the CSS property, not a misspelling
-	if !strings.Contains(css, ".tile-tier .tile-title { background: var(--border); color: var(--text); }") {
-		t.Fatal("the security tile's heading is not --text on --border; this test measures that pair")
+	if !strings.Contains(css, ".tile-tier .tile-title") {
+		t.Fatal("app.css has no .tile-tier .tile-title rule")
 	}
-	text, ok := lightDarkToken(t, css, "text")
-	if !ok {
-		t.Fatal("no --text token")
+	//nolint:misspell // repeating-linear-gradient is the CSS function's own name
+	if !strings.Contains(css, "repeating-linear-gradient(45deg, var(--tape-red)") {
+		t.Fatal("the security tile's heading is not hazard tape; this test measures that band")
 	}
-	border, ok := lightDarkToken(t, css, "border")
-	if !ok {
-		t.Fatal("no --border token")
-	}
-	for i, appearance := range []string{"light", "dark"} {
-		if r := contrastRatio(text[i], border[i]); r < 4.5 {
-			t.Errorf("the security tile's heading on the %s page = %.2f:1, want at least 4.5:1", appearance, r)
+	white := rgb{255, 255, 255}
+	for _, name := range []string{"tape-red", "tape-red-dark"} {
+		stripe, ok := hexToken(t, css, name)
+		if !ok {
+			continue
+		}
+		if r := contrastRatio(white, stripe); r < 4.5 {
+			t.Errorf("white on --%s = %.2f:1, want at least 4.5:1", name, r)
 		}
 	}
 }
 
-// FR-1.13 AC2 with FR-1.8 AC5: the Dependency mark is amber, and amber is the colour most likely
-// to fail one of the two appearances. The chip's word must reach 4.5:1 on its own tinted
-// background, and the rule down the row, a non-text signal, 3:1 against the page.
-func TestTheDependencyMarkKeepsItsContrast(t *testing.T) {
+// FR-1.13 AC2: a marked row carries hazard tape down its edge, and the chip is solid rather than
+// outlined. Both ends of that have to stay readable: the tape against the page, and the chip's
+// word on its own fill, in both appearances.
+func TestTheMarkedRowsTapeAndChipKeepTheirContrast(t *testing.T) {
 	raw, err := fs.ReadFile(embedded, "static/app.css")
 	if err != nil {
 		t.Fatalf("reading the embedded app.css: %v", err)
 	}
 	css := string(raw)
-	warn, ok := lightDarkToken(t, css, "warn")
-	if !ok {
-		t.Fatal("no --warn token: the Dependency mark is drawn in it")
-	}
-	bg, ok := lightDarkToken(t, css, "bg")
-	if !ok {
-		t.Fatal("no --bg token")
-	}
 	surface, ok := lightDarkToken(t, css, "surface")
 	if !ok {
 		t.Fatal("no --surface token")
 	}
-	for i, appearance := range []string{"light", "dark"} {
-		chip := mixSRGB(warn[i], bg[i], 0.10)
-		if r := contrastRatio(warn[i], chip); r < 4.5 {
-			t.Errorf("the Dependency chip's word on the %s page = %.2f:1, want at least 4.5:1", appearance, r)
+	// The tape's two stripes are the tier's colour and that colour mixed halfway into the page,
+	// so the tier's own colour is the strongest thing in it: measuring that one measures the tape.
+	for tier, token := range map[string]string{"security": "danger", "dependency": "warn"} {
+		colour, ok := lightDarkToken(t, css, token)
+		if !ok {
+			continue
 		}
-		if r := contrastRatio(warn[i], surface[i]); r < 3 {
-			t.Errorf("the Dependency rule on the %s page = %.2f:1, want at least 3:1", appearance, r)
+		ink, ok := lightDarkToken(t, css, "tier-ink-"+tier)
+		if !ok {
+			continue
+		}
+		for i, appearance := range []string{"light", "dark"} {
+			if r := contrastRatio(colour[i], surface[i]); r < 3 {
+				t.Errorf("the %s tape on the %s page = %.2f:1, want at least 3:1", tier, appearance, r)
+			}
+			if r := contrastRatio(ink[i], colour[i]); r < 4.5 {
+				t.Errorf("the %s chip's word on the %s page = %.2f:1, want at least 4.5:1", tier, appearance, r)
+			}
 		}
 	}
 }

@@ -312,23 +312,25 @@ func TestTheSecurityTileLinksOnOnlyWhenItCutSomething(t *testing.T) {
 	}
 }
 
-// A Dependency row was drawn exactly like the label beside it: a grey outlined pill in the same
-// size and weight, saying "Dependency" next to a "dependencies" label. It is a mark, so it gets a
-// colour and a rule of its own — amber, not the red that means a published vulnerability.
-func TestADependencyRowIsMarkedInAmber(t *testing.T) {
+// A marked row wears hazard tape down its edge and a solid chip (FR-1.13 AC2). Drawn as it was
+// first built, the Dependency chip took --muted at the labels' weight in the labels' pill, beside
+// a "dependencies" label saying the same word: a mark that cannot be told from the furniture
+// beside it is not a mark.
+func TestAMarkedRowWearsHazardTape(t *testing.T) {
 	raw, err := fs.ReadFile(embedded, "static/app.css")
 	if err != nil {
 		t.Fatalf("reading the embedded app.css: %v", err)
 	}
 	css := string(raw)
 	for _, want := range []string{
-		".item.tier-dependency",
-		".hit.tier-dependency",
-		"inset 3px 0 0 var(--warn)",
-		".tier-chip-dependency",
+		".item.tier-security", ".item.tier-dependency",
+		".hit.tier-security", ".hit.tier-dependency",
+		"--tier-tape: var(--danger)", "--tier-tape: var(--warn)",
+		//nolint:misspell // repeating-linear-gradient is the CSS function's own name
+		"repeating-linear-gradient(45deg, var(--tier-tape)",
 	} {
 		if !strings.Contains(css, want) {
-			t.Errorf("app.css has no %s: the quiet tier is drawn like the labels beside it", want)
+			t.Errorf("app.css has no %s: the mark is drawn too quietly", want)
 		}
 	}
 	//nolint:misspell // "color" is the CSS property, not a misspelling

@@ -21,6 +21,15 @@
   --warn: light-dark(#8a5300, #e0a03c);
   --ok: light-dark(#1f7a3d, #6bc98a);
 
+  /* The hazard tape (FR-1.13). The two deep reds of the Security tile's heading band are one
+     fixed pair in both appearances, like the rainbow band: a warning is not a theme, and white
+     has to stay readable on both stripes either way. The inks are what a solid tier chip writes
+     with — white on the light page's dark fills, near-black on the dark page's bright ones. */
+  --tape-red: #a8231d;
+  --tape-red-dark: #6d1611;
+  --tier-ink-security: light-dark(#ffffff, #2a0f0c);
+  --tier-ink-dependency: light-dark(#ffffff, #1a1206);
+
   --radius: 10px;
   --gap: 1rem;
 }
@@ -797,14 +806,19 @@ button:hover,
   line-height: 1.5;
   vertical-align: 0.1em;
 }
-.tier-chip-security { color: var(--danger); }
-/* Amber, and tinted like a coloured label rather than outlined like a plain one. Drawn in the
-   muted grey it wore at first, at the weight the labels use, the chip was a label: the same pill,
-   the same size, the same colour, sitting beside a "dependencies" label saying the same word. A
-   mark that cannot be told from the furniture beside it is not a mark. */
+/* Solid, not outlined: an outlined pill in the page's own colours is what a label looks like, and
+   a mark that cannot be told from the furniture beside it is not a mark. The ink flips with the
+   appearance, because the fill does — a dark red fill on the light page takes white, a bright one
+   on the dark page takes near-black. */
+.tier-chip-security {
+  color: var(--tier-ink-security);
+  background: var(--danger);
+  border-color: var(--danger);
+}
 .tier-chip-dependency {
-  color: var(--warn);
-  background: color-mix(in srgb, var(--warn) 10%, transparent); /* codespell:ignore color-mix */
+  color: var(--tier-ink-dependency);
+  background: var(--warn);
+  border-color: var(--warn);
 }
 .tier-shield { flex: none; }
 
@@ -817,22 +831,39 @@ button:hover,
    nothing more. A list row has none — its group's gutter is outside it — so the row reaches into
    that gutter and pads itself back by the same amount: the red lands against the site stripe and
    the text stays aligned with the rows around it. */
-.hit.tier-security {
-  box-shadow: inset 3px 0 0 var(--danger);
-}
+.tier-security { --tier-tape: var(--danger); }
+.tier-dependency { --tier-tape: var(--warn); }
+
+/* The tape itself: 8 px of diagonal stripes down the left edge, the tier's colour alternating with
+   that colour mixed halfway into the surface behind it, so the stripe pattern reads without either
+   half disappearing. It is a background rather than a border or a shadow because both of those can
+   only be one flat colour, and because a search result's left border already carries the site's
+   own hue (FR-1.10 AC2) — the tape is drawn beside that stripe, not over it. */
+.item.tier-security,
+.item.tier-dependency,
+.hit.tier-security,
 .hit.tier-dependency {
-  box-shadow: inset 3px 0 0 var(--warn);
+  /* codespell:ignore-begin */
+  background-image: repeating-linear-gradient(45deg, var(--tier-tape) 0 5px,
+      color-mix(in srgb, var(--tier-tape) 30%, var(--surface)) 5px 10px);
+  /* codespell:ignore-end */
+  background-repeat: no-repeat;
+  background-size: 12px 100%;
+  background-position: left top;
 }
+
+/* A list row has no gutter of its own — its group's is outside it — so it reaches into that gutter
+   and pads itself back by the same amount: the tape lands against the site stripe and the text
+   stays aligned with the rows around it. A search result already has that gutter, and only needs
+   its text moved clear of the tape. */
 .item.tier-security,
 .item.tier-dependency {
   margin-left: -0.75rem;
-  padding-left: 0.75rem;
+  padding-left: 1.35rem;
 }
-.item.tier-security {
-  box-shadow: inset 3px 0 0 var(--danger);
-}
-.item.tier-dependency {
-  box-shadow: inset 3px 0 0 var(--warn);
+.hit.tier-security,
+.hit.tier-dependency {
+  padding-left: 1rem;
 }
 
 /* The Security tile (FR-1.13): the Sites view's first tile, gathering everything marked wherever
@@ -843,7 +874,13 @@ button:hover,
 
    The rule is an inset shadow for the same reason the rows' is: the tile already has a border, and
    a border-left would replace rather than join it. */
-.tile-tier .tile-title { background: var(--border); color: var(--text); }
+.tile-tier .tile-title {
+  /* codespell:ignore-begin */
+  background-image: repeating-linear-gradient(45deg, var(--tape-red) 0 10px,
+      var(--tape-red-dark) 10px 20px);
+  /* codespell:ignore-end */
+  color: #ffffff;
+}
 .tile-tier.is-alert { box-shadow: inset 4px 0 0 var(--danger); }
 
 /* The repository a row comes from. The Security tile spans every site, so its rows name what the

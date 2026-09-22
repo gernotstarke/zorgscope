@@ -161,6 +161,16 @@ appearances.
 The label that produced the mark is no longer drawn as a label chip beside it. It said nothing the
 chip did not say louder, and it was the single biggest reason the chip read as a label.
 
+Shown the amber version, Gernot said it was still not loud enough, and asked for the Security tile
+to wear a "root-ish", reddish, striped header. So the marks are now hazard tape: 12 px of diagonal
+stripes down a marked row's left edge, in the tier's colour alternating with that colour mixed into
+the page, and a solid chip rather than an outlined one. The Security tile's heading band is red
+hazard tape every day — the tile is the security tile, and it should be findable by shape rather
+than by reading it. Its band is one fixed pair of deep reds in both appearances, like the rainbow
+band, because a warning is not a theme; the page's `--danger` could not serve, since white on its
+dark-appearance value is about 2.3:1. The red rule down the tile's edge still appears only when a
+Security item is actually open, which is what the band alone cannot say.
+
 ## Pros and cons of the options
 
 ### A: Highlight every bot-authored item
