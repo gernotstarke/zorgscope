@@ -124,9 +124,12 @@ type tileView struct {
 
 // tileItemView is one row of a tile: less than a list row, because a tile is for a glance.
 type tileItemView struct {
-	Number  int
-	Title   string
-	URL     string
+	Number int
+	Title  string
+	URL    string
+	// Tier is the same tier the list and search draw: a tile must not be the one place a
+	// Security or Dependency item goes unmarked.
+	Tier    tierView
 	Updated timeView
 }
 
@@ -188,6 +191,7 @@ func tileItems(items []domain.Item, now time.Time) []tileItemView {
 			Number:  it.Number,
 			Title:   it.Title,
 			URL:     it.URL,
+			Tier:    newTierView(it),
 			Updated: newTimeView(it.UpdatedAt, now),
 		})
 	}

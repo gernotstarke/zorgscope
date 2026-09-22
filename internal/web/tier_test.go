@@ -89,7 +89,9 @@ func TestTheHeaderCountsSecurityItems(t *testing.T) {
 	}
 }
 
-// Advisory identifiers are borrowed text. One that carried markup must reach the page escaped.
+// Advisory identifiers are borrowed text. One that carried markup must reach the page escaped, and
+// the escaped form must still be there — a chip that stopped rendering altogether would also pass
+// the negative half of this test.
 func TestEvidenceIsEscaped(t *testing.T) {
 	it := ghItem(1, "Bump thing", testNow)
 	it.Advisories = []string{`CVE-2026-1111"><script>`}
@@ -99,7 +101,29 @@ func TestEvidenceIsEscaped(t *testing.T) {
 	req.AddCookie(c)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if strings.Contains(rec.Body.String(), `"><script>`) {
+	body := rec.Body.String()
+	if strings.Contains(body, `"><script>`) {
 		t.Error("an advisory identifier reached the page unescaped")
+	}
+	// html/template renders " as &#34; and < as &lt;, so the evidence reaches the page as
+	// title="cites CVE-2026-1111&#34;&gt;&lt;script&gt;.
+	if !strings.Contains(body, `title="cites CVE-2026-1111&#34;&gt;&lt;script&gt;`) {
+		t.Error("the escaped advisory identifier is not on the page: the chip may have stopped rendering entirely")
+	}
+}
+
+// FR-1.13 AC2: the Sites tiles draw the chip too — a Dependabot PR citing a CVE must not be the
+// one place a Security item goes unmarked, and a visitor whose landing view is Sites (FR-1.12)
+// would otherwise see it there first, unmarked, before ever reaching the list. tierItems' three
+// items are all issues in repo "org/repo" (ghItem's fixed repository); dashHandler configures
+// that repository among its watched repos with no site claiming it, so all three land, unmarked
+// by any site, on the one "Other" tile's Issues list, well inside its four-row cut.
+func TestSitesTilesDrawTheTierChip(t *testing.T) {
+	h := dashHandler(t, &fakeSource{items: tierItems()})
+	body := getAuthed(t, h, "/sites").Body.String()
+	for _, want := range []string{`>Security<`, `title="cites CVE-2026-54904`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/sites lacks %s: a Dependabot PR citing a CVE would appear on a tile unmarked", want)
+		}
 	}
 }

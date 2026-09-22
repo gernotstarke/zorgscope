@@ -88,19 +88,30 @@ The patterns:
 **Domain — owns the rule.** `Item.Advisories`, `type Tier`, `Item.Tier()`, `Item.ShowsQuiet`, and
 `Dashboard.Security`, counted beside `Total` over every item regardless of the filter.
 
-**Web — draws it, in both places.** Search builds its rows in `searchView`, separately from the
-list's `newItemView`; both gain the tier and both call `ShowsQuiet`. The chip is one
-`{{define "item-tier"}}` in a new `templates/fragments/tier.html`, which `fragmentGlob` parses into
-every page and into the fragment set, so the list, the `GET /items` fragment and the search results
-all draw the same markup and cannot drift.
+**Web — draws it, in every place an item appears.** Search builds its rows in `searchView`,
+separately from the list's `newItemView`; both gain the tier and both call `ShowsQuiet`. The chip
+is one `{{define "item-tier"}}` in a new `templates/fragments/tier.html`, which `fragmentGlob`
+parses into every page and into the fragment set, so the list, the `GET /items` fragment and the
+search results all draw the same markup and cannot drift. The Sites tiles (`tileitem` in
+`sites.html`) reach the same definition for the same reason and draw the chip too — a Dependabot
+pull request citing a CVE must not be the one place it goes unmarked. A tile row carries the chip
+only, never the row's danger-coloured rule: a tile is small and already sits inside a coloured
+tile, so the rule stays a list-and-search-only device (§7, §8).
 
 ## 6. Why not GitHub's security alerts
 
-On 2026‑09‑17 Gernot rejected surfacing GitHub's security alerts, and this design keeps that
-decision rather than reopening it. The Dependabot alerts, code-scanning and secret-scanning feeds
-are separate APIs: each would be a new request in a budget with none to spare (QS‑3.5), and each
-needs a `security_events` scope the token does not have. Everything this design highlights is
-already on the list, fetched by the queries that run today.
+This is not purely a request-budget question, and [ADR‑0014](../../decisions/0014-security-from-
+evidence-already-fetched.md) is where the full reasoning and the decision itself are recorded.
+In short: Dependabot alerts are `Repository.vulnerabilityAlerts`, a connection GraphQL lets be
+nested into the `repository(...)` query this design already runs, so it could in principle be
+read without a new request — QS‑3.5's own text allows a nested connection to raise GitHub's point
+cost without raising the count. What keeps it unasked is that reading security alerts needs
+repository access and a token permission this deployment's token does not carry, and that Gernot
+decided not to reopen the question of asking GitHub for security data at all — a decision this
+design records as ADR‑0014, made 2026‑09‑21. Code scanning and secret scanning stay ruled out for
+the budget reason: both are REST-only, so nesting does not apply, and each would be a genuinely
+new request in a budget with none to spare (QS‑3.5). Everything this design highlights is already
+on the list, fetched by the queries that run today.
 
 ## 7. The visual
 

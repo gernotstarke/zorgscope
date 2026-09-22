@@ -32,6 +32,7 @@
      Known exactly as the list guards its own. */}}
 {{define "tileitem"}}
 <li class="tile-item">
+  {{template "item-tier" .Tier}}
   {{if .Number}}<span class="item-number">#{{.Number}}</span>{{end}}
   <a class="item-title" href="{{.URL}}" target="_blank" rel="noopener noreferrer">{{.Title}}</a>
   <span class="tile-updated">{{if .Updated.Known}}updated <time datetime="{{.Updated.Absolute}}">{{.Updated.Relative}}</time>{{else}}updated at an unknown time{{end}}</span>
