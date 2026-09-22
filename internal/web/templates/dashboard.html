@@ -31,6 +31,14 @@
     <label><input type="radio" name="kind" value="issue"{{if eq .Filter.Kind "issue"}} checked{{end}}> issues</label>
     <label><input type="radio" name="kind" value="pr"{{if eq .Filter.Kind "pr"}} checked{{end}}> pull requests</label>
   </fieldset>
+  {{/* FR-1.13: the tier axis. It is a floor rather than a choice of one tier — "security or
+       dependency" keeps the security items, because a bump that fixes a vulnerability is still a
+       bump, and the Security tile links here for everything it marks. */}}
+  <fieldset class="filter-kind"><legend>Marked</legend>
+    <label><input type="radio" name="tier" value=""{{if eq .Filter.Tier ""}} checked{{end}}> all</label>
+    <label><input type="radio" name="tier" value="dependency"{{if eq .Filter.Tier "dependency"}} checked{{end}}> security or dependency</label>
+    <label><input type="radio" name="tier" value="security"{{if eq .Filter.Tier "security"}} checked{{end}}> security</label>
+  </fieldset>
   <label class="filter-field">Created since <input type="date" name="since" value="{{.Filter.Since}}"></label>
   <label class="filter-field">Search <input type="search" name="q" value="{{.Filter.Text}}" placeholder="title or description"></label>
   {{/* The only control htmx makes redundant, so it is drawn only where htmx is not: with script

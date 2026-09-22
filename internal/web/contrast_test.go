@@ -412,3 +412,58 @@ func TestGroupStripesAreVisibleInBothAppearances(t *testing.T) {
 		}
 	}
 }
+
+// FR-1.13 with FR-1.8 AC5: the Security tile's rule is a signal drawn in colour, so it needs the
+// 3:1 against the surface behind it that WCAG asks of a non-text indicator — in both appearances,
+// and it is the one thing on that tile the eye is meant to catch across the page. The word
+// "Security" in the heading carries the meaning either way; the rule only makes it loud.
+func TestTheSecurityTilesRuleIsVisibleInBothAppearances(t *testing.T) {
+	raw, err := fs.ReadFile(embedded, "static/app.css")
+	if err != nil {
+		t.Fatalf("reading the embedded app.css: %v", err)
+	}
+	css := string(raw)
+	if !strings.Contains(css, "inset 4px 0 0 var(--danger)") {
+		t.Fatal("the alert tile's rule is not 4 px of --danger; this test measures that colour")
+	}
+	danger, ok := lightDarkToken(t, css, "danger")
+	if !ok {
+		t.Fatal("no --danger token")
+	}
+	surface, ok := lightDarkToken(t, css, "surface")
+	if !ok {
+		t.Fatal("no --surface token")
+	}
+	for i, appearance := range []string{"light", "dark"} {
+		if r := contrastRatio(danger[i], surface[i]); r < 3 {
+			t.Errorf("the security tile's rule on the %s page = %.2f:1, want at least 3:1", appearance, r)
+		}
+	}
+}
+
+// FR-1.8 AC5 covers every tile, including the one that carries no brand colour: the Security
+// tile's heading band is the page's border colour, and the page's text is written on it.
+func TestTheSecurityTilesHeadingKeepsTextReadable(t *testing.T) {
+	raw, err := fs.ReadFile(embedded, "static/app.css")
+	if err != nil {
+		t.Fatalf("reading the embedded app.css: %v", err)
+	}
+	css := string(raw)
+	//nolint:misspell // "color" is the CSS property, not a misspelling
+	if !strings.Contains(css, ".tile-tier .tile-title { background: var(--border); color: var(--text); }") {
+		t.Fatal("the security tile's heading is not --text on --border; this test measures that pair")
+	}
+	text, ok := lightDarkToken(t, css, "text")
+	if !ok {
+		t.Fatal("no --text token")
+	}
+	border, ok := lightDarkToken(t, css, "border")
+	if !ok {
+		t.Fatal("no --border token")
+	}
+	for i, appearance := range []string{"light", "dark"} {
+		if r := contrastRatio(text[i], border[i]); r < 4.5 {
+			t.Errorf("the security tile's heading on the %s page = %.2f:1, want at least 4.5:1", appearance, r)
+		}
+	}
+}

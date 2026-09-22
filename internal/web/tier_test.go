@@ -3,6 +3,8 @@ package web
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -70,13 +72,13 @@ func TestASecurityItemIsNeverQuiet(t *testing.T) {
 func TestTheHeaderCountsSecurityItems(t *testing.T) {
 	h := dashHandler(t, &fakeSource{items: tierItems()})
 	c := signIn(t, h)
-	if body := getAs(h, "/", c).Body.String(); !strings.Contains(body, "· 1 security") {
+	if body := getAs(h, "/", c).Body.String(); !strings.Contains(body, ">1 security</a>") {
 		t.Error("the list header does not count the open security item")
 	}
 
 	// Filtered to pull requests, the list shows none of these items — ghItem makes issues — yet
 	// the count still reports the security one, because it counts everything open.
-	if body := getAs(h, "/?kind=pr", c).Body.String(); !strings.Contains(body, "· 1 security") {
+	if body := getAs(h, "/?kind=pr", c).Body.String(); !strings.Contains(body, ">1 security</a>") {
 		t.Error("the security count followed the filter; it must count everything open")
 	}
 
@@ -125,5 +127,186 @@ func TestSitesTilesDrawTheTierChip(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("/sites lacks %s: a Dependabot PR citing a CVE would appear on a tile unmarked", want)
 		}
+	}
+}
+
+// FR-1.13: the tier is a filter axis of its own, read from the query and written back into it, so
+// that a filtered list can be linked to, bookmarked and reloaded like every other filter.
+func TestParseFilterReadsTheTier(t *testing.T) {
+	for in, want := range map[string]domain.Tier{
+		"security":   domain.TierSecurity,
+		"dependency": domain.TierDependency,
+		"":           domain.TierNone,
+		"urgent":     domain.TierNone,
+	} {
+		if got := parseFilter(url.Values{"tier": {in}}, time.UTC).MinTier; got != want {
+			t.Errorf("tier %q parsed as %v, want %v", in, got, want)
+		}
+	}
+}
+
+func TestQueryStringCarriesTheTier(t *testing.T) {
+	for tier, want := range map[domain.Tier]string{
+		domain.TierSecurity:   "?tier=security",
+		domain.TierDependency: "?tier=dependency",
+		domain.TierNone:       "",
+	} {
+		if got := queryString(domain.Filter{MinTier: tier}); got != want {
+			t.Errorf("queryString(%v) = %q, want %q", tier, got, want)
+		}
+	}
+}
+
+// The axis is a floor: asking for dependencies shows the security items too, because a bump that
+// fixes a vulnerability is still a bump, and the Security tile's link means "everything marked".
+func TestTheTierFilterNarrowsTheList(t *testing.T) {
+	h := dashHandler(t, &fakeSource{items: tierItems()})
+	c := signIn(t, h)
+
+	cases := map[string][]string{
+		"/?tier=security":   {"Bump concurrent-ruby"},
+		"/?tier=dependency": {"Bump concurrent-ruby", "Bump uri"},
+	}
+	for path, want := range cases {
+		body := getAs(h, path, c).Body.String()
+		for _, title := range want {
+			if !strings.Contains(body, title) {
+				t.Errorf("%s does not show %q", path, title)
+			}
+		}
+		if strings.Contains(body, "Fix broken include") {
+			t.Errorf("%s shows an unmarked item", path)
+		}
+	}
+}
+
+// The count above the list is the one place a visitor learns that something is marked, so it
+// leads to the items it counts (FR-1.13 AC4).
+func TestTheSecurityCountLinksToTheFilteredList(t *testing.T) {
+	h := dashHandler(t, &fakeSource{items: tierItems()})
+	c := signIn(t, h)
+	body := getAs(h, "/", c).Body.String()
+	if !strings.Contains(body, `href="/?tier=security"`) {
+		t.Error("the security count is not a link to the list filtered to security items")
+	}
+}
+
+// FR-2.1 AC2: every filter control works without JavaScript, which means it is a form field the
+// page echoes the current value back into.
+func TestTheFilterFormOffersTheTier(t *testing.T) {
+	h := dashHandler(t, &fakeSource{items: tierItems()})
+	c := signIn(t, h)
+
+	body := getAs(h, "/?tier=security", c).Body.String()
+	for _, want := range []string{
+		`name="tier" value=""`,
+		`name="tier" value="dependency"`,
+		`name="tier" value="security" checked`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the filter form lacks %s", want)
+		}
+	}
+}
+
+// securityTileItems are three marked items spread over two repositories, plus an unmarked one:
+// the Security tile's whole point is that the marked ones are gathered wherever they are open.
+func securityTileItems() []domain.Item {
+	security := ghItem(1, "Bump concurrent-ruby", testNow.Add(-2*time.Hour))
+	security.Repo = "org/repo"
+	security.Advisories = []string{"CVE-2026-54904"}
+
+	dependency := ghItem(2, "Bump uri", testNow.Add(-time.Hour))
+	dependency.Repo = "arc42/other"
+	dependency.Author = "dependabot"
+
+	pr := ghItem(3, "Bump rack", testNow.Add(-3*time.Hour))
+	pr.Kind = domain.KindPR
+	pr.Author = "renovate"
+
+	return []domain.Item{security, dependency, pr, ghItem(4, "Fix the header", testNow)}
+}
+
+// FR-1.13: the Sites view opens with one tile gathering everything marked, so that the loud thing
+// is not spread over ten tiles. It names each item's repository, because it spans them all.
+func TestTheSitesViewOpensWithTheSecurityTile(t *testing.T) {
+	h := dashHandler(t, &fakeSource{items: securityTileItems()})
+	body := getAuthed(t, h, "/sites").Body.String()
+
+	tile := strings.Index(body, `class="tile tile-tier`)
+	if tile < 0 {
+		t.Fatal("/sites has no security tile")
+	}
+	if first := strings.Index(body, `class="tile hue-`); first >= 0 && first < tile {
+		t.Error("a site tile is drawn before the security tile")
+	}
+	if !strings.Contains(body, "1 security · 2 dependency") {
+		t.Error("the tile does not count the tiers before the cut")
+	}
+	for _, want := range []string{"Bump concurrent-ruby", "Bump uri", "Bump rack", "arc42/other"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the security tile lacks %q", want)
+		}
+	}
+}
+
+// The red rule is the tile's alarm, so it is drawn only while a security item is open — a mark
+// that is always on stops being read (ADR-0012, ADR-0014).
+func TestTheSecurityTilesRuleFollowsTheSecurityItems(t *testing.T) {
+	dependency := ghItem(1, "Bump uri", testNow)
+	dependency.Author = "dependabot"
+
+	cases := map[string]struct {
+		items []domain.Item
+		alert bool
+	}{
+		"a security item is open":   {securityTileItems(), true},
+		"only a dependency is open": {[]domain.Item{dependency}, false},
+		"nothing is marked":         {[]domain.Item{ghItem(1, "Fix the header", testNow)}, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := dashHandler(t, &fakeSource{items: tc.items})
+			body := getAuthed(t, h, "/sites").Body.String()
+			if got := strings.Contains(body, "tile-tier is-alert"); got != tc.alert {
+				t.Errorf("the tile draws its rule = %v, want %v", got, tc.alert)
+			}
+		})
+	}
+}
+
+// Nothing marked is the ordinary state (ADR-0014). The tile stays, and says so in words: a tile
+// that vanished would read as a check that had stopped running.
+func TestTheSecurityTileSaysWhenNothingIsMarked(t *testing.T) {
+	h := dashHandler(t, &fakeSource{items: []domain.Item{ghItem(1, "Fix the header", testNow)}})
+	body := getAuthed(t, h, "/sites").Body.String()
+
+	if !strings.Contains(body, "No security or dependency items open") {
+		t.Error("the security tile does not say that nothing is marked")
+	}
+	if strings.Contains(body, `href="/?tier=dependency"`) {
+		t.Error("an empty tile links on to a list that would be empty too")
+	}
+}
+
+// FR-1.8 AC3's rule, applied to this tile: only a tile that cut something links on, and it links
+// to the list narrowed to everything it marks — security items included, since the axis is a
+// floor.
+func TestTheSecurityTileLinksOnOnlyWhenItCutSomething(t *testing.T) {
+	var many []domain.Item
+	for i := range 6 {
+		it := ghItem(i+1, "Bump something "+strconv.Itoa(i), testNow.Add(-time.Duration(i)*time.Hour))
+		it.Author = "dependabot"
+		many = append(many, it)
+	}
+
+	h := dashHandler(t, &fakeSource{items: many})
+	if body := getAuthed(t, h, "/sites").Body.String(); !strings.Contains(body, `href="/?tier=dependency"`) {
+		t.Error("a tile that cut items does not link to the filtered list")
+	}
+
+	few := dashHandler(t, &fakeSource{items: securityTileItems()})
+	if body := getAuthed(t, few, "/sites").Body.String(); strings.Contains(body, `href="/?tier=dependency"`) {
+		t.Error("a tile that cut nothing links on anyway")
 	}
 }

@@ -246,6 +246,11 @@ type itemsView struct {
 	// matches this filter" and "nothing is open".
 	Filtered  bool
 	ShownLine string // "12 of 40 open" when filtered, "40 open" otherwise
+	// Security is how many security items are open, counted over everything whatever the filter
+	// (FR-1.13 AC4). Zero draws nothing at all: "0 security" is a sentence nobody needs. It is
+	// drawn beside ShownLine rather than inside it because it is a link to the list narrowed to
+	// those items, and a link cannot be built out of a sentence.
+	Security int
 	// Fetching says a fetch is in flight, so the list draws the poll that will replace it and
 	// states that it is not current (FR-1.9 AC2, AC6). It lives on the items view rather than on
 	// the page, because GET /items renders this struct alone: putting it on the page would mean
@@ -272,6 +277,7 @@ type groupView struct {
 type filterView struct {
 	Repo, Text, Since string
 	Kind              string // "", "issue" or "pr"
+	Tier              string // "", "dependency" or "security" (FR-1.13)
 }
 
 // timeView is one timestamp rendered twice: an absolute stamp for the <time> element's machine
@@ -415,6 +421,7 @@ func (s *Server) itemsView(d domain.Dashboard, snap snapshot.Snapshot, now time.
 		Groups:    make([]groupView, 0, len(d.Groups)),
 		Filtered:  !d.Filter.Empty(),
 		ShownLine: shownLine(d),
+		Security:  d.Security,
 		Fetching:  snap.Fetching,
 		Repos:     len(s.cfg.GitHub.Repos),
 	}
@@ -434,18 +441,13 @@ func (s *Server) itemsView(d domain.Dashboard, snap snapshot.Snapshot, now time.
 }
 
 // shownLine is the count above the list. It names the total whenever a filter is in force,
-// because "12 open" and "12 of 150 open" are different news and only one of them is true. When
-// any security item is open it says so, counted over everything whatever the filter
-// (FR-1.13 AC4), and says nothing when there are none.
+// because "12 open" and "12 of 150 open" are different news and only one of them is true. The
+// security count is drawn beside it, by the template, as a link (FR-1.13 AC4).
 func shownLine(d domain.Dashboard) string {
-	line := strconv.Itoa(d.Total) + " open"
 	if !d.Filter.Empty() {
-		line = strconv.Itoa(d.Shown) + " of " + strconv.Itoa(d.Total) + " open"
+		return strconv.Itoa(d.Shown) + " of " + strconv.Itoa(d.Total) + " open"
 	}
-	if d.Security > 0 {
-		line += " · " + strconv.Itoa(d.Security) + " security"
-	}
-	return line
+	return strconv.Itoa(d.Total) + " open"
 }
 
 // countLine is the same figure per repository, and is drawn from the group's unfiltered total for
@@ -487,7 +489,7 @@ func filterRepos(configured []string, applied string) []string {
 // newFilterView renders the filter back into the strings its form fields carry. An unset date is
 // the empty string rather than a zero time formatted, which the date input would refuse anyway.
 func newFilterView(f domain.Filter) filterView {
-	v := filterView{Repo: f.Repo, Kind: string(f.Kind), Text: f.Text}
+	v := filterView{Repo: f.Repo, Kind: string(f.Kind), Text: f.Text, Tier: f.MinTier.String()}
 	if !f.CreatedSince.IsZero() {
 		v.Since = f.CreatedSince.Format(dateLayout)
 	}

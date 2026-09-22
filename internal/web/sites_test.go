@@ -74,8 +74,8 @@ func TestSitesListsATilePerSiteInConfigurationOrderThenOther(t *testing.T) {
 		}
 		last = i
 	}
-	if strings.Count(body, `class="tile `) != 4 {
-		t.Errorf("tiles = %d, want 4", strings.Count(body, `class="tile `))
+	if strings.Count(body, `class="tile hue-`) != 4 {
+		t.Errorf("tiles = %d, want 4", strings.Count(body, `class="tile hue-`))
 	}
 	if !strings.Contains(tileSection(t, body, 2), `<span class="tile-tag">DE</span>`) {
 		t.Error("arc42.de carries no DE tag: colour would be the only thing telling it from arc42.org")
@@ -212,7 +212,7 @@ func TestViewSwitchMarksTheCurrentView(t *testing.T) {
 // FR-1.8 AC1: without any configured site, the Sites view shows the one Other tile.
 func TestSitesWithoutConfiguredSitesShowsOnlyOther(t *testing.T) {
 	body := getAuthed(t, newTestServer(t).Handler(), "/sites").Body.String()
-	if n := strings.Count(body, `class="tile `); n != 1 {
+	if n := strings.Count(body, `class="tile hue-`); n != 1 {
 		t.Errorf("tiles = %d, want the one Other tile", n)
 	}
 	if !strings.Contains(body, `class="tile hue-slate" aria-labelledby="tile-1-title"`) {
@@ -233,7 +233,7 @@ func TestSitesOmitsOtherWhenEveryRepositoryIsClaimed(t *testing.T) {
 	}).Handler()
 	body := getAuthed(t, h, "/sites").Body.String()
 
-	if n := strings.Count(body, `class="tile `); n != 2 {
+	if n := strings.Count(body, `class="tile hue-`); n != 2 {
 		t.Errorf("tiles = %d, want 2 (len(Sites), no Other)", n)
 	}
 	if strings.Contains(body, "hue-slate") {
@@ -301,8 +301,8 @@ func TestSitesPageStaysInsideItsBudget(t *testing.T) {
 	}).Handler()
 
 	body := getAuthed(t, h, "/sites").Body.String()
-	if n := strings.Count(body, `class="tile `); n != 8 {
-		t.Fatalf("tiles = %d, want 7 sites and Other: the budget would be measured on the wrong page", n)
+	if n := strings.Count(body, `class="tile hue-`); n != 8 {
+		t.Fatalf("site tiles = %d, want 7 sites and Other: the budget would be measured on the wrong page", n)
 	}
 	if n := len(body); n > 150*1024 {
 		t.Errorf("Sites view is %d bytes, budget is 150 kB (QS-2.3)", n)

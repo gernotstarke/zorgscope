@@ -19,7 +19,11 @@
   </p>
   {{end}}
   <p class="source-line">
-    <span class="shown-count">{{.ShownLine}}</span>
+    <span class="shown-count">{{.ShownLine}}</span>{{if .Security}}
+    {{/* The one place a visitor learns that something is marked leads to it: the link narrows the
+         list to the security items, and works without script like every other filtered URL
+         (FR-1.13 AC4). */}}
+    <span class="security-count"> · <a href="/?tier=security">{{.Security}} security</a></span>{{end}}
   </p>
   {{range .Groups}}
   {{/* The site's colour as a stripe down the group's edge (FR-1.10 AC2): the same hue-<key>

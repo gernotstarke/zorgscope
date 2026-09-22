@@ -35,12 +35,16 @@ func (s *Server) handleSites(w http.ResponseWriter, r *http.Request) {
 	}
 	now := s.clock.Now()
 
+	tier := domain.BuildTierTile(domain.TierTileInput{
+		Items: snap.Items, MaxPRs: tileMaxPRs, MaxIssues: tileMaxIssues,
+	})
 	tiles := domain.BuildSiteTiles(domain.SiteTilesInput{
 		Items: snap.Items, Sites: siteSpecs(s.cfg.GitHub),
 		MaxPRs: tileMaxPRs, MaxIssues: tileMaxIssues,
 	})
 	view := sitesView{
 		headerView: s.headerView(snap),
+		Security:   newTierTileView(tier, now),
 		Tiles:      make([]tileView, 0, len(tiles)),
 	}
 	for i, tile := range tiles {
@@ -101,7 +105,47 @@ func hueForRepo(gh config.GitHub, repo string) string {
 // sitesView is the whole Sites page.
 type sitesView struct {
 	headerView
-	Tiles []tileView
+	// Security is the cross-site tile, drawn before the site tiles (FR-1.13). It is always
+	// present, empty or not.
+	Security tierTileView
+	Tiles    []tileView
+}
+
+// tierTileView is the Security tile: the same rows as a site tile, but no site, no colour and a
+// count of the tiers rather than of the kinds.
+type tierTileView struct {
+	// ID names the heading, as on a site tile.
+	ID string
+	// CountLine is "1 security · 2 dependency", taken before the cut, and empty when nothing at
+	// all is marked — which is what makes the template draw the calm line instead.
+	CountLine string
+	// Alert says a security item is open, and is the only thing that puts the red rule on the
+	// tile: a mark that is always on stops being read (ADR-0012, ADR-0014).
+	Alert       bool
+	PRs, Issues []tileItemView
+	// Href and Label are the "all →" link, set only when the tile cut something (FR-1.8 AC3).
+	// The link narrows the list to everything marked, security items included, because the tier
+	// axis is a floor.
+	Href, Label string
+}
+
+// newTierTileView renders the Security tile.
+func newTierTileView(tile domain.TierTile, now time.Time) tierTileView {
+	v := tierTileView{
+		ID:     "tile-security-title",
+		Alert:  tile.Security > 0,
+		PRs:    tileItems(tile.PRs, now),
+		Issues: tileItems(tile.Issues, now),
+	}
+	if tile.Security+tile.Dependency > 0 {
+		v.CountLine = strconv.Itoa(tile.Security) + " security · " +
+			strconv.Itoa(tile.Dependency) + " dependency"
+	}
+	if tile.More {
+		v.Href = "/?" + url.Values{"tier": {domain.TierDependency.String()}}.Encode()
+		v.Label = "all " + kindsLine(tile.PRTotal, tile.IssueTotal)
+	}
+	return v
 }
 
 // tileView is one tile. Like every view type here, every string it prints is computed in Go.
@@ -127,6 +171,9 @@ type tileItemView struct {
 	Number int
 	Title  string
 	URL    string
+	// Repo names the item's repository. It is drawn only on the Security tile, which spans every
+	// site and so is the one tile whose heading does not already say where a row comes from.
+	Repo string
 	// Tier is the same tier the list and search draw: a tile must not be the one place a
 	// Security or Dependency item goes unmarked.
 	Tier    tierView
@@ -191,6 +238,7 @@ func tileItems(items []domain.Item, now time.Time) []tileItemView {
 			Number:  it.Number,
 			Title:   it.Title,
 			URL:     it.URL,
+			Repo:    it.Repo,
 			Tier:    newTierView(it),
 			Updated: newTimeView(it.UpdatedAt, now),
 		})

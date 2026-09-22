@@ -5,6 +5,31 @@
      attribute (QS-4.4), and never the only thing that tells a site apart: its name is always
      written out, and arc42.de carries a tag (FR-1.8 AC5). */}}
 <div class="tiles">
+  {{/* The Security tile (FR-1.13): everything marked, wherever it is open, drawn before the site
+       tiles because it is what must not be missed. It carries no site colour — it belongs to no
+       site — and its red rule appears only while a security item is open. */}}
+  {{/* Bound to a variable rather than reached for as $.Security inside the with: $ is the page's
+       own data, not this block's. */}}
+  {{$security := .Security}}
+  {{with .Security}}
+  <section class="tile tile-tier{{if .Alert}} is-alert{{end}}" aria-labelledby="{{.ID}}">
+    <h2 class="tile-title" id="{{.ID}}">
+      Security
+      {{with .CountLine}}<span class="tile-count">{{.}}</span>{{end}}
+    </h2>
+    <div class="tile-body">
+      {{if .CountLine}}
+      {{if .PRs}}<h3 class="tile-kind">Pull requests</h3>
+      <ul class="tile-items">{{range .PRs}}{{template "tiertileitem" .}}{{end}}</ul>{{end}}
+      {{if .Issues}}<h3 class="tile-kind">Issues</h3>
+      <ul class="tile-items">{{range .Issues}}{{template "tiertileitem" .}}{{end}}</ul>{{end}}
+      {{with .Href}}<p class="tile-more"><a href="{{.}}">{{$security.Label}} →<span class="visually-hidden"> marked security or dependency</span></a></p>{{end}}
+      {{else}}
+      <p class="tile-empty">No security or dependency items open.</p>
+      {{end}}
+    </div>
+  </section>
+  {{end}}
   {{range .Tiles}}
   <section class="tile hue-{{.Hue}}" aria-labelledby="{{.ID}}">
     <h2 class="tile-title" id="{{.ID}}">
@@ -30,6 +55,18 @@
 {{/* One row of a tile: the number, the title linking to GitHub, and when it last moved. No summary
      and no author — a tile is for a glance, the list is for reading. The timestamp is guarded by
      Known exactly as the list guards its own. */}}
+{{/* A row of the Security tile: a site tile's row plus the repository, which that tile's heading
+     does not name because it spans every site. */}}
+{{define "tiertileitem"}}
+<li class="tile-item">
+  {{template "item-tier" .Tier}}
+  <span class="tile-repo">{{.Repo}}</span>
+  {{if .Number}}<span class="item-number">#{{.Number}}</span>{{end}}
+  <a class="item-title" href="{{.URL}}" target="_blank" rel="noopener noreferrer">{{.Title}}</a>
+  <span class="tile-updated">{{if .Updated.Known}}updated <time datetime="{{.Updated.Absolute}}">{{.Updated.Relative}}</time>{{else}}updated at an unknown time{{end}}</span>
+</li>
+{{end}}
+
 {{define "tileitem"}}
 <li class="tile-item">
   {{template "item-tier" .Tier}}

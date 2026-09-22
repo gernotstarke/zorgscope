@@ -21,6 +21,12 @@ func parseFilter(q url.Values, loc *time.Location) domain.Filter {
 	case "pr":
 		f.Kind = domain.KindPR
 	}
+	switch q.Get("tier") {
+	case "security":
+		f.MinTier = domain.TierSecurity
+	case "dependency":
+		f.MinTier = domain.TierDependency
+	}
 	if since := q.Get("since"); since != "" {
 		// Parsed in the configured timezone rather than in UTC, because the visitor typed a date
 		// into a date field and meant their own day: "since today" a couple of hours after
@@ -52,6 +58,9 @@ func queryString(f domain.Filter) string {
 	}
 	if text := strings.TrimSpace(f.Text); text != "" {
 		q.Set("q", text)
+	}
+	if f.MinTier != domain.TierNone {
+		q.Set("tier", f.MinTier.String())
 	}
 	if len(q) == 0 {
 		return ""
