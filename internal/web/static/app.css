@@ -798,10 +798,17 @@ button:hover,
   vertical-align: 0.1em;
 }
 .tier-chip-security { color: var(--danger); }
-.tier-chip-dependency { color: var(--muted); font-weight: 500; }
+/* Amber, and tinted like a coloured label rather than outlined like a plain one. Drawn in the
+   muted grey it wore at first, at the weight the labels use, the chip was a label: the same pill,
+   the same size, the same colour, sitting beside a "dependencies" label saying the same word. A
+   mark that cannot be told from the furniture beside it is not a mark. */
+.tier-chip-dependency {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 10%, transparent); /* codespell:ignore color-mix */
+}
 .tier-shield { flex: none; }
 
-/* The red rule for a Security row (FR-1.13 AC2). It is an inset box-shadow rather than a border
+/* The rule down a marked row (FR-1.13 AC2): red for Security, amber for Dependency. It is an inset box-shadow rather than a border
    because both rows already have a left edge that means something else: a search result carries
    the site's colour stripe as its own border (FR-1.10 AC2), and a list row sits inside a group
    that carries it. A border would replace that colour; a shadow is drawn beside it.
@@ -813,10 +820,19 @@ button:hover,
 .hit.tier-security {
   box-shadow: inset 3px 0 0 var(--danger);
 }
-.item.tier-security {
+.hit.tier-dependency {
+  box-shadow: inset 3px 0 0 var(--warn);
+}
+.item.tier-security,
+.item.tier-dependency {
   margin-left: -0.75rem;
   padding-left: 0.75rem;
+}
+.item.tier-security {
   box-shadow: inset 3px 0 0 var(--danger);
+}
+.item.tier-dependency {
+  box-shadow: inset 3px 0 0 var(--warn);
 }
 
 /* The Security tile (FR-1.13): the Sites view's first tile, gathering everything marked wherever

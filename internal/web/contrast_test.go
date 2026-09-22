@@ -467,3 +467,35 @@ func TestTheSecurityTilesHeadingKeepsTextReadable(t *testing.T) {
 		}
 	}
 }
+
+// FR-1.13 AC2 with FR-1.8 AC5: the Dependency mark is amber, and amber is the colour most likely
+// to fail one of the two appearances. The chip's word must reach 4.5:1 on its own tinted
+// background, and the rule down the row, a non-text signal, 3:1 against the page.
+func TestTheDependencyMarkKeepsItsContrast(t *testing.T) {
+	raw, err := fs.ReadFile(embedded, "static/app.css")
+	if err != nil {
+		t.Fatalf("reading the embedded app.css: %v", err)
+	}
+	css := string(raw)
+	warn, ok := lightDarkToken(t, css, "warn")
+	if !ok {
+		t.Fatal("no --warn token: the Dependency mark is drawn in it")
+	}
+	bg, ok := lightDarkToken(t, css, "bg")
+	if !ok {
+		t.Fatal("no --bg token")
+	}
+	surface, ok := lightDarkToken(t, css, "surface")
+	if !ok {
+		t.Fatal("no --surface token")
+	}
+	for i, appearance := range []string{"light", "dark"} {
+		chip := mixSRGB(warn[i], bg[i], 0.10)
+		if r := contrastRatio(warn[i], chip); r < 4.5 {
+			t.Errorf("the Dependency chip's word on the %s page = %.2f:1, want at least 4.5:1", appearance, r)
+		}
+		if r := contrastRatio(warn[i], surface[i]); r < 3 {
+			t.Errorf("the Dependency rule on the %s page = %.2f:1, want at least 3:1", appearance, r)
+		}
+	}
+}

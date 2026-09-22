@@ -1,6 +1,7 @@
 package web
 
 import (
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -308,5 +309,68 @@ func TestTheSecurityTileLinksOnOnlyWhenItCutSomething(t *testing.T) {
 	few := dashHandler(t, &fakeSource{items: securityTileItems()})
 	if body := getAuthed(t, few, "/sites").Body.String(); strings.Contains(body, `href="/?tier=dependency"`) {
 		t.Error("a tile that cut nothing links on anyway")
+	}
+}
+
+// A Dependency row was drawn exactly like the label beside it: a grey outlined pill in the same
+// size and weight, saying "Dependency" next to a "dependencies" label. It is a mark, so it gets a
+// colour and a rule of its own — amber, not the red that means a published vulnerability.
+func TestADependencyRowIsMarkedInAmber(t *testing.T) {
+	raw, err := fs.ReadFile(embedded, "static/app.css")
+	if err != nil {
+		t.Fatalf("reading the embedded app.css: %v", err)
+	}
+	css := string(raw)
+	for _, want := range []string{
+		".item.tier-dependency",
+		".hit.tier-dependency",
+		"inset 3px 0 0 var(--warn)",
+		".tier-chip-dependency",
+	} {
+		if !strings.Contains(css, want) {
+			t.Errorf("app.css has no %s: the quiet tier is drawn like the labels beside it", want)
+		}
+	}
+	//nolint:misspell // "color" is the CSS property, not a misspelling
+	if strings.Contains(css, ".tier-chip-dependency { color: var(--muted)") {
+		t.Error("the Dependency chip still draws in the label colour")
+	}
+}
+
+// The tier chip says "Dependency"; the label chip beside it said "dependencies". One of the two is
+// furniture. The label that produced the mark is dropped, on every page that draws a row.
+func TestTheLabelThatProducedTheMarkIsNotDrawnTwice(t *testing.T) {
+	dependency := ghItem(1, "Bump the dev-patches group", testNow)
+	dependency.Author = "dependabot"
+	dependency.Labels = []string{"dependencies", "documentation"}
+
+	security := ghItem(2, "Bump concurrent-ruby", testNow)
+	security.Advisories = []string{"CVE-2026-54904"}
+	security.Labels = []string{"Security", "bug"}
+
+	h := dashHandler(t, &fakeSource{items: []domain.Item{dependency, security}})
+	c := signIn(t, h)
+
+	for _, path := range []string{"/", "/items", "/search?q=bump"} {
+		body := getAs(h, path, c).Body.String()
+		// Matched as a label chip, not as bare text: the tier chip itself ends in
+		// ">Security</span>", so a looser assertion would find the mark and call it the label.
+		for _, gone := range []string{`class="label label-other">dependencies<`, `class="label label-other">Security<`} {
+			if strings.Contains(body, gone) {
+				t.Errorf("%s draws the label %s that its tier chip already says", path, gone)
+			}
+		}
+		for _, kept := range []string{`class="label label-documentation">documentation<`, `class="label label-bug">bug<`} {
+			if !strings.Contains(body, kept) {
+				t.Errorf("%s dropped the label %s, which says something the chip does not", path, kept)
+			}
+		}
+		// The chips themselves must still be there: dropping the labels must not have dropped the
+		// marks with them.
+		for _, want := range []string{`>Dependency<`, `>Security<`} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s lost the %s chip", path, want)
+			}
+		}
 	}
 }

@@ -142,6 +142,25 @@ Three choices inside that, and why:
   red band could not have carried the heading's text; the rule is a non-text signal and needs only
   3:1, which it has in both appearances.
 
+### Amendment, 2026-09-22: the quiet tier was too quiet
+
+Drawn as first built, a Dependency row was not distinguishable from the rows around it. The chip
+took `--muted` at the labels' weight, in the labels' pill, at the labels' size — and sat beside a
+`dependencies` label saying the same word in the same grey. Asked to point at what was marked, the
+page's author could; its reader could not. "Quieter than red" had been implemented as "identical to
+the furniture".
+
+Dependency now has a colour of its own: an amber chip, tinted like a coloured label, and a 3 px
+amber rule down the row — the same shape of signal Security gets, in a different colour. The
+ordering the two tiers exist for is intact, because loudness is now carried by *which* colour
+rather than by having one or none: red means a published vulnerability, amber means maintenance,
+and an unmarked row still has no rule at all. The amber is the `--warn` token, which had been
+declared in `app.css` and never used; it clears 4.5:1 on its own chip and 3:1 as a rule in both
+appearances.
+
+The label that produced the mark is no longer drawn as a label chip beside it. It said nothing the
+chip did not say louder, and it was the single biggest reason the chip read as a label.
+
 ## Pros and cons of the options
 
 ### A: Highlight every bot-authored item

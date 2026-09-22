@@ -78,7 +78,7 @@ func (s *Server) searchView(snap snapshot.Snapshot, q string, now time.Time, qui
 			Number:  h.Item.Number,
 			Title:   titleRuns(h.Item.Title, h.TitleSpans),
 			URL:     h.Item.URL,
-			Labels:  labelViews(h.Item.Labels),
+			Labels:  labelViews(h.Item),
 			Author:  h.Item.Author,
 			Updated: newTimeView(h.Item.UpdatedAt, now),
 			Quiet:   h.Item.ShowsQuiet(now, quiet),

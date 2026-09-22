@@ -336,13 +336,28 @@ func labelKey(name string) string {
 	return labelOther
 }
 
-// labelViews turns label names into chips, keeping GitHub's order; nil for none.
-func labelViews(names []string) []labelView {
-	if len(names) == 0 {
+// labelViews turns an item's labels into chips, keeping GitHub's order; nil for none.
+//
+// The label that produced the item's mark is left out: a Dependency row said "Dependency" in a
+// chip and "dependencies" in a label right beside it, and a Security row did the same. The tier
+// chip says it louder and says why, so the label is furniture. Only that one label goes — a
+// Security item labelled "dependencies" keeps it, because that label is not what marked it.
+func labelViews(it domain.Item) []labelView {
+	if len(it.Labels) == 0 {
 		return nil
 	}
-	out := make([]labelView, 0, len(names))
-	for _, name := range names {
+	var evidence string
+	switch it.Tier() {
+	case domain.TierSecurity:
+		evidence = "security"
+	case domain.TierDependency:
+		evidence = "dependencies"
+	}
+	out := make([]labelView, 0, len(it.Labels))
+	for _, name := range it.Labels {
+		if evidence != "" && strings.EqualFold(name, evidence) {
+			continue
+		}
 		out = append(out, labelView{Name: name, Key: labelKey(name)})
 	}
 	return out
@@ -518,7 +533,7 @@ func newItemView(it domain.Item, now time.Time, quiet time.Duration) itemView {
 		Author:  it.Author,
 		Created: newTimeView(it.CreatedAt, now),
 		Updated: newTimeView(it.UpdatedAt, now),
-		Labels:  labelViews(it.Labels),
+		Labels:  labelViews(it),
 		Quiet:   it.ShowsQuiet(now, quiet),
 		Tier:    newTierView(it),
 	}
