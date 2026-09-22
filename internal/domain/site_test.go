@@ -124,3 +124,74 @@ func TestBuildSiteTilesLeavesTheInputUntouched(t *testing.T) {
 		t.Errorf("input = %+v, want it unchanged %+v", items, before)
 	}
 }
+
+// FR-1.13: the Security tile gathers what is marked, wherever it is open, so that the one loud
+// thing is not spread across ten tiles. Security comes before Dependency inside each kind, and
+// only then the most recently updated first.
+func TestBuildTierTileOrdersSecurityFirstAndCountsBeforeTheCut(t *testing.T) {
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	items := []domain.Item{
+		{Repo: "arc42/a", Kind: domain.KindPR, Number: 1, Author: "dependabot", UpdatedAt: now},
+		{Repo: "arc42/b", Kind: domain.KindPR, Number: 2, Advisories: []string{"GHSA-aaaa-bbbb-cccc"}, UpdatedAt: now.Add(-3 * time.Hour)},
+		{Repo: "arc42/a", Kind: domain.KindPR, Number: 3, Author: "renovate", UpdatedAt: now.Add(-time.Hour)},
+		{Repo: "arc42/b", Kind: domain.KindPR, Number: 4, Labels: []string{"Security"}, UpdatedAt: now.Add(-2 * time.Hour)},
+		{Repo: "arc42/a", Kind: domain.KindPR, Number: 5, Author: "copilot-swe-agent", UpdatedAt: now},
+		{Repo: "arc42/b", Kind: domain.KindIssue, Number: 6, Labels: []string{"dependencies"}, UpdatedAt: now},
+		{Repo: "arc42/a", Kind: domain.KindIssue, Number: 7, Title: "Fix the header", UpdatedAt: now},
+	}
+
+	tile := domain.BuildTierTile(domain.TierTileInput{Items: items, MaxPRs: 3, MaxIssues: 4})
+
+	var numbers []int
+	for _, it := range tile.PRs {
+		numbers = append(numbers, it.Number)
+	}
+	// #4 and #2 are Security, most recently updated first; #1 is the loudest of the rest.
+	if !slices.Equal(numbers, []int{4, 2, 1}) {
+		t.Errorf("PR order = %v, want [4 2 1]", numbers)
+	}
+	if tile.PRTotal != 4 || tile.IssueTotal != 1 {
+		t.Errorf("totals = %d PRs, %d issues, want 4 and 1", tile.PRTotal, tile.IssueTotal)
+	}
+	if tile.Security != 2 || tile.Dependency != 3 {
+		t.Errorf("counts = %d security, %d dependency, want 2 and 3", tile.Security, tile.Dependency)
+	}
+	if !tile.More {
+		t.Error("More = false, want true: the fourth marked pull request was cut")
+	}
+}
+
+// Nothing marked is the ordinary state (ADR-0014): the tile is still built, empty, because a tile
+// that vanished would read as a check that had stopped running.
+func TestBuildTierTileIsEmptyWhenNothingIsMarked(t *testing.T) {
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	items := []domain.Item{
+		{Repo: "arc42/a", Kind: domain.KindPR, Number: 1, Author: "github-actions", UpdatedAt: now},
+		{Repo: "arc42/a", Kind: domain.KindIssue, Number: 2, Title: "Fix the header", UpdatedAt: now},
+	}
+
+	tile := domain.BuildTierTile(domain.TierTileInput{Items: items, MaxPRs: 3, MaxIssues: 4})
+
+	if len(tile.PRs) != 0 || len(tile.Issues) != 0 || tile.Security != 0 || tile.Dependency != 0 {
+		t.Errorf("tile = %+v, want nothing marked", tile)
+	}
+	if tile.More {
+		t.Error("More = true, want false: an empty tile has nothing to link on to")
+	}
+}
+
+// The tile must never reorder the caller's slice: the same snapshot is shared with every other
+// render, and the list's own order is its own business.
+func TestBuildTierTileLeavesTheCallersItemsAlone(t *testing.T) {
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	items := []domain.Item{
+		{Repo: "arc42/a", Kind: domain.KindPR, Number: 1, Author: "dependabot", UpdatedAt: now.Add(-time.Hour)},
+		{Repo: "arc42/a", Kind: domain.KindPR, Number: 2, Advisories: []string{"CVE-2026-1"}, UpdatedAt: now.Add(-2 * time.Hour)},
+	}
+
+	domain.BuildTierTile(domain.TierTileInput{Items: items, MaxPRs: 3, MaxIssues: 4})
+
+	if items[0].Number != 1 || items[1].Number != 2 {
+		t.Fatalf("the caller's items were reordered: %d, %d", items[0].Number, items[1].Number)
+	}
+}

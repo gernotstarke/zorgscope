@@ -1,5 +1,7 @@
 package domain
 
+import "sort"
+
 // SiteSpec is one tile's worth of configuration, as the web layer hands it to BuildSiteTiles: a
 // configured site with its one repository, or the Other tile holding every watched repository no
 // site claims (FR-1.8). Treating Other as just another spec is what lets one function build every
@@ -84,4 +86,68 @@ func BuildSiteTiles(in SiteTilesInput) []SiteTile {
 		tiles = append(tiles, tile)
 	}
 	return tiles
+}
+
+// TierTileInput is everything BuildTierTile needs. Items is shared with concurrent renders and is
+// never modified.
+type TierTileInput struct {
+	Items             []Item
+	MaxPRs, MaxIssues int
+}
+
+// TierTile is the Sites view's one cross-site tile: everything the page marks Security or
+// Dependency, wherever it is open (FR-1.13). It is not a SiteTile — it has no site, no colour and
+// no per-repository counts, and what it counts is the tiers rather than the kinds.
+type TierTile struct {
+	// PRs and Issues are sorted Security before Dependency, and only then most recently updated
+	// first, cut to MaxPRs and MaxIssues.
+	PRs, Issues []Item
+	// PRTotal, IssueTotal, Security and Dependency are taken before the cut, for the reason
+	// FR-2.1 AC3 gives the list: what is shown never understates what is open.
+	PRTotal, IssueTotal  int
+	Security, Dependency int
+	// More says the tile listed fewer items than it holds.
+	More bool
+}
+
+// BuildTierTile gathers every marked item across every repository. A snapshot with nothing marked
+// yields an empty tile rather than none: the tile is a standing answer to "is anything
+// security-related open?", and one that disappeared when the answer was no would read as a check
+// that had stopped running. It is a pure function and never modifies in.Items.
+func BuildTierTile(in TierTileInput) TierTile {
+	var tile TierTile
+	var prs, issues []Item
+	for _, it := range in.Items {
+		switch it.Tier() {
+		case TierSecurity:
+			tile.Security++
+		case TierDependency:
+			tile.Dependency++
+		default:
+			continue // unmarked: the site tiles and the list are where it belongs
+		}
+		switch it.Kind {
+		case KindPR:
+			prs = append(prs, it)
+		case KindIssue:
+			issues = append(issues, it)
+		default:
+			// As in BuildSiteTiles: a future third kind is left out rather than miscounted.
+		}
+	}
+
+	sortByTier(prs)
+	sortByTier(issues)
+	tile.PRTotal, tile.IssueTotal = len(prs), len(issues)
+	tile.PRs = prs[:min(len(prs), in.MaxPRs)]
+	tile.Issues = issues[:min(len(issues), in.MaxIssues)]
+	tile.More = tile.PRTotal > len(tile.PRs) || tile.IssueTotal > len(tile.Issues)
+	return tile
+}
+
+// sortByTier puts the loudest tier first and, within a tier, the most recently updated first. It
+// sorts the slice in place, which is safe because its caller built it by appending onto nil.
+func sortByTier(items []Item) {
+	SortItems(items)
+	sort.SliceStable(items, func(i, j int) bool { return items[i].Tier() > items[j].Tier() })
 }

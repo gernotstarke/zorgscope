@@ -51,3 +51,44 @@ func TestFilterEmpty(t *testing.T) {
 		t.Fatal("a kind makes the filter non-empty")
 	}
 }
+
+// FR-1.13: the tier axis is "this tier or louder", so asking for dependencies also shows the
+// security items — a security fix is a dependency update as well, and the Sites view's Security
+// tile links here for everything it marks.
+func TestFilterMinTierMatchesThatTierOrLouder(t *testing.T) {
+	security := domain.Item{Title: "Bump nokogiri", Advisories: []string{"CVE-2024-1234"}}
+	dependency := domain.Item{Title: "Bump rake", Author: "dependabot"}
+	plain := domain.Item{Title: "Fix the header"}
+
+	cases := []struct {
+		name                        string
+		min                         domain.Tier
+		security, dependency, plain bool
+	}{
+		{"unset lets everything through", domain.TierNone, true, true, true},
+		{"dependency keeps both marks", domain.TierDependency, true, true, false},
+		{"security keeps only security", domain.TierSecurity, true, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := domain.Filter{MinTier: tc.min}
+			if got := f.Match(security); got != tc.security {
+				t.Errorf("Match(security) = %v, want %v", got, tc.security)
+			}
+			if got := f.Match(dependency); got != tc.dependency {
+				t.Errorf("Match(dependency) = %v, want %v", got, tc.dependency)
+			}
+			if got := f.Match(plain); got != tc.plain {
+				t.Errorf("Match(plain) = %v, want %v", got, tc.plain)
+			}
+		})
+	}
+}
+
+// A tier narrows the list, so it must make the filter non-empty: otherwise the page would say
+// "Nothing open" where it means "nothing matches this filter" (FR-2.1 AC3).
+func TestFilterWithATierIsNotEmpty(t *testing.T) {
+	if (domain.Filter{MinTier: domain.TierSecurity}).Empty() {
+		t.Fatal("a tier makes the filter non-empty")
+	}
+}
