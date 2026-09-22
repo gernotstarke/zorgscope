@@ -75,6 +75,15 @@
     <a href="/sites"{{if eq .View "sites"}} aria-current="page"{{end}}>Sites</a>
     <a href="/contributors"{{if eq .View "contributors"}} aria-current="page"{{end}}>Contributors</a>
   </nav>
+  {{/* What is open across every configured repository, each kind in its own colour. It counts
+       the snapshot rather than the page, so it reads the same over a filter or a search, and it
+       is left out until a fetch has returned rather than claiming nothing is open. */}}
+  {{if .Counted}}
+  <p class="open-count" aria-label="{{.Issues}} open issues, {{.PRs}} open pull requests">
+    <span class="open-count-issues">{{.Issues}} {{if eq .Issues 1}}issue{{else}}issues{{end}}</span>
+    <span class="open-count-prs">{{.PRs}} {{if eq .PRs 1}}PR{{else}}PRs{{end}}</span>
+  </p>
+  {{end}}
   <form class="search-form" id="topbar-search" role="search" method="get" action="/search"
         hx-get="/search" hx-trigger="input changed delay:300ms, submit"
         hx-target="main" hx-select="main" hx-select-oob="#view-switch"

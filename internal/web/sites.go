@@ -53,7 +53,7 @@ func (s *Server) handleSites(w http.ResponseWriter, r *http.Request) {
 	s.execute(w, r, http.StatusOK, "sites.html", pageData{
 		Title:  "Sites",
 		Sites:  &view,
-		Chrome: chromeFor(r),
+		Chrome: chromeFor(r, snap),
 	})
 }
 

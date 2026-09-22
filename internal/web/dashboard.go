@@ -82,7 +82,7 @@ func (s *Server) answeredWaiting(w http.ResponseWriter, r *http.Request) (snapsh
 		w.Header().Set("Cache-Control", "no-store")
 		s.execute(w, r, http.StatusOK, "waiting.html", pageData{
 			Waiting: &waitingView{Repos: len(s.cfg.GitHub.Repos), Path: r.URL.RequestURI()},
-			Chrome:  chromeFor(r),
+			Chrome:  chromeFor(r, snap),
 		})
 		return snap, true
 	}
@@ -152,7 +152,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, tmpl string, sna
 		s.writeFragment(w, r, view.Items)
 		return
 	}
-	s.execute(w, r, http.StatusOK, tmpl, pageData{Dashboard: &view, Chrome: chromeFor(r)})
+	s.execute(w, r, http.StatusOK, tmpl, pageData{Dashboard: &view, Chrome: chromeFor(r, snap)})
 }
 
 // handleRefresh throws the snapshot away so the redirected GET fetches (FR-1.3), and goes back to
@@ -216,6 +216,11 @@ type chromeView struct {
 	// Return is the page the Refresh form comes back to, path and query (FR-1.8 AC4). It is what
 	// the browser asked for, so handleRefresh only ever uses it through safeReturn.
 	Return string
+	// Issues and PRs count what is open across every configured repository — the snapshot, not
+	// the page, so a filter or a search never changes them. Counted is false until a fetch has
+	// returned: before one there is nothing to count, and "0 issues" would be a wrong answer.
+	Issues, PRs int
+	Counted     bool
 }
 
 // dashboardView is the whole list page.
@@ -404,11 +409,21 @@ func (s *Server) headerView(snap snapshot.Snapshot) headerView {
 // views maps a page's path to the name the switch marks.
 var views = map[string]string{"/": "list", "/sites": "sites", "/contributors": "contributors", "/search": "search"}
 
-// chromeFor is the top bar for the signed-in page answering r.
-func chromeFor(r *http.Request) *chromeView {
-	c := &chromeView{View: views[r.URL.Path], Return: r.URL.RequestURI()}
+// chromeFor is the top bar for the signed-in page answering r, counting what is open in snap.
+func chromeFor(r *http.Request, snap snapshot.Snapshot) *chromeView {
+	c := &chromeView{View: views[r.URL.Path], Return: r.URL.RequestURI(), Counted: !snap.FetchedAt.IsZero()}
 	if r.URL.Path == "/search" {
 		c.Query = strings.TrimSpace(r.URL.Query().Get("q"))
+	}
+	for _, it := range snap.Items {
+		switch it.Kind {
+		case domain.KindIssue:
+			c.Issues++
+		case domain.KindPR:
+			c.PRs++
+		default:
+			// A third kind, should one arrive, is neither.
+		}
 	}
 	return c
 }

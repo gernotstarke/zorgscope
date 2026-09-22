@@ -36,7 +36,7 @@ func (s *Server) handleContributors(w http.ResponseWriter, r *http.Request) {
 		view.Rows = append(view.Rows, row)
 	}
 	s.execute(w, r, http.StatusOK, "contributors.html", pageData{
-		Title: "Contributors", Chrome: chromeFor(r), Contributors: &view,
+		Title: "Contributors", Chrome: chromeFor(r, snap), Contributors: &view,
 	})
 }
 

@@ -8,7 +8,10 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/gernotstarke/zorgscope/internal/domain"
+	"github.com/gernotstarke/zorgscope/internal/snapshot"
 	"github.com/gernotstarke/zorgscope/internal/version"
 )
 
@@ -85,15 +88,15 @@ func TestTopBarCarriesTheChromeOnlyWhenSignedIn(t *testing.T) {
 // uses q, and its text is not a search (FR-1.11).
 func TestTheSearchBoxEchoesTheQueryOnlyOnTheResultsPage(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/?q=header&kind=pr", nil)
-	if c := chromeFor(r); c.View != "list" || c.Query != "" || c.Return != "/?q=header&kind=pr" {
+	if c := chromeFor(r, snapshot.Snapshot{}); c.View != "list" || c.Query != "" || c.Return != "/?q=header&kind=pr" {
 		t.Errorf("chromeFor(list) = %+v", *c)
 	}
 	r = httptest.NewRequest(http.MethodGet, "/search?q=+bug+", nil)
-	if c := chromeFor(r); c.View != "search" || c.Query != "bug" {
+	if c := chromeFor(r, snapshot.Snapshot{}); c.View != "search" || c.Query != "bug" {
 		t.Errorf("chromeFor(search) = %+v", *c)
 	}
 	r = httptest.NewRequest(http.MethodGet, "/sites", nil)
-	if c := chromeFor(r); c.View != "sites" || c.Return != "/sites" {
+	if c := chromeFor(r, snapshot.Snapshot{}); c.View != "sites" || c.Return != "/sites" {
 		t.Errorf("chromeFor(sites) = %+v", *c)
 	}
 }
@@ -394,5 +397,41 @@ func TestTheContentSecurityPolicyNamesNoExternalHost(t *testing.T) {
 	}
 	if strings.Contains(csp, "shields.io") || strings.Contains(csp, "https://") {
 		t.Errorf("the policy still names an external host: %s", csp)
+	}
+}
+
+// The top bar counts what is open across every configured repository, whatever the page below it
+// shows, and says nothing until a fetch has returned — "0 issues" before one would be a wrong answer.
+func TestTheTopBarCountsOpenIssuesAndPullRequests(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/sites", nil)
+	if c := chromeFor(r, snapshot.Snapshot{}); c.Counted {
+		t.Errorf("chromeFor before any fetch = %+v, want no count", *c)
+	}
+	snap := snapshot.Snapshot{FetchedAt: time.Now(), Items: []domain.Item{
+		{Kind: domain.KindIssue}, {Kind: domain.KindPR}, {Kind: domain.KindIssue},
+	}}
+	if c := chromeFor(r, snap); !c.Counted || c.Issues != 2 || c.PRs != 1 {
+		t.Errorf("chromeFor = %+v, want 2 issues and 1 PR", *c)
+	}
+}
+
+// Every signed-in page draws the count, between the switch and the search box.
+func TestEveryPageDrawsTheOpenCount(t *testing.T) {
+	h := dashHandler(t, &fakeSource{items: []domain.Item{
+		{Kind: domain.KindPR, Repo: "o/a", Number: 1, Author: "amy", UpdatedAt: testNow},
+		{Kind: domain.KindIssue, Repo: "o/a", Number: 2, Author: "amy", UpdatedAt: testNow},
+		{Kind: domain.KindIssue, Repo: "o/a", Number: 3, Author: "amy", UpdatedAt: testNow},
+	}})
+	for _, path := range []string{"/?view=list", "/sites", "/contributors", "/search?q=x"} {
+		body := getAuthed(t, h, path).Body.String()
+		i, s, q := strings.Index(body, `id="view-switch"`), strings.Index(body, `class="open-count"`), strings.Index(body, `id="topbar-search"`)
+		if s < 0 || !(i < s && s < q) {
+			t.Errorf("%s: open count missing or out of place (switch %d, count %d, search %d)", path, i, s, q)
+		}
+		for _, want := range []string{">2 issues<", ">1 PR<"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s lacks %s", path, want)
+			}
+		}
 	}
 }

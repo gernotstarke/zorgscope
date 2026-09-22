@@ -467,6 +467,14 @@ button:hover,
 .view-switch a:hover { color: var(--accent); }
 .view-switch a[aria-current="page"] { background: var(--accent); color: var(--bg); font-weight: 600; }
 
+/* ---------------------------------------------------------------- the open count
+
+   Between the switch and the search box: open issues in the ok green, open pull requests in the
+   accent blue — two text colours the palette already holds readable in both appearances. */
+.open-count { display: inline-flex; gap: 0.7rem; margin: 0; font-size: 0.9rem; font-weight: 600; white-space: nowrap; }
+.open-count-issues { color: var(--ok); }
+.open-count-prs { color: var(--accent); }
+
 /* ---------------------------------------------------------------- the top bar's chrome (FR-1.11)
 
    The search box takes the free width between the switch and the actions, and gives it up first
