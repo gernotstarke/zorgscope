@@ -171,6 +171,13 @@ band, because a warning is not a theme; the page's `--danger` could not serve, s
 dark-appearance value is about 2.3:1. The red rule down the tile's edge still appears only when a
 Security item is actually open, which is what the band alone cannot say.
 
+Amended 2026-09-23 (FR‑1.13 AC6, version 1.5.0): the tape every day did not survive a design
+critique. A band that alarms on a day with nothing in it is read as decoration within a week, and
+then it says nothing on the day it matters — the argument that retired the NEW badge (ADR‑0012).
+Gernot chose to raise the tape only while the tile holds a marked item. On an ordinary day the
+heading is a neutral band, the tile says "All clear — no security or dependency items open." and
+is no taller than that one line. It is still the first tile, and still findable by position.
+
 ## Pros and cons of the options
 
 ### A: Highlight every bot-authored item

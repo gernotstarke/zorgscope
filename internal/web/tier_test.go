@@ -47,7 +47,12 @@ func TestTiersAreDrawnOnEveryPageThatDrawsAnItem(t *testing.T) {
 				t.Errorf("%s lacks %s", path, want)
 			}
 		}
-		// The Copilot pull request is not a dependency update and must not be drawn as one.
+		// The Copilot pull request is not a dependency update and must not be drawn as one. The
+		// list's Needs-you band draws the same chips again (FR-1.14), so only the rows below it are
+		// counted here.
+		if i := strings.Index(body, `class="repo-group`); i >= 0 {
+			body = body[i:]
+		}
 		if n := strings.Count(body, `>Dependency<`); n != 1 {
 			t.Errorf("%s draws %d Dependency chips, want exactly 1", path, n)
 		}
@@ -241,6 +246,9 @@ func TestTheSitesViewOpensWithTheSecurityTile(t *testing.T) {
 	if first := strings.Index(body, `class="tile hue-`); first >= 0 && first < tile {
 		t.Error("a site tile is drawn before the security tile")
 	}
+	if !strings.Contains(body, "tile-tier is-marked") {
+		t.Error("a security tile with marked items does not raise its hazard tape (FR-1.13 AC6)")
+	}
 	if !strings.Contains(body, "1 security · 2 dependency") {
 		t.Error("the tile does not count the tiers before the cut")
 	}
@@ -269,7 +277,7 @@ func TestTheSecurityTilesRuleFollowsTheSecurityItems(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h := dashHandler(t, &fakeSource{items: tc.items})
 			body := getAuthed(t, h, "/sites").Body.String()
-			if got := strings.Contains(body, "tile-tier is-alert"); got != tc.alert {
+			if got := strings.Contains(body, ` is-alert"`); got != tc.alert {
 				t.Errorf("the tile draws its rule = %v, want %v", got, tc.alert)
 			}
 		})
@@ -282,8 +290,12 @@ func TestTheSecurityTileSaysWhenNothingIsMarked(t *testing.T) {
 	h := dashHandler(t, &fakeSource{items: []domain.Item{ghItem(1, "Fix the header", testNow)}})
 	body := getAuthed(t, h, "/sites").Body.String()
 
-	if !strings.Contains(body, "No security or dependency items open") {
+	if !strings.Contains(body, "All clear — no security or dependency items open") {
 		t.Error("the security tile does not say that nothing is marked")
+	}
+	// FR-1.13 AC6: the hazard tape is up only while something is marked.
+	if strings.Contains(body, "is-marked") || !strings.Contains(body, `tile-tier is-clear"`) {
+		t.Error("an empty security tile is drawn as marked")
 	}
 	if strings.Contains(body, `href="/?tier=dependency"`) {
 		t.Error("an empty tile links on to a list that would be empty too")

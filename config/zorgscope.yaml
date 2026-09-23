@@ -6,6 +6,10 @@ timezone: Europe/Berlin
 github:
   # Push access here admits a visitor (FR-8.3).
   auth_repo: gernotstarke/zorgscope
+  # The GitHub login zorgscope works for (FR-1.14): whose review a pull request may request, and
+  # whose own pull requests are not somebody else's contribution. Without it the Needs-you band
+  # holds only the marked items.
+  owner: gernotstarke
   # How old the fetched item list may be before a page view refetches it.
   cache_ttl: 5m
   # The repository names are the ones GitHub actually uses, which for the arc42 family means the

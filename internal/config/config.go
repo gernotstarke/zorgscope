@@ -54,7 +54,11 @@ type GitHub struct {
 	// repositories being watched is a product decision that changes often, while who may read the
 	// dashboard is a security decision that should change only when someone means it to.
 	AuthRepo string
-	Repos    []string
+	// Owner is the one GitHub login zorgscope works for: whose review is requested, and whose own
+	// pull requests are not somebody else's contribution (FR-1.14). Empty means nobody's, and the
+	// Needs-you band then holds only the marked items.
+	Owner string
+	Repos []string
 	// Sites are the tiles of the Sites view, in the order they are drawn (FR-1.8). Each names one
 	// repository of Repos; the repositories no site names share a tile of their own. Empty is valid:
 	// the Sites view then shows that one shared tile.
@@ -62,7 +66,7 @@ type GitHub struct {
 	// CacheTTL is how old the fetched item list may be before a page view refetches it. It
 	// defaults to 5 minutes when the configuration names none.
 	CacheTTL time.Duration
-	BaseURL  string // "" means api.github.com; make fakes sets this via GITHUB_BASE_URL.
+	BaseURL  string // "" means api.github.com; the fake GitHub is reached by setting GITHUB_BASE_URL.
 	// OAuthBaseURL is where the OAuth App's authorize and token endpoints live; "" means
 	// github.com. It is separate from BaseURL because those two endpoints are not on the API host
 	// even at the real GitHub: the API answers at api.github.com and sign-in at github.com.
@@ -87,6 +91,7 @@ type fileConfig struct {
 	Timezone string `yaml:"timezone"`
 	GitHub   struct {
 		AuthRepo string     `yaml:"auth_repo"`
+		Owner    string     `yaml:"owner"`
 		CacheTTL string     `yaml:"cache_ttl"`
 		Repos    []string   `yaml:"repos"`
 		Sites    []fileSite `yaml:"sites"`
@@ -101,6 +106,9 @@ type fileSite struct {
 	Hue  string `yaml:"hue"`
 	Tag  string `yaml:"tag"`
 }
+
+// loginPattern matches a GitHub login: letters, digits and single hyphens, at most 39 characters.
+var loginPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$`)
 
 // repoPattern matches a GitHub "owner/name" repository reference.
 var repoPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
@@ -135,6 +143,10 @@ func Load(path string, env func(string) string) (Config, error) {
 		}
 	}
 
+	if fc.GitHub.Owner != "" && !loginPattern.MatchString(fc.GitHub.Owner) {
+		return Config{}, fmt.Errorf("github.owner: %q is not a GitHub login", fc.GitHub.Owner)
+	}
+
 	sites, err := loadSites(fc.GitHub.Sites, fc.GitHub.Repos)
 	if err != nil {
 		return Config{}, err
@@ -156,6 +168,7 @@ func Load(path string, env func(string) string) (Config, error) {
 		Timezone: fc.Timezone,
 		GitHub: GitHub{
 			AuthRepo:     fc.GitHub.AuthRepo,
+			Owner:        fc.GitHub.Owner,
 			Repos:        fc.GitHub.Repos,
 			Sites:        sites,
 			CacheTTL:     cacheTTL,
@@ -242,7 +255,7 @@ func loadSites(in []fileSite, repos []string) ([]Site, error) {
 // checkBaseURL validates GITHUB_BASE_URL or GITHUB_OAUTH_BASE_URL, named by name, both of which
 // are empty in every real deployment (design §8).
 //
-// The variables exist so that `make fakes` and the tests can point fetching and the sign-in flow
+// The variables exist so that the fake GitHub (cmd/fakesources) and the tests can point fetching and the sign-in flow
 // at a fixture server on this machine; they are not general redirects. Left unvalidated they would
 // be: GITHUB_BASE_URL is where this process sends GITHUB_TOKEN and every visitor's access token,
 // and GITHUB_OAUTH_BASE_URL becomes the authorize URL the visitor's browser is sent to and the
@@ -270,7 +283,7 @@ func checkBaseURL(name, raw string) error {
 }
 
 // isLoopbackHost reports whether host is this machine. host.docker.internal is included because
-// that is how a container reaches `make fakes` running on the host, which is the whole reason the
+// that is how a container reaches the fake GitHub running on the host, which is the whole reason the
 // variable exists.
 func isLoopbackHost(host string) bool {
 	if host == "localhost" || host == "host.docker.internal" {

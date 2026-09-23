@@ -308,7 +308,7 @@ func TestTheFilterFormIsAPlainGetFormWithHtmxOnTop(t *testing.T) {
 			t.Errorf("the filter form lacks %s:\n%s", want, form)
 		}
 	}
-	for _, want := range []string{`name="repo"`, `name="kind"`, `name="since"`, `name="q"`} {
+	for _, want := range []string{`name="repo"`, `name="kind"`, `name="since"`, `name="tier"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("form lacks %s", want)
 		}
@@ -318,16 +318,35 @@ func TestTheFilterFormIsAPlainGetFormWithHtmxOnTop(t *testing.T) {
 	}
 }
 
-// The filter listens to its own search box and to nothing else. htmx resolves a from: selector
-// against the whole document, so the bare from:[name=q] this form used to carry also matched the
-// top bar's search box once that existed: every keystroke there fired the filter as well, and
-// its hx-push-url raced the search's own, leaving the address bar naming / while the results page
-// was on screen (FR-2.1 AC2, FR-12.1 AC3).
-func TestTheFilterFormListensOnlyToItsOwnSearchBox(t *testing.T) {
+// The filter has no text box of its own: the top bar's search is the one place to type (FR-12.1),
+// and a form that also listened for keystrokes would fire on the top bar's box — which it once did,
+// racing the search's own hx-push-url. It reacts to its own controls changing and nothing else. A q
+// already in the URL still narrows the list and rides along as a hidden field (FR-2.1 AC1).
+func TestTheFilterHasNoTextBoxAndKeepsAQueryFromTheURL(t *testing.T) {
 	h := dashHandler(t, &fakeSource{items: representativeItems()})
-	form := openingTag(t, getAs(h, "/", signIn(t, h)).Body.String(), `<form class="filter"`)
-	if !strings.Contains(form, "from:find [name=q]") {
-		t.Errorf("the filter's trigger does not scope from: to this form's own input:\n%s", form)
+	c := signIn(t, h)
+	body := getAs(h, "/", c).Body.String()
+	form := openingTag(t, body, `<form class="filter"`)
+	if !strings.Contains(form, `hx-trigger="change"`) {
+		t.Errorf("the filter reacts to more than its own controls changing:\n%s", form)
+	}
+	filter := body[strings.Index(body, `<form class="filter"`):]
+	filter = filter[:strings.Index(filter, "</form>")]
+	if strings.Contains(filter, `name="q"`) {
+		t.Error("the unfiltered filter form carries a text field")
+	}
+	if strings.Contains(filter, "<details class=\"filter-panel\" open") {
+		t.Error("the filter is open with nothing in force")
+	}
+
+	body = getAs(h, "/?q=header&kind=pr", c).Body.String()
+	if n := strings.Count(body, ">Clear filter<"); n != 1 {
+		t.Errorf("a filtered list offers Clear filter %d times, want once", n)
+	}
+	for _, want := range []string{`<input type="hidden" name="q" value="header">`, `<details class="filter-panel" open>`, `id="filter-count"> · 2 active<`, `>Clear filter<`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("a filtered list lacks %s", want)
+		}
 	}
 }
 
@@ -987,12 +1006,12 @@ func TestQuietItemsAreDimmedAndSayQuiet(t *testing.T) {
 	if quietRow == "" {
 		t.Fatalf("no row carries is-quiet; the 100-day-old item must:\n%s", firstLineContaining(body, "Old thing"))
 	}
-	if !strings.Contains(body, "</time>, quiet</p>") {
-		t.Error("the quiet item's meta line does not end with \", quiet\"")
+	if !strings.Contains(body, "</time> · quiet") {
+		t.Error("the quiet item's meta line does not say \"quiet\"")
 	}
-	if strings.Count(body, "is-quiet") != 1 || strings.Count(body, ", quiet</p>") != 1 {
+	if strings.Count(body, "is-quiet") != 1 || strings.Count(body, " · quiet") != 1 {
 		t.Errorf("quiet marks = %d rows / %d words, want exactly 1 each: the fresh item must carry none",
-			strings.Count(body, "is-quiet"), strings.Count(body, ", quiet</p>"))
+			strings.Count(body, "is-quiet"), strings.Count(body, " · quiet"))
 	}
 }
 
@@ -1045,5 +1064,32 @@ func TestGroupsCarryTheirSitesHue(t *testing.T) {
 	}
 	if strings.Contains(body, `style="`) {
 		t.Error("a colour reached the page as a style attribute (QS-4.4)")
+	}
+}
+
+// A row is two lines: the title, and one meta line with the kind, author, last update and
+// description. "opened" is said only when it reads differently from "updated".
+func TestARowSaysOpenedOnlyWhenItDiffersFromUpdated(t *testing.T) {
+	fresh := ghItem(1, "Fresh", testNow)
+	old := ghItem(2, "Old", testNow.Add(-72*time.Hour))
+	old.CreatedAt = testNow.Add(-40 * 24 * time.Hour)
+	old.Summary = "What the old one is about"
+	body := getAuthed(t, dashHandler(t, &fakeSource{items: []domain.Item{fresh, old}}), "/?view=list").Body.String()
+
+	row := func(title string) string {
+		i := strings.Index(body, ">"+title+"<")
+		return body[i : i+strings.Index(body[i:], "</li>")]
+	}
+	if strings.Contains(row("Fresh"), "opened") {
+		t.Error("a row whose opened and updated read alike says both")
+	}
+	r := row("Old")
+	for _, want := range []string{`class="item-kind item-kind-issue">Issue<`, "updated <time", "opened <time", `<span class="item-summary">What the old one is about</span></p>`} {
+		if !strings.Contains(r, want) {
+			t.Errorf("the old row lacks %s", want)
+		}
+	}
+	if strings.Count(r, "<p class=\"item-meta\"") != 1 {
+		t.Error("the row has more than one meta line")
 	}
 }

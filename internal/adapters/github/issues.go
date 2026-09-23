@@ -197,6 +197,19 @@ type ghPRNode struct {
 	State     githubv4.String
 	Labels    ghLabelConnection `graphql:"labels(first: 5)"`
 	IsDraft   githubv4.Boolean
+	// ReviewRequests is who the pull request asks for a review (FR-1.14). Only a User has a login;
+	// a Team or a Bot reviewer arrives with an empty one and is skipped. Like labels it is a field
+	// on a node the query already fetches, so it costs points, not requests (QS-3.5).
+	ReviewRequests ghReviewRequestConnection `graphql:"reviewRequests(first: 10)"`
+}
+
+// ghReviewRequestConnection is the reviewRequests connection of one pull request.
+type ghReviewRequestConnection struct {
+	Nodes []struct {
+		RequestedReviewer struct {
+			User struct{ Login githubv4.String } `graphql:"... on User"`
+		}
+	}
 }
 
 // ghPageInfo mirrors a GraphQL connection's pageInfo.
@@ -332,7 +345,7 @@ func toItem(owner, name string, kind domain.Kind, n ghIssueNode) domain.Item {
 }
 
 // draftState is the value Item.State carries for a draft pull request (FR-2.1 AC1).
-const draftState = "DRAFT"
+const draftState = domain.StateDraft
 
 // toPRItem maps one GraphQL pull-request node to a domain.Item, carrying the draft flag in State.
 //
@@ -362,6 +375,11 @@ func toPRItem(owner, name string, n ghPRNode) domain.Item {
 	})
 	if bool(n.IsDraft) {
 		it.State = draftState
+	}
+	for _, r := range n.ReviewRequests.Nodes {
+		if login := string(r.RequestedReviewer.User.Login); login != "" {
+			it.ReviewRequested = append(it.ReviewRequested, login)
+		}
 	}
 	return it
 }

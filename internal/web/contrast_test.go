@@ -451,8 +451,8 @@ func TestTheSecurityTilesStripedHeadingKeepsTextReadable(t *testing.T) {
 		t.Fatalf("reading the embedded app.css: %v", err)
 	}
 	css := string(raw)
-	if !strings.Contains(css, ".tile-tier .tile-title") {
-		t.Fatal("app.css has no .tile-tier .tile-title rule")
+	if !strings.Contains(css, ".tile-tier.is-marked .tile-title") {
+		t.Fatal("app.css has no .tile-tier.is-marked .tile-title rule")
 	}
 	//nolint:misspell // repeating-linear-gradient is the CSS function's own name
 	if !strings.Contains(css, "repeating-linear-gradient(45deg, var(--tape-red)") {

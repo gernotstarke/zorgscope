@@ -181,33 +181,53 @@ button:hover,
 
 /* ---------------------------------------------------------------- the filter
 
-   One row of controls above the list. It wraps rather than scrolls, so a phone stacks it instead
-   of hiding half of it, and every control sits on one baseline so the row reads as one thing
-   rather than as four. It is deliberately plain: the filter is a tool for narrowing a list, and a
-   toolbar that drew attention to itself would compete with the list it narrows. */
-.filter {
+   One disclosure above the list. Closed, it is a single line — "Filter", and how many axes are in
+   force — because most visits want none of it; open, its controls wrap rather than scroll, so a
+   phone stacks them instead of hiding half. It is deliberately plain: a tool for narrowing a list
+   that drew attention to itself would compete with the list it narrows. */
+.filter { margin: 0 0 1rem; }
+
+.filter-panel summary {
+  display: inline-block;
+  padding: 0.25rem 0;
+  color: var(--accent);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.filter-panel summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+.filter-count { color: var(--muted); font-weight: 400; }
+
+.filter-controls {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.75rem;
-  margin: 0 0 1.25rem;
+  align-items: center;
+  gap: 0.6rem 1.25rem;
+  margin-top: 0.4rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
 }
 
-.filter-field { display: inline-flex; align-items: baseline; gap: 0.35rem; }
+.filter-field { display: inline-flex; align-items: center; gap: 0.4rem; color: var(--muted); }
 
 /* A fieldset is a block with a border and its own padding by default, none of which belongs in a
-   row of controls; the legend stays because it is what names the group to a screen reader. */
+   row of controls; the legend stays because it is what names the group to a screen reader. A
+   legend refuses to sit inline in a flex fieldset — browsers draw it above the box whatever its
+   display says — but it does float, and a floated legend takes its place in the row. */
 .filter-kind {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 0.5rem;
+  display: inline-block;
   margin: 0;
   padding: 0;
   border: 0;
 }
 
-.filter-kind legend { margin-right: 0.35rem; padding: 0; color: var(--muted); font-size: 0.9rem; }
-.filter-kind label { display: inline-flex; align-items: baseline; gap: 0.2rem; }
+.filter-kind legend { float: left; margin-right: 0.5rem; padding: 0; color: var(--muted); }
+.filter-kind label { display: inline-flex; align-items: center; gap: 0.2rem; margin-right: 0.6rem; }
+.filter-kind label:last-child { margin-right: 0; }
+
+.filter-clear { color: var(--accent); }
 
 .filter select,
 .filter input[type="date"],
@@ -221,7 +241,6 @@ button:hover,
   font-size: 0.9rem;
 }
 
-.filter input[type="search"] { min-width: 12rem; }
 
 /* ---------------------------------------------------------------- the list */
 
@@ -346,8 +365,36 @@ button:hover,
   margin: 0;
 }
 
-.item-title { color: var(--text); overflow-wrap: anywhere; }
+/* The title is the link, and the row says so by being the only thing in it at text strength; an
+   underline on every title of a long list is ruling paper. It comes back under the pointer. */
+.item-title { color: var(--text); overflow-wrap: anywhere; text-decoration: none; }
+.item-title:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 0.15em; }
+.item-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+
 .item-meta { margin: 0.15rem 0 0; color: var(--muted); font-size: 0.8rem; overflow-wrap: anywhere; }
+
+/* The second line: what, who, when, and the description filling whatever width is left, cut with
+   an ellipsis. The facts never wrap away from each other; only the description gives way. */
+.item > .item-meta {
+  display: flex;
+  align-items: baseline;
+  margin: 0.15rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+.item > .item-meta .item-facts { flex: none; }
+.item > .item-meta .item-summary {
+  flex: 1 1 0;
+  min-width: 0;
+  margin: 0 0 0 0.6rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 40rem) {
+  .item > .item-meta { flex-wrap: wrap; white-space: normal; }
+  .item > .item-meta .item-summary { flex-basis: 100%; margin-left: 0; white-space: nowrap; }
+}
 
 .empty { margin: 0; color: var(--muted); }
 
@@ -432,16 +479,6 @@ button:hover,
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   font-weight: 600;
-}
-
-/* The item's own description. Small and quiet: it is context under a title, not a second title,
-   and it is clamped to one line so five rows stay a list rather than becoming prose. */
-.item-summary {
-  margin: 0.15rem 0 0.2rem;
-  color: var(--muted);
-  font-size: 0.78rem;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
 }
 
 /* ---------------------------------------------------------------- the view switch (FR-1.8 AC4)
@@ -875,14 +912,22 @@ button:hover,
 }
 
 /* The Security tile (FR-1.13): the Sites view's first tile, gathering everything marked wherever
-   it is open. It belongs to no site, so it carries no brand hue and no wash — a neutral tile whose
-   heading band is the page's own border colour. The 4 px rule down its edge is drawn only while a
-   security item is open (.is-alert), which is what keeps it worth noticing: the tile is present
-   every day and loud only on the days it has something to say (ADR-0012, ADR-0014).
+   it is open. It belongs to no site, so it carries no brand hue and no wash. Its heading is hazard
+   tape only while something is marked (.is-marked, FR-1.13 AC6): on an ordinary day it is a
+   neutral band in the page's border colour, and the tile shrinks to its one "All clear" line
+   instead of stretching to the height of its neighbours. Tape that is up every day is read as
+   decoration, and then it says nothing on the day it matters (ADR-0012, ADR-0014).
 
-   The rule is an inset shadow for the same reason the rows' is: the tile already has a border, and
-   a border-left would replace rather than join it. */
+   The 4 px rule down its edge is drawn only while a security item is open (.is-alert). It is an
+   inset shadow for the same reason the rows' is: the tile already has a border, and a border-left
+   would replace rather than join it. */
 .tile-tier .tile-title {
+  background: var(--border);
+  color: var(--text);
+}
+.tile-tier.is-clear { align-self: start; }
+.tile-tier.is-clear .tile-empty { color: var(--ok); font-weight: 600; }
+.tile-tier.is-marked .tile-title {
   /* codespell:ignore-begin */
   background-image: repeating-linear-gradient(45deg, var(--tape-red) 0 10px,
       var(--tape-red-dark) 10px 20px);
@@ -899,9 +944,174 @@ button:hover,
    (FR-1.13 AC4). */
 .security-count a { color: var(--danger); }
 
+/* ---------------------------------------------------------------- Needs you (FR-1.14)
+
+   The band above the list: what needs the owner, one line each, loudest reason first. It is the
+   one panel on the page, because it is the one thing on it that answers the question the page
+   exists for; everything below is the complete list it points into. */
+.needs {
+  margin: 0 0 1.5rem;
+  padding: 0.7rem 0.9rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.needs-title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0 0 0.4rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.needs-count {
+  min-width: 1.6em;
+  padding: 0 0.45em;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 0.8rem;
+  line-height: 1.6;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Nothing needs you: the end of the visit. One calm line, the heading and the answer side by
+   side, in the colour that means all is well. */
+.needs.is-clear {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.75rem;
+  padding-block: 0.55rem;
+}
+.needs.is-clear .needs-title { margin: 0; }
+.needs-clear { margin: 0; color: var(--ok); font-weight: 600; }
+
+/* The rows share one set of columns — reason, kind, title, meta — so the eye runs down each of
+   them rather than zig-zagging: the list is a grid and every row a subgrid of it. A browser
+   without subgrid still lays each row out on its own, in the same order. */
+.needs-items {
+  display: grid;
+  grid-template-columns: max-content max-content minmax(0, 1fr) max-content;
+  column-gap: 0.6rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.need {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: baseline;
+  padding: 0.3rem 0;
+  border-top: 1px solid var(--border);
+}
+.needs-items > .need:first-child { border-top: 0; }
+
+.need-reason .tier-chip { margin-right: 0; }
+
+/* The reason as a word for the two that are not tiers. Outlined, where a tier chip is solid: a
+   review or a contribution is somebody waiting, not an alarm. */
+.need-chip {
+  display: inline-block;
+  padding: 0 0.45em;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.need-review .need-chip { color: var(--accent); }
+.need-contribution .need-chip { color: var(--muted); }
+
+/* PR or Issue, in the top bar's colours, so the count up there and the rows down here are one
+   code. */
+.need-kind,
+.item-kind {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.need-kind-pr, .item-kind-pr { color: var(--accent); }
+.need-kind-issue, .item-kind-issue { color: var(--ok); }
+
+.need-main {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.need-title { color: var(--text); font-weight: 600; text-decoration: none; }
+.need-title:hover { color: var(--accent); text-decoration: underline; }
+
+.need-meta {
+  color: var(--muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The site's colour, as a swatch beside its repository's name. */
+.need-repo::before {
+  content: "";
+  display: inline-block;
+  width: 0.55em;
+  height: 0.55em;
+  margin-right: 0.3em;
+  border-radius: 2px;
+  background: var(--tile-hue, var(--hue-slate));
+}
+@supports (color: light-dark(#000000, #ffffff)) and (color: color-mix(in srgb, #000000 50%, #ffffff)) {
+  .need-repo::before {
+    background: light-dark(var(--tile-hue, var(--hue-slate)), color-mix(in srgb, var(--tile-sig, var(--hue-slate-sig)) 70%, #ffffff));
+  }
+}
+
+.needs-more { margin-top: 0.2rem; }
+.needs-more summary {
+  padding: 0.25rem 0;
+  color: var(--accent);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.needs-more[open] summary { margin-bottom: 0.2rem; }
+
+.needs a:focus-visible,
+.needs-more summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* On a phone the four columns do not fit: each row becomes two lines, the chips and the title on
+   the first and who, where and when on the second. */
+@media (max-width: 40rem) {
+  .needs-items { display: block; }
+  .need {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.15rem 0.5rem;
+  }
+  .need-main { flex: 1 1 12rem; min-width: 0; }
+  .need-meta { flex-basis: 100%; }
+}
+
+/* The list below the band, in two weights (FR-1.14): a row that is in the band keeps its title at
+   full strength, every other row is a step quieter. Quiet (below) is a further step again. Both
+   ends of the mix meet the page's contrast floor on their own, so the mix does too. */
+.item.is-needed .item-title { font-weight: 600; }
+.item:not(.is-needed) .item-title { color: color-mix(in srgb, var(--text) 72%, var(--muted)); }
+
 /* Quiet: nothing has happened here for three months (FR-1.10 AC4). The title dims, and the meta
    line says the word, so the state is readable without the colour. */
-.is-quiet .item-title { color: var(--muted); }
+.is-quiet .item-title,
+.item.is-quiet .item-title { color: var(--muted); }
 
 /* ---------------------------------------------------------------- the rainbow band (FR-1.10)
 

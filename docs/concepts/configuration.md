@@ -17,6 +17,7 @@ timezone: Europe/Berlin
 
 github:
   auth_repo: gernotstarke/zorgscope   # push access here admits a visitor
+  owner: gernotstarke                 # the login the Needs-you band works for
   cache_ttl: 5m                       # how old the fetched list may be before a page view refetches
   repos:
     - arc42/arc42-template
@@ -36,6 +37,10 @@ Sign-in requests no OAuth scopes, so `auth_repo` must be a repository GitHub wil
 visitor's scope-less token: a public one, or one they can see without scopes. A private repository
 would need the `repo` scope, and an organisation repository behind OAuth App access restrictions may
 need `read:org` as well.
+`github.owner` is the one GitHub login zorgscope works for (FR‑1.14): a pull request asking that
+login for a review, or opened by anyone else and ready, needs the owner and is listed in the Needs-you
+band above the list. It is optional; without it only the marked items (FR‑1.13) need anyone. It is
+not an access rule — who may sign in is still `auth_repo`'s question.
 `github.cache_ttl` is how old the in-memory snapshot may be before a page view triggers a
 fetch instead of reusing it (design §5) — shown as the wait page while it runs (FR‑1.9); it
 defaults to 5 minutes when the field is left out. Both sit in the YAML file rather than the
@@ -50,11 +55,11 @@ process environment to test start-up failures.
 
 | Comes from YAML | Comes from environment |
 |---|---|
-| `timezone`, `github.auth_repo`, `github.cache_ttl`, `github.repos`, `github.sites` | `GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET`, `GITHUB_TOKEN` |
+| `timezone`, `github.auth_repo`, `github.owner`, `github.cache_ttl`, `github.repos`, `github.sites` | `GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET`, `GITHUB_TOKEN` |
 | | `GITHUB_BASE_URL`, `GITHUB_OAUTH_BASE_URL` (optional, fakes only) |
 
 The last row is not a secret at all: `Load` reads those two from the environment purely so
-`make fakes` and the tests can point at a local fixture server instead of the real upstream, without
+the fake GitHub (`cmd/fakesources`) and the tests can point at a local fixture server instead of the real upstream, without
 a YAML field that would tempt someone into committing a real one. There are two of them because what
 looks like one upstream is served from two hosts: the API and GraphQL endpoint at `api.github.com`
 (`GITHUB_BASE_URL`) and the OAuth authorize and token endpoints at `github.com`
@@ -99,7 +104,7 @@ GITHUB_OAUTH_CLIENT_SECRET=
 GITHUB_TOKEN=
 
 # --- optional ---------------------------------------------------------------
-# Point the adapter, and the OAuth App's authorize/token endpoints, at `make fakes` instead of the
+# Point the adapter, and the OAuth App's authorize/token endpoints, at the fake GitHub instead of the
 # real services. Empty means the real GitHub.
 # GITHUB_BASE_URL=http://host.docker.internal:9090
 # GITHUB_OAUTH_BASE_URL=http://host.docker.internal:9090
@@ -109,15 +114,15 @@ LOG_LEVEL=info
 
 No value is filled in above, and none belongs in this file or any other file in the repository —
 every example on this page and every other concept page uses an empty field or an obvious
-placeholder, never a real secret. `make backend` refuses to start on an incomplete `.env` rather
+placeholder, never a real secret. `make dev` refuses to start on an incomplete `.env` rather
 than letting the container start, fail and retry: it creates the file from the template when there
 is none, and otherwise checks that the values it needs are *present* — never what they are, and it
 echoes none of them — before bringing anything up.
 
-Signing in against a fixture GitHub instead of the real one (`make fakes`, `:9090`) takes the two
+Signing in against a fixture GitHub instead of the real one (`cmd/fakesources`, `:9090`) takes the two
 commented lines above uncommented, pointing both the API/GraphQL host and the OAuth host at
 `http://host.docker.internal:9090` — the backend runs in Compose and reaches the fake, which
-`make fakes` runs directly on the host, by that name. Nothing else is needed: `GET
+runs directly on the host, by that name. Nothing else is needed: `GET
 /login/oauth/authorize` on the fake honours whatever `redirect_uri` a request carries, and
 zorgscope's own request carries none, so the fake falls back to the same
 `http://localhost:8080/auth/callback` the local OAuth App is registered with (see below) — there is

@@ -1,0 +1,5 @@
+timezone: Europe/Berlin
+github:
+  auth_repo: gernotstarke/zorgscope
+  owner: "not a login"
+  repos: [org/one, org/two]

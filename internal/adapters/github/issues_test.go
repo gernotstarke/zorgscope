@@ -167,6 +167,35 @@ func TestOnlyThePullRequestQueryAsksForIsDraft(t *testing.T) {
 	if !strings.Contains(queries["pullRequests"], "isDraft") {
 		t.Errorf("the pull request query must ask for isDraft (FR-2.1 AC1):\n%s", queries["pullRequests"])
 	}
+	// FR-1.14: the same holds for reviewRequests, which exists on PullRequest and not on Issue.
+	if strings.Contains(queries["issues"], "reviewRequests") {
+		t.Errorf("the issues query asks for reviewRequests, which real GitHub rejects on type Issue:\n%s", queries["issues"])
+	}
+	if !strings.Contains(queries["pullRequests"], "reviewRequests") {
+		t.Errorf("the pull request query must ask for reviewRequests (FR-1.14):\n%s", queries["pullRequests"])
+	}
+}
+
+// FR-1.14: a pull request's requested reviewers reach the item. The fixture's org/repo PR #10
+// asks gernotstarke for a review; PR #11 asks nobody.
+func TestPullRequestReviewRequestsAreFetched(t *testing.T) {
+	srv := httptest.NewServer(fakesources.NewServer())
+	defer srv.Close()
+
+	f := github.NewIssueFetcher(github.Config{
+		Token: "x", BaseURL: srv.URL + "/graphql", Repos: []string{"org/repo"},
+	}, srv.Client())
+	items, err := f.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	byID := byKey(items)
+	if got := byID["pr:org/repo#10"].ReviewRequested; len(got) != 1 || got[0] != "gernotstarke" {
+		t.Errorf("PR #10 ReviewRequested = %v, want [gernotstarke]", got)
+	}
+	if got := byID["pr:org/repo#11"].ReviewRequested; got != nil {
+		t.Errorf("PR #11 ReviewRequested = %v, want nil", got)
+	}
 }
 
 // QS-1.5

@@ -1,0 +1,83 @@
+package web
+
+import (
+	"strings"
+	"time"
+
+	"github.com/gernotstarke/zorgscope/internal/config"
+	"github.com/gernotstarke/zorgscope/internal/domain"
+)
+
+// needsShown is how many rows of the band are drawn open. The rest wait behind a disclosure, so a
+// morning with forty Dependabot bumps still leaves the list itself on the first screen.
+const needsShown = 10
+
+// needsView is the Needs-you band above the list (FR-1.14): what needs the owner, loudest reason
+// first. It is drawn on the unfiltered list only — a filter is a question of its own, and the band
+// gives way to it.
+type needsView struct {
+	// Shown are the first needsShown rows; More are the rest, drawn inside a disclosure.
+	Shown, More []needView
+}
+
+// Count is how many items need the owner, for the heading.
+func (v needsView) Count() int { return len(v.Shown) + len(v.More) }
+
+// needView is one row of the band: one line, less than a list row, because the list below still
+// carries every item in full.
+type needView struct {
+	// Reason is the class suffix — "security", "dependency", "review" or "contribution" — and
+	// ReasonLabel the word the row carries. Colour is never the only signal.
+	Reason, ReasonLabel string
+	// Tier is set for a marked item, so the band draws the very chip the list draws.
+	Tier tierView
+	// Kind is "PR" or "Issue", drawn in the top bar's colours.
+	Kind, KindClass string
+	Number          int
+	Title, URL      string
+	Author          string
+	// Repo is the repository's name without its owner, and Hue its site's colour key.
+	Repo, Hue string
+	Updated   timeView
+}
+
+// newNeedsView builds the band from every item the snapshot holds — not the filtered ones: the band
+// answers "what needs me", whatever the list below is narrowed to.
+func newNeedsView(items []domain.Item, gh config.GitHub, now time.Time) *needsView {
+	needed := domain.BuildNeedsYou(items, gh.Owner)
+	v := &needsView{}
+	for i, n := range needed {
+		row := newNeedView(n, gh, now)
+		if i < needsShown {
+			v.Shown = append(v.Shown, row)
+		} else {
+			v.More = append(v.More, row)
+		}
+	}
+	return v
+}
+
+func newNeedView(n domain.Needed, gh config.GitHub, now time.Time) needView {
+	it := n.Item
+	v := needView{
+		Reason:  n.Need.String(),
+		Number:  it.Number,
+		Title:   it.Title,
+		URL:     it.URL,
+		Author:  it.Author,
+		Repo:    it.Repo[strings.IndexByte(it.Repo, '/')+1:],
+		Hue:     hueForRepo(gh, it.Repo),
+		Updated: newTimeView(it.UpdatedAt, now),
+	}
+	switch n.Need {
+	case domain.NeedSecurity, domain.NeedDependency:
+		v.Tier = newTierView(it)
+	case domain.NeedReview:
+		v.ReasonLabel = "Review requested"
+	case domain.NeedContribution:
+		v.ReasonLabel = "Contribution"
+	default:
+	}
+	v.Kind, v.KindClass = kindShort(it.Kind), string(it.Kind)
+	return v
+}

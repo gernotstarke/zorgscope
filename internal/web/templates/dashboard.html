@@ -8,43 +8,52 @@
      With htmx it fetches this same page rather than the fragment endpoint, selects the list out of
      the response and swaps only that. Fetching the page is what makes hx-push-url honest: what is
      pushed into the address bar is a URL that renders the very page being looked at, so a reload
-     or a bookmark of it shows the same narrowed list.
+     or a bookmark of it shows the same narrowed list. The active count in the summary sits outside
+     the list, so hx-select-oob takes it out of the same response.
 
-     from: takes a CSS selector htmx resolves against the whole document, not against this form,
-     so a bare [name=q] also matched the top bar's search box once that existed — and every
-     keystroke there fired this filter as well, pushing / into the address bar while the results
-     page was arriving. find scopes the selector to this form's own input. */}}
+     The controls fold away behind one disclosure (a <details>, so it needs no script): most visits
+     want none of them, and a toolbar of twelve options is the first thing the list used to show.
+     It is open whenever a filter is in force, so a narrowed list always shows what narrowed it.
+
+     There is no text box. The top bar's search is the one place to type (FR-12.1); a q in the URL
+     still narrows the list, and rides along here as a hidden field so changing another control
+     does not silently drop it (FR-2.1 AC1). */}}
 <form class="filter" method="get" action="/"
-      hx-get="/" hx-select="#items"
-      hx-trigger="change, keyup changed delay:400ms from:find [name=q], search"
+      hx-get="/" hx-select="#items" hx-select-oob="#filter-count"
+      hx-trigger="change"
       hx-target="#items" hx-swap="outerHTML" hx-push-url="true">
   {{/* Bound to a variable rather than reached for as $.Filter inside the range: $ is the page's
        own data, not this block's, so a dollar there names a field pageData does not have. */}}
   {{$filter := .Filter}}
-  <label class="filter-field">Repository
-    <select name="repo">
-      <option value=""{{if eq .Filter.Repo ""}} selected{{end}}>all</option>
-      {{range .Repos}}<option value="{{.}}"{{if eq . $filter.Repo}} selected{{end}}>{{.}}</option>{{end}}
-    </select></label>
-  <fieldset class="filter-kind"><legend>Kind</legend>
-    <label><input type="radio" name="kind" value=""{{if eq .Filter.Kind ""}} checked{{end}}> all</label>
-    <label><input type="radio" name="kind" value="issue"{{if eq .Filter.Kind "issue"}} checked{{end}}> issues</label>
-    <label><input type="radio" name="kind" value="pr"{{if eq .Filter.Kind "pr"}} checked{{end}}> pull requests</label>
-  </fieldset>
-  {{/* FR-1.13: the tier axis. It is a floor rather than a choice of one tier — "security or
-       dependency" keeps the security items, because a bump that fixes a vulnerability is still a
-       bump, and the Security tile links here for everything it marks. */}}
-  <fieldset class="filter-kind"><legend>Marked</legend>
-    <label><input type="radio" name="tier" value=""{{if eq .Filter.Tier ""}} checked{{end}}> all</label>
-    <label><input type="radio" name="tier" value="dependency"{{if eq .Filter.Tier "dependency"}} checked{{end}}> security or dependency</label>
-    <label><input type="radio" name="tier" value="security"{{if eq .Filter.Tier "security"}} checked{{end}}> security</label>
-  </fieldset>
-  <label class="filter-field">Created since <input type="date" name="since" value="{{.Filter.Since}}"></label>
-  <label class="filter-field">Search <input type="search" name="q" value="{{.Filter.Text}}" placeholder="title or description"></label>
-  {{/* The only control htmx makes redundant, so it is drawn only where htmx is not: with script
-       the form applies itself as it is changed, and a button that did nothing new would invite a
-       press that looked like it had failed. */}}
-  <noscript><button type="submit">Apply</button></noscript>
+  <details class="filter-panel"{{if .Filter.Active}} open{{end}}>
+    <summary>Filter<span class="filter-count" id="filter-count">{{with .Filter.Active}} · {{.}} active{{end}}</span></summary>
+    <div class="filter-controls">
+      <label class="filter-field">Repository
+        <select name="repo">
+          <option value=""{{if eq .Filter.Repo ""}} selected{{end}}>all</option>
+          {{range .Repos}}<option value="{{.}}"{{if eq . $filter.Repo}} selected{{end}}>{{.}}</option>{{end}}
+        </select></label>
+      <fieldset class="filter-kind"><legend>Kind</legend>
+        <label><input type="radio" name="kind" value=""{{if eq .Filter.Kind ""}} checked{{end}}> all</label>
+        <label><input type="radio" name="kind" value="issue"{{if eq .Filter.Kind "issue"}} checked{{end}}> issues</label>
+        <label><input type="radio" name="kind" value="pr"{{if eq .Filter.Kind "pr"}} checked{{end}}> pull requests</label>
+      </fieldset>
+      {{/* FR-1.13: the tier axis. It is a floor rather than a choice of one tier — "security or
+           dependency" keeps the security items, because a bump that fixes a vulnerability is still a
+           bump, and the Security tile links here for everything it marks. */}}
+      <fieldset class="filter-kind"><legend>Marked</legend>
+        <label><input type="radio" name="tier" value=""{{if eq .Filter.Tier ""}} checked{{end}}> all</label>
+        <label><input type="radio" name="tier" value="dependency"{{if eq .Filter.Tier "dependency"}} checked{{end}}> security or dependency</label>
+        <label><input type="radio" name="tier" value="security"{{if eq .Filter.Tier "security"}} checked{{end}}> security</label>
+      </fieldset>
+      <label class="filter-field">Created since <input type="date" name="since" value="{{.Filter.Since}}"></label>
+      {{with .Filter.Text}}<input type="hidden" name="q" value="{{.}}">{{end}}
+      {{/* The only control htmx makes redundant, so it is drawn only where htmx is not: with script
+           the form applies itself as it is changed, and a button that did nothing new would invite a
+           press that looked like it had failed. */}}
+      <noscript><button type="submit">Apply</button></noscript>
+    </div>
+  </details>
 </form>
 {{template "items" .Items}}
 {{end}}

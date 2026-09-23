@@ -104,7 +104,7 @@ func TestLoadRequiresTheOAuthPairAuthRepoAndToken(t *testing.T) {
 	}
 }
 
-// GITHUB_BASE_URL and GITHUB_OAUTH_BASE_URL exist so that `make fakes` and the tests can point
+// GITHUB_BASE_URL and GITHUB_OAUTH_BASE_URL exist so that the fake GitHub (cmd/fakesources) and the tests can point
 // fetching and the sign-in flow at a local fixture server. A value that is neither https nor a
 // loopback address is therefore either a mistake or an attempt to send this deployment's token, the
 // visitor's authorisation or the client secret to somebody else's host in plaintext, and either way
@@ -124,10 +124,10 @@ func TestLoadRejectsABaseURLThatIsNeitherHTTPSNorLoopback(t *testing.T) {
 			for _, ok := range []string{
 				"",                                 // unset: the real GitHub
 				"https://github.example",           // an enterprise host, over TLS
-				"http://localhost:9090",            // make fakes, from the host
+				"http://localhost:9090",            // the fake GitHub, from the host
 				"http://127.0.0.1:9090",            // the same, by address
 				"http://[::1]:9090",                // and over IPv6
-				"http://host.docker.internal:9090", // make fakes, from inside the Compose network
+				"http://host.docker.internal:9090", // the fake GitHub, from inside the Compose network
 			} {
 				if err := load(ok); err != nil {
 					t.Errorf("%s=%q: %v", variable, ok, err)
@@ -364,5 +364,25 @@ func TestTheRealConfigSitesClaimEveryRepoInOrder(t *testing.T) {
 	}
 	if !slices.Equal(claimed, cfg.GitHub.Repos) {
 		t.Errorf("sites claim repos %v in order, want repos %v", claimed, cfg.GitHub.Repos)
+	}
+}
+
+// FR-1.14: github.owner names the login zorgscope works for. It is optional — without it only
+// the marked items need anyone — but a value that cannot be a GitHub login is refused at start-up
+// rather than silently matching nobody.
+func TestLoadOwner(t *testing.T) {
+	cfg, err := config.Load("testdata/owner.yaml", env(fullEnv()))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.GitHub.Owner != "gernotstarke" {
+		t.Errorf("owner = %q, want gernotstarke", cfg.GitHub.Owner)
+	}
+	cfg, err = config.Load("testdata/valid.yaml", env(fullEnv()))
+	if err != nil || cfg.GitHub.Owner != "" {
+		t.Errorf("owner without github.owner = %q (err %v), want empty", cfg.GitHub.Owner, err)
+	}
+	if _, err := config.Load("testdata/bad-owner.yaml", env(fullEnv())); err == nil || !strings.Contains(err.Error(), "github.owner") {
+		t.Errorf("a malformed github.owner must be refused naming the field, got %v", err)
 	}
 }

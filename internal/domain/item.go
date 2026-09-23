@@ -45,9 +45,13 @@ type Item struct {
 	// notes, far past the part zorgscope keeps. nil when the item cites none. Like Title, it is
 	// borrowed text and is escaped, never trusted.
 	Advisories []string
-	State      string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	// ReviewRequested is the logins a pull request asks for a review from, in GitHub's order —
+	// people only, since a team is not somebody who can be told "this needs you". nil for an issue
+	// and for a pull request nobody was asked to review (FR-1.14).
+	ReviewRequested []string
+	State           string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 // SortItems orders items most recently updated first. The sort is stable, so items with equal

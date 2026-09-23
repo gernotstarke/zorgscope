@@ -265,6 +265,8 @@ type itemsView struct {
 	// Repos is how many repositories the running fetch is asking, for the status line. The wait
 	// page names the same number, from the same configuration.
 	Repos int
+	// Needs is the Needs-you band (FR-1.14), nil whenever a filter is in force.
+	Needs *needsView
 }
 
 // groupView is one repository's block of the list. CountLine is taken before the filter is
@@ -285,6 +287,17 @@ type filterView struct {
 	Tier              string // "", "dependency" or "security" (FR-1.13)
 }
 
+// Active is how many of the filter's axes are in force, for the disclosure's summary: "· 2 active".
+func (f filterView) Active() int {
+	n := 0
+	for _, v := range []string{f.Repo, f.Kind, f.Text, f.Since, f.Tier} {
+		if v != "" {
+			n++
+		}
+	}
+	return n
+}
+
 // timeView is one timestamp rendered twice: an absolute stamp for the <time> element's machine
 // attribute, and the relative phrase a person reads. Known is false for a zero time, which is the
 // difference between "never" and "at the epoch".
@@ -303,10 +316,12 @@ type itemView struct {
 	Summary string
 	URL     string
 	Number  int
-	Kind    string
-	Author  string
-	Created timeView
-	Updated timeView
+	// Kind is "PR" or "Issue", and KindClass its class suffix: the Needs-you band's and the top
+	// bar's code, drawn in the same colours.
+	Kind, KindClass string
+	Author          string
+	Created         timeView
+	Updated         timeView
 	// Labels are the item's chips, in GitHub's order (FR-1.10 AC3).
 	Labels []labelView
 	// Quiet marks an item nothing has touched for the visitor's chosen threshold, domain.QuietAfter
@@ -314,6 +329,10 @@ type itemView struct {
 	Quiet bool
 	// Tier is how loudly the row is marked (FR-1.13), shared with the search results' rows.
 	Tier tierView
+	// Needed says the item is in the Needs-you band (FR-1.14). The list draws such a row at full
+	// weight and every other row a step quieter, so the two tiers read at a glance while the list
+	// stays complete (QG-1).
+	Needed bool
 }
 
 // labelView is one chip: the name as GitHub spells it, and the key that picks its colour class.
@@ -455,6 +474,10 @@ func (s *Server) itemsView(d domain.Dashboard, snap snapshot.Snapshot, now time.
 		Fetching:  snap.Fetching,
 		Repos:     len(s.cfg.GitHub.Repos),
 	}
+	// With nothing open at all, "Nothing open." already says everything the band would.
+	if d.Filter.Empty() && d.Total > 0 {
+		v.Needs = newNeedsView(snap.Items, s.cfg.GitHub, now)
+	}
 	for _, g := range d.Groups {
 		gv := groupView{
 			Repo:      g.Repo,
@@ -463,7 +486,9 @@ func (s *Server) itemsView(d domain.Dashboard, snap snapshot.Snapshot, now time.
 			Items:     make([]itemView, 0, len(g.Items)),
 		}
 		for _, it := range g.Items {
-			gv.Items = append(gv.Items, newItemView(it, now, quiet))
+			iv := newItemView(it, now, quiet)
+			iv.Needed = domain.NeedFor(it, s.cfg.GitHub.Owner) != domain.NeedNone
+			gv.Items = append(gv.Items, iv)
 		}
 		v.Groups = append(v.Groups, gv)
 	}
@@ -540,17 +565,18 @@ func newTimeView(t, now time.Time) timeView {
 // newItemView renders one item.
 func newItemView(it domain.Item, now time.Time, quiet time.Duration) itemView {
 	return itemView{
-		Title:   it.Title,
-		Summary: summaryLine(it.Summary),
-		URL:     it.URL,
-		Number:  it.Number,
-		Kind:    kindLabel(it.Kind),
-		Author:  it.Author,
-		Created: newTimeView(it.CreatedAt, now),
-		Updated: newTimeView(it.UpdatedAt, now),
-		Labels:  labelViews(it),
-		Quiet:   it.ShowsQuiet(now, quiet),
-		Tier:    newTierView(it),
+		Title:     it.Title,
+		Summary:   summaryLine(it.Summary),
+		URL:       it.URL,
+		Number:    it.Number,
+		Kind:      kindShort(it.Kind),
+		KindClass: string(it.Kind),
+		Author:    it.Author,
+		Created:   newTimeView(it.CreatedAt, now),
+		Updated:   newTimeView(it.UpdatedAt, now),
+		Labels:    labelViews(it),
+		Quiet:     it.ShowsQuiet(now, quiet),
+		Tier:      newTierView(it),
 	}
 }
 
@@ -612,6 +638,18 @@ func quantity(n int, unit string) string {
 		return "1 " + unit
 	}
 	return strconv.Itoa(n) + " " + unit + "s"
+}
+
+// kindShort is the kind as the list and the band abbreviate it.
+func kindShort(k domain.Kind) string {
+	switch k {
+	case domain.KindPR:
+		return "PR"
+	case domain.KindIssue:
+		return "Issue"
+	default:
+		return string(k)
+	}
 }
 
 func kindLabel(k domain.Kind) string {

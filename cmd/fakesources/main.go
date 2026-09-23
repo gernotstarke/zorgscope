@@ -1,6 +1,6 @@
 // Command fakesources serves a fixture-backed stand-in for GitHub, so that each adapter can be
 // developed and tested against a real HTTP server instead of a live network dependency and a real
-// credential. `make fakes` runs this on http://localhost:9090.
+// credential. It listens on http://localhost:9090.
 package main
 
 import (

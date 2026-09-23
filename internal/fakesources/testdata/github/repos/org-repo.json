@@ -84,6 +84,15 @@
             "name": "in progress"
           }
         ]
+      },
+      "reviewRequests": {
+        "nodes": [
+          {
+            "requestedReviewer": {
+              "login": "gernotstarke"
+            }
+          }
+        ]
       }
     },
     {

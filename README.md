@@ -23,9 +23,7 @@ Only Docker and GNU make are needed. Nothing is installed on the host.
 
 ```sh
 cp deploy/env.example .env   # then fill in the GitHub OAuth pair and GITHUB_TOKEN
-make backend                 # terminal 1: the backend, fetching straight from GitHub
-make client                  # terminal 2: open the browser at it
-make fakes                   # terminal 3 (optional): a fixture GitHub instead of the real one
+make dev                     # the backend on http://localhost:8080, fetching straight from GitHub
 ```
 
 `.env` needs three values:
@@ -45,9 +43,7 @@ rotate it.
 | Target | Purpose |
 |--------|---------|
 | `make help` | List every target |
-| `make backend` | Run the backend locally against the real GitHub (terminal 1) |
-| `make client` | Open the browser at the local backend (terminal 2) |
-| `make fakes` | Serve fixture GitHub responses, OAuth endpoints included, on `:9090` (terminal 3) |
+| `make dev` | Run the backend locally against the real GitHub on `http://localhost:8080` |
 | `make check` | Everything CI runs, plus `markdownlint` and `fly.toml` validation |
 | `make deploy` | Build remotely on Fly and deploy — `fly deploy --remote-only --config deploy/fly.toml` |
 | `make clean` | Stop the local backend; remove build output and caches |
@@ -88,6 +84,22 @@ Go tests live next to the code they test.
 Reset on 2026-09-15 to a stateless process: no database, no refresh pipeline, three secrets, one
 deploy command, one CI job. The requirements, the decisions and the design are current with the
 code; `make check` passes.
+
+## Changelog
+
+| Version | Date | Change |
+|---------|------|--------|
+| 1.6.2 | 2026-09-23 | List rows on two lines; one search box, filters folded behind "Filter"; `make dev` replaces `make backend`, `client` and `fakes` |
+| 1.5.0 | 2026-09-23 | "Needs you" band above the list; Security tile shows hazard tape only when something is marked |
+| 1.4.0 | 2026-09-22 | Open issue and PR count in the top bar |
+| 1.3.0 | 2026-09-22 | Hazard tape on marked rows, striped band on the Security tile |
+| 1.2.0 | 2026-09-22 | The Dependency mark is a mark, not a label |
+| 1.1.0 | 2026-09-22 | Sites view opens with the Security tile; the list narrows to a tier |
+| 0.7.0 | 2026-09-21 | Security and dependency items stand out on the list and in search |
+| 0.6.0 | 2026-09-20 | Settings cogwheel: landing view, quiet threshold, browser cache |
+| 0.5.0 | 2026-09-20 | Warm start: the last list stays on screen while GitHub is asked |
+| 0.4.0 | 2026-09-18 | Search (Cmd-K), Contributors page, everything in the top bar |
+| 0.3.0 | 2026-09-17 | Stateless reset, Sites view, fast first view, labels and site colours |
 
 ## Licence
 

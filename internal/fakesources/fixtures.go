@@ -42,6 +42,20 @@ type ghIssue struct {
 	// leave it out; paginate serves such a node with an empty connection rather than null.
 	Labels  ghLabels `json:"labels"`
 	IsDraft bool     `json:"isDraft,omitempty"`
+	// ReviewRequests is GitHub's reviewRequests connection, which exists on a pull request and not
+	// on an issue. A fixture may leave it out; paginate serves a pull request without one as an
+	// empty connection and an issue without the key at all, as real GitHub would.
+	ReviewRequests *ghReviewRequests `json:"reviewRequests,omitempty"`
+}
+
+// ghReviewRequests mirrors reviewRequests.nodes[].requestedReviewer.login.
+type ghReviewRequests struct {
+	Nodes []ghReviewRequest `json:"nodes"`
+}
+
+// ghReviewRequest is one review request; the fake serves user reviewers only.
+type ghReviewRequest struct {
+	RequestedReviewer ghAuthor `json:"requestedReviewer"`
 }
 
 // ghAuthor is the author sub-object of a GraphQL issue or pull-request node.

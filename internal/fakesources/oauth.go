@@ -19,7 +19,7 @@ const (
 // defaultCallback is where GET /login/oauth/authorize redirects to when the request itself
 // carries no redirect_uri — the case the backend's own request is always in (design 2026-09-14
 // §2: zorgscope never sends redirect_uri, so real GitHub uses the callback registered on the
-// App). It matches the callback the local OAuth App used for `make fakes` is registered with
+// App). It matches the callback the local OAuth App used with the fake is registered with
 // (spec §7: signing in against the fake while working offline, the backend listening on
 // localhost:8080) — a real GitHub App's registered callback is a deployment-time setting with
 // nothing to stand in for it here, so the fake answers every such request with this one fixed
@@ -41,7 +41,7 @@ var permissionSets = map[string]map[string]bool{
 // handleAuthorize serves GET /login/oauth/authorize, GitHub's first sign-in redirect. When the
 // request carries a redirect_uri, it is honoured exactly as real GitHub honours one registered
 // for a client — this fake does the same for any caller that sends one. The backend's own request
-// (spec §2) carries no redirect_uri, so for that request — and for `make fakes`'s local
+// (spec §2) carries no redirect_uri, so for that request — and for the fake's local
 // interactive sign-in (spec §7) — it falls back to defaultCallback, matching the local OAuth App's
 // registered callback.
 func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {

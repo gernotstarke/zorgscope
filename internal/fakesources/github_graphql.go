@@ -131,7 +131,15 @@ func paginateOrEmpty(fx *ghRepoFixture, after string, issues bool) ghConnection 
 	if issues {
 		return paginate(fx.Issues, after)
 	}
-	return paginate(fx.PullRequests, after)
+	conn := paginate(fx.PullRequests, after)
+	// Like labels, a pull request without review requests is served with an empty connection
+	// rather than null, because the decoder wants every key it asked for.
+	for i := range conn.Nodes {
+		if rr := conn.Nodes[i].ReviewRequests; rr == nil || rr.Nodes == nil {
+			conn.Nodes[i].ReviewRequests = &ghReviewRequests{Nodes: []ghReviewRequest{}}
+		}
+	}
+	return conn
 }
 
 // paginate slices nodes into the page named by after: "" (or any value other than nextCursor)

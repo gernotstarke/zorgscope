@@ -7,12 +7,13 @@
 <div class="tiles">
   {{/* The Security tile (FR-1.13): everything marked, wherever it is open, drawn before the site
        tiles because it is what must not be missed. It carries no site colour — it belongs to no
-       site — and its red rule appears only while a security item is open. */}}
+       site. Its heading is hazard tape only while something is marked (FR-1.13 AC6), and its red
+       rule appears only while a security item is open. */}}
   {{/* Bound to a variable rather than reached for as $.Security inside the with: $ is the page's
        own data, not this block's. */}}
   {{$security := .Security}}
   {{with .Security}}
-  <section class="tile tile-tier{{if .Alert}} is-alert{{end}}" aria-labelledby="{{.ID}}">
+  <section class="tile tile-tier{{if .CountLine}} is-marked{{else}} is-clear{{end}}{{if .Alert}} is-alert{{end}}" aria-labelledby="{{.ID}}">
     <h2 class="tile-title" id="{{.ID}}">
       Security
       {{with .CountLine}}<span class="tile-count">{{.}}</span>{{end}}
@@ -25,7 +26,7 @@
       <ul class="tile-items">{{range .Issues}}{{template "tiertileitem" .}}{{end}}</ul>{{end}}
       {{with .Href}}<p class="tile-more"><a href="{{.}}">{{$security.Label}} →<span class="visually-hidden"> marked security or dependency</span></a></p>{{end}}
       {{else}}
-      <p class="tile-empty">No security or dependency items open.</p>
+      <p class="tile-empty">All clear — no security or dependency items open.</p>
       {{end}}
     </div>
   </section>

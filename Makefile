@@ -1,14 +1,11 @@
 # zorgscope — everything runs inside Docker; only `docker` and `make` are required locally (C-2).
 #
 # Stateless: no database, no refresh pipeline. The backend fetches straight from GitHub on demand
-# (FR-1.2). That is one process to run against the real GitHub, in one terminal, plus the browser
-# in a second:
+# (FR-1.2). That is one process to run against the real GitHub:
 #
-#     terminal 1:  make backend    the backend image on http://localhost:8080, real GitHub
-#     terminal 2:  make client     the browser, pointed at that backend
+#     make dev    the backend image on http://localhost:8080, real GitHub; Ctrl-C stops it
 #
-# Add `make fakes` in a third terminal to develop against a fixture GitHub instead of the real
-# one. `make check` runs what CI runs, plus markdownlint and fly.toml validation;
+# `make check` runs what CI runs, plus markdownlint and fly.toml validation;
 # `make deploy` deploys from this laptop; `make clean` resets.
 
 SHELL          := /bin/sh
@@ -38,18 +35,18 @@ FLY_RUN   = docker run --rm -i --platform "$(FLY_PLATFORM)" \
               -v "$(FLY_CONFIG_DIR)":/fly-config $(FLY_IMAGE)
 
 .DEFAULT_GOAL := help
-.PHONY: help backend client fakes check deploy clean
+.PHONY: help dev check deploy clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
 
-backend: ## Run the backend image locally against the real GitHub; Ctrl-C stops it (terminal 1)
+dev: ## Run the backend image locally against the real GitHub on http://localhost:8080; Ctrl-C stops it
 	@# Refuse to start on an incomplete .env instead of letting the container exit and retry.
 	@# Tests only that a value is present — never what it is — and echoes no values (QS-4.3).
 	@test -f .env || { cp deploy/env.example .env; \
 	  printf '\n  Created .env from deploy/env.example.\n\n'; \
 	  printf '  Fill in GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET from the local GitHub OAuth App\n'; \
-	  printf '  (callback http://localhost:8080/auth/callback), plus GITHUB_TOKEN, and run make backend again.\n\n'; exit 1; }
+	  printf '  (callback http://localhost:8080/auth/callback), plus GITHUB_TOKEN, and run make dev again.\n\n'; exit 1; }
 	@ok=1; \
 	need() { grep -Eq "^$$1=[^[:space:]#]" .env || { printf '  missing in .env: %s\n' "$$1"; ok=0; }; }; \
 	need GITHUB_OAUTH_CLIENT_ID; \
@@ -61,22 +58,6 @@ backend: ## Run the backend image locally against the real GitHub; Ctrl-C stops 
 	  printf '  GITHUB_TOKEN is a personal access token used to call the GitHub API.\n\n'; exit 1; }
 	@echo ">> backend on http://localhost:$(PORT) — Ctrl-C to stop"
 	$(COMPOSE) up --build
-
-client: ## Open the browser at the local backend (terminal 2)
-	@printf '==> checking backend on http://localhost:%s ...\n' "$(PORT)"
-	@if command -v curl >/dev/null 2>&1; then \
-	  curl -fsS --max-time 3 "http://localhost:$(PORT)/healthz" >/dev/null 2>&1 || { \
-	    printf '==> nothing answering there — run "make backend" in another terminal first\n'; exit 1; }; \
-	  printf '==> backend answering (/healthz)\n'; \
-	fi
-	@printf '==> sign in with GitHub\n'
-	@open "http://localhost:$(PORT)" 2>/dev/null || printf '==> open http://localhost:%s in your browser\n' "$(PORT)"
-
-fakes: ## Serve fixture GitHub responses, OAuth endpoints included, on http://localhost:9090 (terminal 3)
-	docker run --rm -t -p 9090:9090 \
-	  -v "$(CURDIR)":/src -w /src \
-	  -v $(GOMOD_VOL):/go/pkg/mod -v $(GOCACHE_VOL):/root/.cache/go-build \
-	  $(GO_IMAGE) go run ./cmd/fakesources
 
 check: ## Everything CI runs, plus fly.toml validation: vet, lint, race tests, domain coverage, markdownlint
 	$(GO_RUN) go vet ./...

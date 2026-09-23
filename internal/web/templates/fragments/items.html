@@ -19,12 +19,16 @@
   </p>
   {{end}}
   <p class="source-line">
+    {{/* A narrowed list says how to widen it again, next to the count that says it is narrowed.
+         ?view=list rather than a bare / so a landing preference does not bounce it elsewhere. */}}
+    {{if .Filtered}}<a class="filter-clear" href="/?view=list">Clear filter</a>{{end}}
     <span class="shown-count">{{.ShownLine}}</span>{{if .Security}}
     {{/* The one place a visitor learns that something is marked leads to it: the link narrows the
          list to the security items, and works without script like every other filtered URL
          (FR-1.13 AC4). */}}
     <span class="security-count"> · <a href="/?tier=security">{{.Security}} security</a></span>{{end}}
   </p>
+  {{with .Needs}}{{template "needs" .}}{{end}}
   {{range .Groups}}
   {{/* The site's colour as a stripe down the group's edge (FR-1.10 AC2): the same hue-<key>
        class a tile carries, drawn here as a border rather than a band. */}}
@@ -35,7 +39,7 @@
       <span class="repo-count">{{.CountLine}}</span></h2>
     <ul class="items">
       {{range .Items}}
-      <li class="item{{if .Quiet}} is-quiet{{end}}{{with .Tier.Name}} tier-{{.}}{{end}}">
+      <li class="item{{if .Needed}} is-needed{{end}}{{if .Quiet}} is-quiet{{end}}{{with .Tier.Name}} tier-{{.}}{{end}}">
         <p class="item-line">
           {{template "item-tier" .Tier}}
           {{if .Number}}<span class="item-number">#{{.Number}}</span>{{end}}
@@ -44,16 +48,14 @@
           {{if .Labels}}<span class="visually-hidden">Labels:</span>{{end}}
           {{range .Labels}}<span class="label label-{{.Key}}">{{.Name}}</span>{{end}}
         </p>
-        {{/* The item's own description, in small type under its title: a number and a headline
-             often do not say what an issue is actually about. Absent when the source has none —
-             an issue opened with an empty body — in which case the row is simply shorter rather
-             than carrying an empty line. */}}
-        {{with .Summary}}<p class="item-summary">{{.}}</p>{{end}}
-        <p class="item-meta">{{.Kind}}{{if .Author}} · {{.Author}}{{end}}</p>
-        {{/* Both stamps are guarded by .Known: a zero timestamp — a stored row whose created_at
-             failed to parse — must read as unknown rather than render <time datetime=""></time>,
-             which is invalid HTML and shows the visitor the word "opened" followed by nothing. */}}
-        <p class="item-meta">{{if .Created.Known}}opened <time datetime="{{.Created.Absolute}}">{{.Created.Relative}}</time>{{else}}opened at an unknown time{{end}}{{if .Updated.Known}}, updated <time datetime="{{.Updated.Absolute}}">{{.Updated.Relative}}</time>{{end}}{{if .Quiet}}, quiet{{end}}</p>
+        {{/* Everything else about the item on one line: what it is, who opened it, when it last
+             moved, and its own description filling what is left. "opened" is said only when it
+             reads differently from "updated" — two equal phrases side by side said the same thing
+             twice. Both stamps are guarded by .Known: a zero timestamp must read as unknown rather
+             than render <time datetime=""></time>, which is invalid HTML and shows the visitor a
+             word followed by nothing. The description is cut to the line by the stylesheet, not
+             here, so a wide window shows more of it. */}}
+        <p class="item-meta"><span class="item-facts"><span class="item-kind item-kind-{{.KindClass}}">{{.Kind}}</span>{{if .Author}} · {{.Author}}{{end}}{{if .Updated.Known}} · updated <time datetime="{{.Updated.Absolute}}">{{.Updated.Relative}}</time>{{end}}{{if .Created.Known}}{{if ne .Created.Relative .Updated.Relative}} · opened <time datetime="{{.Created.Absolute}}">{{.Created.Relative}}</time>{{end}}{{else}} · opened at an unknown time{{end}}{{if .Quiet}} · quiet{{end}}</span>{{with .Summary}}<span class="item-summary">{{.}}</span>{{end}}</p>
       </li>
       {{end}}
     </ul>
@@ -64,4 +66,42 @@
   <p class="empty">{{if .Filtered}}Nothing matches this filter.{{else}}Nothing open.{{end}}</p>
   {{end}}
 </section>
+{{end}}
+
+{{/* The Needs-you band (FR-1.14): what needs the owner, loudest reason first, one line each. It is
+     drawn inside the list section, so a filter's swap takes it away and clearing the filter brings
+     it back, and the refresh poll redraws it with everything else. Every item in it is also in the
+     list below, at full weight: the band says where to look first, never what to leave out (QG-1).
+
+     An empty band stays and says so. A band that vanished would read as a check that had stopped
+     running, exactly as the Security tile's empty state does. */}}
+{{define "needs"}}
+<section class="needs{{if not .Count}} is-clear{{end}}" aria-labelledby="needs-title">
+  <h2 class="needs-title" id="needs-title">Needs you{{with .Count}} <span class="needs-count">{{.}}</span>{{end}}</h2>
+  {{if .Count}}
+  <ol class="needs-items">{{range .Shown}}{{template "need" .}}{{end}}</ol>
+  {{with .More}}
+  {{/* The rest, one click away and with no script: a <details> opens and closes by itself. */}}
+  <details class="needs-more">
+    <summary>{{len .}} more</summary>
+    <ol class="needs-items">{{range .}}{{template "need" .}}{{end}}</ol>
+  </details>
+  {{end}}
+  {{else}}
+  <p class="needs-clear">Nothing right now.</p>
+  {{end}}
+</section>
+{{end}}
+
+{{/* One row of the band: why, what, which, who, where and when, on one line. The reason is a word —
+     the tier chip for a marked item, the same chip the list draws, and a quieter chip otherwise.
+     The site's colour is a swatch beside the repository name rather than a stripe: the band is one
+     list across every site, and a stripe per row would be ten colours down one edge. */}}
+{{define "need"}}
+<li class="need need-{{.Reason}}">
+  <span class="need-reason">{{if .Tier.Name}}{{template "item-tier" .Tier}}{{else}}<span class="need-chip">{{.ReasonLabel}}</span>{{end}}</span>
+  <span class="need-kind need-kind-{{.KindClass}}">{{.Kind}}</span>
+  <span class="need-main">{{if .Number}}<span class="item-number">#{{.Number}}</span> {{end}}<a class="need-title" href="{{.URL}}" target="_blank" rel="noopener noreferrer">{{.Title}}</a></span>
+  <span class="need-meta">{{with .Author}}{{.}} · {{end}}<span class="need-repo hue-{{.Hue}}">{{.Repo}}</span>{{if .Updated.Known}} · <time datetime="{{.Updated.Absolute}}">{{.Updated.Relative}}</time>{{end}}</span>
+</li>
 {{end}}
