@@ -164,3 +164,48 @@ func TestTheTopBarLeadsWithWhatNeedsYou(t *testing.T) {
 		t.Error("a calm top bar does not say that nothing needs you")
 	}
 }
+
+// FR-1.14 AC10: an item idle for more than six months leaves the top of the band, its count and
+// the top bar's, and waits behind a disclosure; a Security item never does, however old.
+func TestStaleItemsWaitBehindTheOlderDisclosure(t *testing.T) {
+	old := testNow.Add(-200 * 24 * time.Hour)
+	stale := prItem(7, "Forgotten contribution", "amy", old)
+	vuln := ghItem(8, "Old vulnerability", old)
+	vuln.Labels = []string{"security"}
+	fresh := prItem(9, "Fresh contribution", "bob", testNow)
+	h := needsHandler(t, []domain.Item{stale, vuln, fresh})
+	body := getAuthed(t, h, "/").Body.String()
+
+	band := body[strings.Index(body, `<section class="needs`):]
+	band = band[:strings.Index(band, "</section>")]
+	older := strings.Index(band, `<details class="needs-more needs-older">`)
+	if older < 0 || !strings.Contains(band, "<summary>1 older than 6 months</summary>") {
+		t.Fatal("the stale contribution is not behind an \"older\" disclosure")
+	}
+	if i := strings.Index(band, "Forgotten contribution"); i < older {
+		t.Error("the stale contribution is listed on top")
+	}
+	if i := strings.Index(band, "Old vulnerability"); i < 0 || i > older {
+		t.Error("the old Security item left the top of the band")
+	}
+	if !strings.Contains(band, `class="needs-count">2<`) {
+		t.Error("the band's count includes the stale item")
+	}
+	if !strings.Contains(body, ">2 need you</a>") {
+		t.Error("the top bar's count includes the stale item")
+	}
+	if strings.Count(body, `class="item is-needed`) != 2 {
+		t.Error("the stale item is drawn at full weight in the list")
+	}
+}
+
+// Only stale items: the band says nothing needs you now, and still offers the older ones.
+func TestABandOfOnlyStaleItemsIsClearWithTheOlderOnesOffered(t *testing.T) {
+	stale := prItem(7, "Forgotten contribution", "amy", testNow.Add(-200*24*time.Hour))
+	body := getAuthed(t, needsHandler(t, []domain.Item{stale}), "/").Body.String()
+	for _, want := range []string{`<section class="needs is-clear"`, "Nothing right now.", "<summary>1 older than 6 months</summary>", ">Nothing needs you</a>"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("a band of only stale items lacks %s", want)
+		}
+	}
+}

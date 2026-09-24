@@ -82,7 +82,7 @@ func (s *Server) answeredWaiting(w http.ResponseWriter, r *http.Request) (snapsh
 		w.Header().Set("Cache-Control", "no-store")
 		s.execute(w, r, http.StatusOK, "waiting.html", pageData{
 			Waiting: &waitingView{Repos: len(s.cfg.GitHub.Repos), Path: r.URL.RequestURI()},
-			Chrome:  chromeFor(r, snap, s.cfg.GitHub.Owner),
+			Chrome:  chromeFor(r, snap, s.cfg.GitHub.Owner, s.clock.Now()),
 		})
 		return snap, true
 	}
@@ -152,7 +152,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, tmpl string, sna
 		s.writeFragment(w, r, view.Items)
 		return
 	}
-	s.execute(w, r, http.StatusOK, tmpl, pageData{Dashboard: &view, Chrome: chromeFor(r, snap, s.cfg.GitHub.Owner)})
+	s.execute(w, r, http.StatusOK, tmpl, pageData{Dashboard: &view, Chrome: chromeFor(r, snap, s.cfg.GitHub.Owner, s.clock.Now())})
 }
 
 // handleRefresh throws the snapshot away so the redirected GET fetches (FR-1.3), and goes back to
@@ -459,12 +459,16 @@ var views = map[string]string{"/": "list", "/sites": "sites", "/contributors": "
 
 // chromeFor is the top bar for the signed-in page answering r, counting what is open in snap and
 // what of it needs owner.
-func chromeFor(r *http.Request, snap snapshot.Snapshot, owner string) *chromeView {
+func chromeFor(r *http.Request, snap snapshot.Snapshot, owner string, now time.Time) *chromeView {
 	c := &chromeView{View: views[r.URL.Path], Return: r.URL.RequestURI(), Counted: !snap.FetchedAt.IsZero()}
 	if r.URL.Path == "/search" {
 		c.Query = strings.TrimSpace(r.URL.Query().Get("q"))
 	}
-	c.Needs = len(domain.BuildNeedsYou(snap.Items, owner))
+	for _, it := range snap.Items {
+		if domain.NeedsNow(it, owner, now) {
+			c.Needs++
+		}
+	}
 	for _, it := range snap.Items {
 		switch it.Kind {
 		case domain.KindIssue:
@@ -520,7 +524,7 @@ func (s *Server) itemsView(d domain.Dashboard, snap snapshot.Snapshot, now time.
 		}
 		for _, it := range g.Items {
 			iv := newItemView(it, now, quiet)
-			iv.Needed = domain.NeedFor(it, s.cfg.GitHub.Owner) != domain.NeedNone
+			iv.Needed = domain.NeedsNow(it, s.cfg.GitHub.Owner, now)
 			gv.Items = append(gv.Items, iv)
 		}
 		v.Groups = append(v.Groups, gv)

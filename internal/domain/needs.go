@@ -3,6 +3,7 @@ package domain
 import (
 	"sort"
 	"strings"
+	"time"
 )
 
 // StateDraft is the State a draft pull request carries (FR-2.1 AC1): GitHub's own word for it,
@@ -74,6 +75,26 @@ func NeedFor(it Item, owner string) Need {
 type Needed struct {
 	Item Item
 	Need Need
+}
+
+// NeedsWindow is how long an item may go without activity and still need the owner now: six
+// months. A pull request nobody has touched for longer is not "right now"; the band keeps it one
+// click away rather than on top (FR-1.14 AC10).
+const NeedsWindow = 183 * 24 * time.Hour
+
+// Stale reports whether the item has had no activity for longer than NeedsWindow. A Security item
+// is never stale — an old, unfixed vulnerability is exactly the item that must stay in sight, as it
+// is never quiet (FR-1.13 AC3) — and neither is an item whose update time is unknown: unknown is
+// not idle.
+func (n Needed) Stale(now time.Time) bool {
+	return n.Need != NeedSecurity && !n.Item.UpdatedAt.IsZero() && now.Sub(n.Item.UpdatedAt) > NeedsWindow
+}
+
+// NeedsNow reports whether it needs owner and has not gone stale: what the band lists on top, the
+// top bar counts and the list draws at full weight.
+func NeedsNow(it Item, owner string, now time.Time) bool {
+	n := Needed{Item: it, Need: NeedFor(it, owner)}
+	return n.Need != NeedNone && !n.Stale(now)
 }
 
 // BuildNeedsYou is the band (FR-1.14): every item that needs owner, loudest reason first and,

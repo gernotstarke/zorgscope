@@ -36,7 +36,7 @@ func (s *Server) handleContributors(w http.ResponseWriter, r *http.Request) {
 		view.Rows = append(view.Rows, row)
 	}
 	s.execute(w, r, http.StatusOK, "contributors.html", pageData{
-		Title: "Contributors", Chrome: chromeFor(r, snap, s.cfg.GitHub.Owner), Contributors: &view,
+		Title: "Contributors", Chrome: chromeFor(r, snap, s.cfg.GitHub.Owner, s.clock.Now()), Contributors: &view,
 	})
 }
 

@@ -98,6 +98,15 @@
   {{else}}
   <p class="needs-clear">Nothing right now.</p>
   {{end}}
+  {{with .Older}}
+  {{/* Six months without activity and an item no longer needs the owner now (FR-1.14 AC10): it
+       leaves the top of the band and the counts, and waits here, one click away. A disclosure
+       rather than a switch, so there is no state to remember and nothing to leave on by mistake. */}}
+  <details class="needs-more needs-older">
+    <summary>{{len .}} older than 6 months</summary>
+    <ol class="needs-items">{{range .}}{{template "need" .}}{{end}}</ol>
+  </details>
+  {{end}}
 </section>
 {{end}}
 

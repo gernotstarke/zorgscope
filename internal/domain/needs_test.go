@@ -67,3 +67,34 @@ func TestBuildNeedsYouOrdersByReasonThenRecency(t *testing.T) {
 		t.Error("BuildNeedsYou reordered its input")
 	}
 }
+
+// FR-1.14 AC10: six months without activity and an item no longer needs the owner now — except a
+// Security item, which never goes stale, and an item whose update time is unknown.
+func TestStaleNeedsAfterSixMonthsExceptSecurity(t *testing.T) {
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	fresh := now.Add(-NeedsWindow)
+	old := now.Add(-NeedsWindow - time.Hour)
+	tests := []struct {
+		name string
+		n    Needed
+		want bool
+	}{
+		{"a contribution exactly six months old", Needed{Item{UpdatedAt: fresh}, NeedContribution}, false},
+		{"a contribution just older", Needed{Item{UpdatedAt: old}, NeedContribution}, true},
+		{"an old review request", Needed{Item{UpdatedAt: old}, NeedReview}, true},
+		{"an old bump", Needed{Item{UpdatedAt: old}, NeedDependency}, true},
+		{"an old vulnerability", Needed{Item{UpdatedAt: old}, NeedSecurity}, false},
+		{"an unknown update time", Needed{Item{}, NeedContribution}, false},
+	}
+	for _, tc := range tests {
+		if got := tc.n.Stale(now); got != tc.want {
+			t.Errorf("%s: Stale = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+	if NeedsNow(Item{Kind: KindPR, Author: "amy", UpdatedAt: old}, "me", now) {
+		t.Error("NeedsNow holds for a stale contribution")
+	}
+	if !NeedsNow(Item{Kind: KindPR, Author: "amy", UpdatedAt: fresh}, "me", now) {
+		t.Error("NeedsNow does not hold for a fresh contribution")
+	}
+}

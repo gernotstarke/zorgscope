@@ -16,14 +16,18 @@ const needsShown = 10
 // first. It is drawn over every item whatever the filter, like the top bar's counts: the filter
 // narrows the list below it, not the answer above it.
 type needsView struct {
-	// Shown are the first needsShown rows; More are the rest, drawn inside a disclosure.
-	Shown, More []needView
+	// Shown are the first needsShown rows that need the owner now; More are the rest of those,
+	// drawn inside a disclosure. Older are the rows that have gone stale — six months without
+	// activity (FR-1.14 AC10) — behind a disclosure of their own, so they are one click away
+	// rather than on top.
+	Shown, More, Older []needView
 	// Security says a Security item is among them, which frames the whole band in red: the one
 	// row that must not be missed should not have to be found first.
 	Security bool
 }
 
-// Count is how many items need the owner, for the heading.
+// Count is how many items need the owner now, for the heading. The older ones are not counted: the
+// count is the number the page is opened for, and a six-month-old pull request is not in it.
 func (v needsView) Count() int { return len(v.Shown) + len(v.More) }
 
 // needView is one row of the band: one line, less than a list row, because the list below still
@@ -49,12 +53,17 @@ type needView struct {
 func newNeedsView(items []domain.Item, gh config.GitHub, now time.Time) *needsView {
 	needed := domain.BuildNeedsYou(items, gh.Owner)
 	v := &needsView{}
-	for i, n := range needed {
+	for _, n := range needed {
 		row := newNeedView(n, gh, now)
-		if n.Need == domain.NeedSecurity {
+		switch {
+		case n.Need == domain.NeedSecurity:
 			v.Security = true
+		case n.Stale(now):
+			v.Older = append(v.Older, row)
+			continue
+		default:
 		}
-		if i < needsShown {
+		if len(v.Shown) < needsShown {
 			v.Shown = append(v.Shown, row)
 		} else {
 			v.More = append(v.More, row)

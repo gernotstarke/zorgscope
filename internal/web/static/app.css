@@ -1054,6 +1054,11 @@ button:hover,
   padding-block: 0.55rem;
 }
 .needs.is-clear .needs-title { margin: 0; font-size: 1.05rem; }
+.needs.is-clear .needs-older { flex-basis: 100%; margin-top: 0; }
+
+/* The stale rows (FR-1.14 AC10): still listed, in the same columns, but a step back — they are
+   there to be found, not to be read first. */
+.needs-older .need-title { color: var(--muted); font-weight: 500; }
 .needs-clear { margin: 0; color: var(--ok); font-weight: 600; }
 
 /* The rows share one set of columns — reason, kind, title, meta — so the eye runs down each of
