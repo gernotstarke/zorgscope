@@ -425,7 +425,7 @@ func TestEveryPageDrawsTheOpenCount(t *testing.T) {
 	for _, path := range []string{"/?view=list", "/sites", "/contributors", "/search?q=x"} {
 		body := getAuthed(t, h, path).Body.String()
 		i, s, q := strings.Index(body, `id="view-switch"`), strings.Index(body, `class="open-count"`), strings.Index(body, `id="topbar-search"`)
-		if s < 0 || !(i < s && s < q) {
+		if s < 0 || i >= s || s >= q {
 			t.Errorf("%s: open count missing or out of place (switch %d, count %d, search %d)", path, i, s, q)
 		}
 		for _, want := range []string{">2 issues<", ">1 PR<"} {
