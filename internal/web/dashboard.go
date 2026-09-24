@@ -82,7 +82,7 @@ func (s *Server) answeredWaiting(w http.ResponseWriter, r *http.Request) (snapsh
 		w.Header().Set("Cache-Control", "no-store")
 		s.execute(w, r, http.StatusOK, "waiting.html", pageData{
 			Waiting: &waitingView{Repos: len(s.cfg.GitHub.Repos), Path: r.URL.RequestURI()},
-			Chrome:  chromeFor(r, snap),
+			Chrome:  chromeFor(r, snap, s.cfg.GitHub.Owner),
 		})
 		return snap, true
 	}
@@ -152,7 +152,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, tmpl string, sna
 		s.writeFragment(w, r, view.Items)
 		return
 	}
-	s.execute(w, r, http.StatusOK, tmpl, pageData{Dashboard: &view, Chrome: chromeFor(r, snap)})
+	s.execute(w, r, http.StatusOK, tmpl, pageData{Dashboard: &view, Chrome: chromeFor(r, snap, s.cfg.GitHub.Owner)})
 }
 
 // handleRefresh throws the snapshot away so the redirected GET fetches (FR-1.3), and goes back to
@@ -181,6 +181,12 @@ func (s *Server) writeFragment(w http.ResponseWriter, r *http.Request, items ite
 		s.fail(w, r, "rendering the list", err)
 		return
 	}
+	// The band lives above the filter, outside #items, so the fragment carries it out of band:
+	// the refresh poll swaps in fresh items and a fresh band together (FR-1.14 AC4).
+	if err := s.fragments.ExecuteTemplate(&buf, "needs-oob", items); err != nil {
+		s.fail(w, r, "rendering the list", err)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(buf.Bytes())
 }
@@ -199,6 +205,9 @@ type headerView struct {
 	// FetchedAt is when the snapshot's items were fetched, in the configured timezone, as
 	// "15:04" — or "never" before the first fetch has returned anything.
 	FetchedAt string
+	// FetchedAgo is the same moment as an age — "4 minutes ago" — because a clock time alone does
+	// not say at a glance whether the list is fresh. Empty before the first fetch.
+	FetchedAgo string
 	// Error is the notice shown when the most recent fetch failed: what went wrong, scrubbed of
 	// every configured secret (QS-4.3), and when — empty when the last fetch succeeded. A failed
 	// fetch never discards the previous items (see internal/snapshot), so the page below it is
@@ -221,6 +230,22 @@ type chromeView struct {
 	// returned: before one there is nothing to count, and "0 issues" would be a wrong answer.
 	Issues, PRs int
 	Counted     bool
+	// Needs is how many items need the owner (FR-1.14), counted the way the band counts them. It
+	// leads the top bar, because it is the one number the page is opened for; the totals follow,
+	// quieter.
+	Needs int
+}
+
+// NeedsLine is the top bar's lead: "3 need you", "1 needs you" or "Nothing needs you".
+func (c chromeView) NeedsLine() string {
+	switch c.Needs {
+	case 0:
+		return "Nothing needs you"
+	case 1:
+		return "1 needs you"
+	default:
+		return strconv.Itoa(c.Needs) + " need you"
+	}
 }
 
 // dashboardView is the whole list page.
@@ -265,7 +290,7 @@ type itemsView struct {
 	// Repos is how many repositories the running fetch is asking, for the status line. The wait
 	// page names the same number, from the same configuration.
 	Repos int
-	// Needs is the Needs-you band (FR-1.14), nil whenever a filter is in force.
+	// Needs is the Needs-you band (FR-1.14), nil only when nothing is open at all.
 	Needs *needsView
 }
 
@@ -419,21 +444,27 @@ func errorNotice(secrets config.Secrets, snap snapshot.Snapshot, loc *time.Locat
 
 // headerView builds the shared header from the snapshot on screen.
 func (s *Server) headerView(snap snapshot.Snapshot) headerView {
-	return headerView{
+	v := headerView{
 		FetchedAt: clockLabel(snap.FetchedAt, s.loc),
 		Error:     errorNotice(s.cfg.Secrets, snap, s.loc),
 	}
+	if !snap.FetchedAt.IsZero() {
+		v.FetchedAgo = humanise(s.clock.Now().Sub(snap.FetchedAt)) + " ago"
+	}
+	return v
 }
 
 // views maps a page's path to the name the switch marks.
 var views = map[string]string{"/": "list", "/sites": "sites", "/contributors": "contributors", "/search": "search"}
 
-// chromeFor is the top bar for the signed-in page answering r, counting what is open in snap.
-func chromeFor(r *http.Request, snap snapshot.Snapshot) *chromeView {
+// chromeFor is the top bar for the signed-in page answering r, counting what is open in snap and
+// what of it needs owner.
+func chromeFor(r *http.Request, snap snapshot.Snapshot, owner string) *chromeView {
 	c := &chromeView{View: views[r.URL.Path], Return: r.URL.RequestURI(), Counted: !snap.FetchedAt.IsZero()}
 	if r.URL.Path == "/search" {
 		c.Query = strings.TrimSpace(r.URL.Query().Get("q"))
 	}
+	c.Needs = len(domain.BuildNeedsYou(snap.Items, owner))
 	for _, it := range snap.Items {
 		switch it.Kind {
 		case domain.KindIssue:
@@ -474,8 +505,10 @@ func (s *Server) itemsView(d domain.Dashboard, snap snapshot.Snapshot, now time.
 		Fetching:  snap.Fetching,
 		Repos:     len(s.cfg.GitHub.Repos),
 	}
-	// With nothing open at all, "Nothing open." already says everything the band would.
-	if d.Filter.Empty() && d.Total > 0 {
+	// With nothing open at all, "Nothing open." already says everything the band would. A filter
+	// does not hide the band: it answers "what needs me", whatever the list is narrowed to, and a
+	// band that vanished would move the filter out from under the pointer that just changed it.
+	if d.Total > 0 {
 		v.Needs = newNeedsView(snap.Items, s.cfg.GitHub, now)
 	}
 	for _, g := range d.Groups {

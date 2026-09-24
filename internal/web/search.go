@@ -20,7 +20,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	view := s.searchView(snap, q, s.clock.Now(), settingsOf(r).Quiet)
 	s.execute(w, r, http.StatusOK, "search.html", pageData{
 		Title:  "Search",
-		Chrome: chromeFor(r, snap),
+		Chrome: chromeFor(r, snap, s.cfg.GitHub.Owner),
 		Search: &view,
 	})
 }

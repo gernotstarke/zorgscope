@@ -89,6 +89,7 @@ code; `make check` passes.
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.7.0 | 2026-09-23 | Needs-you band first and louder (tape, red frame on security), stays under filters; top bar leads with "N need you"; fetched age; segmented settings |
 | 1.6.2 | 2026-09-23 | List rows on two lines; one search box, filters folded behind "Filter"; `make dev` replaces `make backend`, `client` and `fakes` |
 | 1.5.0 | 2026-09-23 | "Needs you" band above the list; Security tile shows hazard tape only when something is marked |
 | 1.4.0 | 2026-09-22 | Open issue and PR count in the top bar |

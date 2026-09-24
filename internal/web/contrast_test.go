@@ -494,11 +494,19 @@ func TestTheMarkedRowsTapeAndChipKeepTheirContrast(t *testing.T) {
 		if !ok {
 			continue
 		}
+		// A chip may have a fill of its own rather than the tier's colour; then that is what its
+		// word sits on.
+		fill := colour
+		if strings.Contains(css, "--tier-fill-"+tier+":") {
+			if f, ok := lightDarkToken(t, css, "tier-fill-"+tier); ok {
+				fill = f
+			}
+		}
 		for i, appearance := range []string{"light", "dark"} {
 			if r := contrastRatio(colour[i], surface[i]); r < 3 {
 				t.Errorf("the %s tape on the %s page = %.2f:1, want at least 3:1", tier, appearance, r)
 			}
-			if r := contrastRatio(ink[i], colour[i]); r < 4.5 {
+			if r := contrastRatio(ink[i], fill[i]); r < 4.5 {
 				t.Errorf("the %s chip's word on the %s page = %.2f:1, want at least 4.5:1", tier, appearance, r)
 			}
 		}

@@ -1,6 +1,11 @@
 {{define "content"}}
 {{with .Dashboard}}
-{{template "header" .}}
+{{/* The list's own order: a failing fetch first, because it qualifies everything below it; then
+     the Needs-you band, the page's answer (FR-1.14); then when the list was fetched, the filter and
+     the list itself. Every other page draws the fetched line and the error together, as "header". */}}
+{{template "fetch-error" .}}
+{{template "needs-slot" .Items}}
+{{template "fetched-line" .}}
 {{/* The filter (FR-2.1). It is a plain GET form whose action is this page, so with JavaScript
      switched off pressing Apply reloads the dashboard narrowed — the whole thing works without a
      single request htmx makes (FR-2.1 AC2).
@@ -9,7 +14,8 @@
      the response and swaps only that. Fetching the page is what makes hx-push-url honest: what is
      pushed into the address bar is a URL that renders the very page being looked at, so a reload
      or a bookmark of it shows the same narrowed list. The active count in the summary sits outside
-     the list, so hx-select-oob takes it out of the same response.
+     the list, so hx-select-oob takes it out of the same response. The Needs-you band above is not
+     touched: it counts every item whatever the filter (FR-1.14 AC4).
 
      The controls fold away behind one disclosure (a <details>, so it needs no script): most visits
      want none of them, and a toolbar of twelve options is the first thing the list used to show.

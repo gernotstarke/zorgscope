@@ -51,10 +51,14 @@ func needsItems() []domain.Item {
 func TestTheListOpensWithTheNeedsYouBand(t *testing.T) {
 	body := getAuthed(t, needsHandler(t, needsItems()), "/").Body.String()
 
-	band := strings.Index(body, `class="needs"`)
+	band := strings.Index(body, `<section class="needs`)
+	filter := strings.Index(body, `<form class="filter"`)
 	list := strings.Index(body, `class="repo-group`)
-	if band < 0 || list < 0 || band > list {
-		t.Fatalf("the band must come before the list (band %d, list %d)", band, list)
+	if band < 0 || filter < 0 || list < 0 || band > filter || filter > list {
+		t.Fatalf("the band must come first, then the filter, then the list (band %d, filter %d, list %d)", band, filter, list)
+	}
+	if !strings.Contains(body, `<section class="needs has-security"`) {
+		t.Error("a band holding a Security item is not framed as such")
 	}
 	section := body[band:list]
 	order := []string{"Leaked token", "Rework the glossary", "Fix a typo"}
@@ -91,25 +95,33 @@ func TestTheListOpensWithTheNeedsYouBand(t *testing.T) {
 	}
 }
 
-// FR-1.14 AC4: a filter is a question of its own, and the band gives way to it — on the page and
-// in the fragment the filter swaps in. The fragment of the unfiltered list carries it back.
-func TestTheBandGivesWayToAFilter(t *testing.T) {
+// FR-1.14 AC4: the band answers "what needs me" whatever the list is narrowed to, so a filter
+// leaves it where it is — the filter does not swap it, and the fragment the refresh poll swaps in
+// carries it out of band, filtered or not.
+func TestTheBandStaysUnderAFilter(t *testing.T) {
 	h := needsHandler(t, needsItems())
 	c := signIn(t, h)
 	for _, path := range []string{"/?kind=pr", "/items?kind=pr", "/?tier=security"} {
-		if strings.Contains(getAs(h, path, c).Body.String(), `class="needs`) {
-			t.Errorf("%s draws the band under a filter", path)
+		body := getAs(h, path, c).Body.String()
+		if !strings.Contains(body, `<section class="needs`) || !strings.Contains(body, "Rework the glossary") {
+			t.Errorf("%s hides the band, or narrows it, under a filter", path)
 		}
 	}
-	if !strings.Contains(getAs(h, "/items", c).Body.String(), `class="needs"`) {
-		t.Error("the unfiltered fragment lacks the band, so clearing a filter would not bring it back")
+	fragment := getAs(h, "/items", c).Body.String()
+	oob := strings.Index(fragment, `id="needs" hx-swap-oob="true">`)
+	if oob < 0 || !strings.HasPrefix(strings.TrimSpace(fragment[oob+len(`id="needs" hx-swap-oob="true">`):]), `<section class="needs`) {
+		t.Error("the unfiltered fragment does not carry the band out of band, so the refresh poll would leave it stale")
+	}
+	form := openingTag(t, getAs(h, "/", c).Body.String(), `<form class="filter"`)
+	if strings.Contains(form, "#needs") {
+		t.Errorf("the filter swaps the band, which it must leave alone:\n%s", form)
 	}
 }
 
 // FR-1.14 AC5: nothing needs the owner — the band stays and says so.
 func TestAnEmptyBandSaysSo(t *testing.T) {
 	body := getAuthed(t, needsHandler(t, []domain.Item{ghItem(1, "Nobody is waiting", testNow)}), "/").Body.String()
-	if !strings.Contains(body, `class="needs is-clear"`) || !strings.Contains(body, "Nothing right now.") {
+	if !strings.Contains(body, `<section class="needs is-clear"`) || !strings.Contains(body, "Nothing right now.") {
 		t.Error("an empty band does not say that nothing needs you")
 	}
 }
@@ -132,7 +144,23 @@ func TestALongBandKeepsTheRestBehindADisclosure(t *testing.T) {
 // With nothing open at all the list says "Nothing open." and the band would only repeat it.
 func TestNothingOpenDrawsNoBand(t *testing.T) {
 	body := getAuthed(t, needsHandler(t, nil), "/").Body.String()
-	if strings.Contains(body, `class="needs`) {
+	if strings.Contains(body, `<section class="needs`) {
 		t.Error("an empty snapshot draws the band as well as \"Nothing open.\"")
+	}
+}
+
+// The top bar leads with what needs the owner, linked to the band, and says so in words when it is
+// nothing (FR-1.14).
+func TestTheTopBarLeadsWithWhatNeedsYou(t *testing.T) {
+	h := needsHandler(t, needsItems())
+	c := signIn(t, h)
+	for _, path := range []string{"/sites", "/contributors"} {
+		if !strings.Contains(getAs(h, path, c).Body.String(), `<a class="open-count-needs" href="/?view=list#needs">3 need you</a>`) {
+			t.Errorf("%s does not lead its top bar with the needs count", path)
+		}
+	}
+	calm := needsHandler(t, []domain.Item{ghItem(1, "Nobody is waiting", testNow)})
+	if !strings.Contains(getAuthed(t, calm, "/sites").Body.String(), `>Nothing needs you</a>`) {
+		t.Error("a calm top bar does not say that nothing needs you")
 	}
 }

@@ -27,7 +27,11 @@
      with — white on the light page's dark fills, near-black on the dark page's bright ones. */
   --tape-red: #a8231d;
   --tape-red-dark: #6d1611;
-  --tier-ink-security: light-dark(#ffffff, #2a0f0c);
+  /* The Security chip's fill is its own token rather than --danger: on the dark page --danger is a
+     light salmon, and a salmon chip beside the amber Dependency one read as the quieter of the two.
+     The chip keeps a deep red in both appearances, the tape's own, with white on it. */
+  --tier-fill-security: light-dark(#b3261e, #a8231d);
+  --tier-ink-security: light-dark(#ffffff, #ffffff);
   --tier-ink-dependency: light-dark(#ffffff, #1a1206);
 
   --radius: 10px;
@@ -443,7 +447,7 @@ button:hover,
   position: absolute;
   right: 0;
   z-index: 20;
-  min-width: 16rem;
+  min-width: 18rem;
   padding: 0.75rem;
   border: 1px solid var(--border);
   border-radius: 0.5rem;
@@ -452,7 +456,42 @@ button:hover,
 }
 .setting { margin: 0 0 0.75rem; padding: 0; border: 0; }
 .setting legend { padding: 0; color: var(--muted); font-size: 0.8rem; }
-.setting button[aria-current="true"] { font-weight: 600; text-decoration: underline; }
+/* A choice of several is one segmented control, drawn like the view switch: outlined, with the
+   current choice filled. Ten filled buttons made every option look like the thing to press, and
+   the current one was told apart only by an underline. */
+.setting .segmented {
+  display: inline-flex;
+  margin-top: 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.setting .segmented button {
+  margin: 0;
+  padding: 0.3rem 0.7rem;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.setting .segmented button + button { border-left: 1px solid var(--border); }
+.setting .segmented button:hover { color: var(--accent); filter: none; }
+.setting .segmented button[aria-current="true"] { background: var(--accent); color: var(--bg); font-weight: 600; }
+/* overflow: hidden would clip an outside ring, so the ring is drawn inside the segment. */
+.setting .segmented button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* A single switch is a secondary action, outlined like Refresh — not the panel's primary. */
+.setting .setting-toggle {
+  margin-top: 0.3rem;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
 .setting-note { margin: 0.35rem 0 0; color: var(--muted); font-size: 0.78rem; }
 
 /* ---------------------------------------------------------------- the footer */
@@ -506,9 +545,23 @@ button:hover,
 
 /* ---------------------------------------------------------------- the open count
 
-   Between the switch and the search box: open issues in the ok green, open pull requests in the
-   accent blue — two text colours the palette already holds readable in both appearances. */
-.open-count { display: inline-flex; gap: 0.7rem; margin: 0; font-size: 0.9rem; font-weight: 600; white-space: nowrap; }
+   Between the switch and the search box. What needs the owner leads, as the one filled pill in the
+   bar — the page's answer, one click from the band it counts. The totals follow at a smaller size:
+   open issues in the ok green, open pull requests in the accent blue, two text colours the palette
+   already holds readable in both appearances. */
+.open-count { display: inline-flex; align-items: baseline; gap: 0.8rem; margin: 0; font-size: 0.9rem; white-space: nowrap; }
+.open-count-needs {
+  padding: 0.1rem 0.6rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: 700;
+  text-decoration: none;
+}
+.open-count-needs:hover { filter: brightness(1.08); }
+.open-count-needs:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.open-count-needs.is-clear { padding: 0; background: none; color: var(--ok); font-weight: 600; }
+.open-count-totals { display: inline-flex; gap: 0.6rem; font-size: 0.85rem; }
 .open-count-issues { color: var(--ok); }
 .open-count-prs { color: var(--accent); }
 
@@ -857,8 +910,8 @@ button:hover,
    on the dark page takes near-black. */
 .tier-chip-security {
   color: var(--tier-ink-security);
-  background: var(--danger);
-  border-color: var(--danger);
+  background: var(--tier-fill-security);
+  border-color: var(--tier-fill-security);
 }
 .tier-chip-dependency {
   color: var(--tier-ink-dependency);
@@ -950,20 +1003,33 @@ button:hover,
    one panel on the page, because it is the one thing on it that answers the question the page
    exists for; everything below is the complete list it points into. */
 .needs {
-  margin: 0 0 1.5rem;
-  padding: 0.7rem 0.9rem 0.6rem;
+  margin: 0 0 1.25rem;
+  padding: 0.85rem 1.1rem 0.7rem;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
 }
 
+/* A Security item is open: the whole band is framed in red, and its count turns red with it. The
+   frame is the band's own border doubled, not a stripe down one edge — the band is one thing, and
+   it is the whole of it that needs looking at. */
+.needs.has-security {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 1px var(--danger);
+}
+.needs.has-security .needs-count {
+  background: var(--tier-fill-security);
+  color: var(--tier-ink-security);
+}
+
 .needs-title {
   display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-  margin: 0 0 0.4rem;
-  font-size: 1.05rem;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0 0 0.5rem;
+  font-size: 1.3rem;
   font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .needs-count {
@@ -972,7 +1038,7 @@ button:hover,
   border-radius: 999px;
   background: var(--accent);
   color: var(--bg);
-  font-size: 0.8rem;
+  font-size: 0.85rem;
   line-height: 1.6;
   text-align: center;
   font-variant-numeric: tabular-nums;
@@ -987,7 +1053,7 @@ button:hover,
   gap: 0.25rem 0.75rem;
   padding-block: 0.55rem;
 }
-.needs.is-clear .needs-title { margin: 0; }
+.needs.is-clear .needs-title { margin: 0; font-size: 1.05rem; }
 .needs-clear { margin: 0; color: var(--ok); font-weight: 600; }
 
 /* The rows share one set of columns — reason, kind, title, meta — so the eye runs down each of
@@ -1011,6 +1077,21 @@ button:hover,
   border-top: 1px solid var(--border);
 }
 .needs-items > .need:first-child { border-top: 0; }
+
+/* A marked row of the band wears the list's hazard tape (FR-1.13 AC2): the band is where it is
+   read first, so it is where the product's loudest signal belongs most. Same tape, same colours,
+   narrower, with the row's text moved clear of it. */
+.need.tier-security,
+.need.tier-dependency {
+  /* codespell:ignore-begin */
+  background-image: repeating-linear-gradient(45deg, var(--tier-tape) 0 5px,
+      color-mix(in srgb, var(--tier-tape) 30%, var(--surface)) 5px 10px);
+  /* codespell:ignore-end */
+  background-repeat: no-repeat;
+  background-size: 8px 100%;
+  background-position: left top;
+  padding-left: 0.9rem;
+}
 
 .need-reason .tier-chip { margin-right: 0; }
 

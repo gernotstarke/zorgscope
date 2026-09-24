@@ -88,15 +88,15 @@ func TestTopBarCarriesTheChromeOnlyWhenSignedIn(t *testing.T) {
 // uses q, and its text is not a search (FR-1.11).
 func TestTheSearchBoxEchoesTheQueryOnlyOnTheResultsPage(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/?q=header&kind=pr", nil)
-	if c := chromeFor(r, snapshot.Snapshot{}); c.View != "list" || c.Query != "" || c.Return != "/?q=header&kind=pr" {
+	if c := chromeFor(r, snapshot.Snapshot{}, ""); c.View != "list" || c.Query != "" || c.Return != "/?q=header&kind=pr" {
 		t.Errorf("chromeFor(list) = %+v", *c)
 	}
 	r = httptest.NewRequest(http.MethodGet, "/search?q=+bug+", nil)
-	if c := chromeFor(r, snapshot.Snapshot{}); c.View != "search" || c.Query != "bug" {
+	if c := chromeFor(r, snapshot.Snapshot{}, ""); c.View != "search" || c.Query != "bug" {
 		t.Errorf("chromeFor(search) = %+v", *c)
 	}
 	r = httptest.NewRequest(http.MethodGet, "/sites", nil)
-	if c := chromeFor(r, snapshot.Snapshot{}); c.View != "sites" || c.Return != "/sites" {
+	if c := chromeFor(r, snapshot.Snapshot{}, ""); c.View != "sites" || c.Return != "/sites" {
 		t.Errorf("chromeFor(sites) = %+v", *c)
 	}
 }
@@ -404,13 +404,13 @@ func TestTheContentSecurityPolicyNamesNoExternalHost(t *testing.T) {
 // shows, and says nothing until a fetch has returned — "0 issues" before one would be a wrong answer.
 func TestTheTopBarCountsOpenIssuesAndPullRequests(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/sites", nil)
-	if c := chromeFor(r, snapshot.Snapshot{}); c.Counted {
+	if c := chromeFor(r, snapshot.Snapshot{}, ""); c.Counted {
 		t.Errorf("chromeFor before any fetch = %+v, want no count", *c)
 	}
 	snap := snapshot.Snapshot{FetchedAt: time.Now(), Items: []domain.Item{
 		{Kind: domain.KindIssue}, {Kind: domain.KindPR}, {Kind: domain.KindIssue},
 	}}
-	if c := chromeFor(r, snap); !c.Counted || c.Issues != 2 || c.PRs != 1 {
+	if c := chromeFor(r, snap, ""); !c.Counted || c.Issues != 2 || c.PRs != 1 {
 		t.Errorf("chromeFor = %+v, want 2 issues and 1 PR", *c)
 	}
 }

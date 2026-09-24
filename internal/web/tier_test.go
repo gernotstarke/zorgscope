@@ -53,6 +53,9 @@ func TestTiersAreDrawnOnEveryPageThatDrawsAnItem(t *testing.T) {
 		if i := strings.Index(body, `class="repo-group`); i >= 0 {
 			body = body[i:]
 		}
+		if i := strings.Index(body, `class="needs-slot"`); i >= 0 {
+			body = body[:i]
+		}
 		if n := strings.Count(body, `>Dependency<`); n != 1 {
 			t.Errorf("%s draws %d Dependency chips, want exactly 1", path, n)
 		}

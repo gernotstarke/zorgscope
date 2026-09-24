@@ -13,11 +13,14 @@ import (
 const needsShown = 10
 
 // needsView is the Needs-you band above the list (FR-1.14): what needs the owner, loudest reason
-// first. It is drawn on the unfiltered list only — a filter is a question of its own, and the band
-// gives way to it.
+// first. It is drawn over every item whatever the filter, like the top bar's counts: the filter
+// narrows the list below it, not the answer above it.
 type needsView struct {
 	// Shown are the first needsShown rows; More are the rest, drawn inside a disclosure.
 	Shown, More []needView
+	// Security says a Security item is among them, which frames the whole band in red: the one
+	// row that must not be missed should not have to be found first.
+	Security bool
 }
 
 // Count is how many items need the owner, for the heading.
@@ -48,6 +51,9 @@ func newNeedsView(items []domain.Item, gh config.GitHub, now time.Time) *needsVi
 	v := &needsView{}
 	for i, n := range needed {
 		row := newNeedView(n, gh, now)
+		if n.Need == domain.NeedSecurity {
+			v.Security = true
+		}
 		if i < needsShown {
 			v.Shown = append(v.Shown, row)
 		} else {

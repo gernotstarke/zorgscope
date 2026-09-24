@@ -75,13 +75,18 @@
     <a href="/sites"{{if eq .View "sites"}} aria-current="page"{{end}}>Sites</a>
     <a href="/contributors"{{if eq .View "contributors"}} aria-current="page"{{end}}>Contributors</a>
   </nav>
-  {{/* What is open across every configured repository, each kind in its own colour. It counts
-       the snapshot rather than the page, so it reads the same over a filter or a search, and it
-       is left out until a fetch has returned rather than claiming nothing is open. */}}
+  {{/* What needs the owner first (FR-1.14), then what is open across every configured repository.
+       The lead is the one number the page is opened for, and links to the band that lists it; the
+       totals follow, quieter, each kind in its own colour. Both count the snapshot rather than the
+       page, so they read the same over a filter or a search, and the whole line is left out until
+       a fetch has returned rather than claiming nothing is open. */}}
   {{if .Counted}}
-  <p class="open-count" aria-label="{{.Issues}} open issues, {{.PRs}} open pull requests">
-    <span class="open-count-issues">{{.Issues}} {{if eq .Issues 1}}issue{{else}}issues{{end}}</span>
-    <span class="open-count-prs">{{.PRs}} {{if eq .PRs 1}}PR{{else}}PRs{{end}}</span>
+  <p class="open-count">
+    <a class="open-count-needs{{if not .Needs}} is-clear{{end}}" href="/?view=list#needs">{{.NeedsLine}}</a>
+    <span class="open-count-totals" aria-label="{{.Issues}} open issues, {{.PRs}} open pull requests">
+      <span class="open-count-issues">{{.Issues}} {{if eq .Issues 1}}issue{{else}}issues{{end}}</span>
+      <span class="open-count-prs">{{.PRs}} {{if eq .PRs 1}}PR{{else}}PRs{{end}}</span>
+    </span>
   </p>
   {{end}}
   <form class="search-form" id="topbar-search" role="search" method="get" action="/search"
@@ -139,7 +144,7 @@
           {{/* Three buttons in one form rather than a select and a submit: with JavaScript off a
                select needs a button beside it anyway, and a button says what it does. There are
                exactly three views and there is no fourth coming, so they are written out. */}}
-          <form method="post" action="/settings">
+          <form class="segmented" method="post" action="/settings">
             <input type="hidden" name="name" value="landing">
             {{/* $.Chrome.Return, not $.Path: Path is r.URL.Path alone, and would drop a query
                  the visitor was relying on — a search, a filter — leaving handleSettings' redirect
@@ -156,7 +161,7 @@
 
         <fieldset class="setting">
           <legend>Call an item quiet after</legend>
-          <form method="post" action="/settings">
+          <form class="segmented" method="post" action="/settings">
             <input type="hidden" name="name" value="quiet">
             <input type="hidden" name="return" value="{{$.Chrome.Return}}">
             {{range $.QuietChoices}}
@@ -174,10 +179,10 @@
             <input type="hidden" name="name" value="cache">
             <input type="hidden" name="return" value="{{$.Chrome.Return}}">
             {{if $.Settings.Cache}}
-            <button type="submit" name="value" value="off">Stop keeping my last list here</button>
+            <button class="setting-toggle" type="submit" name="value" value="off">Stop keeping my last list here</button>
             <p class="setting-note">Your last list is kept in this browser so a cold start has something to show.</p>
             {{else}}
-            <button type="submit" name="value" value="on">Keep my last list here</button>
+            <button class="setting-toggle" type="submit" name="value" value="on">Keep my last list here</button>
             <p class="setting-note">Nothing is kept in this browser.</p>
             {{end}}
           </form>

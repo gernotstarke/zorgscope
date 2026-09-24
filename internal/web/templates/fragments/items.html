@@ -28,7 +28,6 @@
          (FR-1.13 AC4). */}}
     <span class="security-count"> · <a href="/?tier=security">{{.Security}} security</a></span>{{end}}
   </p>
-  {{with .Needs}}{{template "needs" .}}{{end}}
   {{range .Groups}}
   {{/* The site's colour as a stripe down the group's edge (FR-1.10 AC2): the same hue-<key>
        class a tile carries, drawn here as a border rather than a band. */}}
@@ -68,15 +67,24 @@
 </section>
 {{end}}
 
+{{/* The band's slot, above the filter (FR-1.14). It is always drawn, empty only when nothing is
+     open, because it is what the fragment's out-of-band copy replaces: an element that was absent
+     could not be put back. id="needs" is also where the top bar's count links. */}}
+{{define "needs-slot"}}<div class="needs-slot" id="needs">{{with .Needs}}{{template "needs" .}}{{end}}</div>{{end}}
+
+{{/* The same slot as GET /items appends it after the list, for htmx to swap out of band: the
+     refresh poll swaps #items, and the band above the filter has to arrive with it. */}}
+{{define "needs-oob"}}<div class="needs-slot" id="needs" hx-swap-oob="true">{{with .Needs}}{{template "needs" .}}{{end}}</div>{{end}}
+
 {{/* The Needs-you band (FR-1.14): what needs the owner, loudest reason first, one line each. It is
-     drawn inside the list section, so a filter's swap takes it away and clearing the filter brings
-     it back, and the refresh poll redraws it with everything else. Every item in it is also in the
-     list below, at full weight: the band says where to look first, never what to leave out (QG-1).
+     the first thing under the top bar, because it is the page's answer. Every item in it is also in
+     the list below, at full weight: the band says where to look first, never what to leave out
+     (QG-1).
 
      An empty band stays and says so. A band that vanished would read as a check that had stopped
      running, exactly as the Security tile's empty state does. */}}
 {{define "needs"}}
-<section class="needs{{if not .Count}} is-clear{{end}}" aria-labelledby="needs-title">
+<section class="needs{{if not .Count}} is-clear{{end}}{{if .Security}} has-security{{end}}" aria-labelledby="needs-title">
   <h2 class="needs-title" id="needs-title">Needs you{{with .Count}} <span class="needs-count">{{.}}</span>{{end}}</h2>
   {{if .Count}}
   <ol class="needs-items">{{range .Shown}}{{template "need" .}}{{end}}</ol>
@@ -98,7 +106,7 @@
      The site's colour is a swatch beside the repository name rather than a stripe: the band is one
      list across every site, and a stripe per row would be ten colours down one edge. */}}
 {{define "need"}}
-<li class="need need-{{.Reason}}">
+<li class="need need-{{.Reason}}{{with .Tier.Name}} tier-{{.}}{{end}}">
   <span class="need-reason">{{if .Tier.Name}}{{template "item-tier" .Tier}}{{else}}<span class="need-chip">{{.ReasonLabel}}</span>{{end}}</span>
   <span class="need-kind need-kind-{{.KindClass}}">{{.Kind}}</span>
   <span class="need-main">{{if .Number}}<span class="item-number">#{{.Number}}</span> {{end}}<a class="need-title" href="{{.URL}}" target="_blank" rel="noopener noreferrer">{{.Title}}</a></span>
