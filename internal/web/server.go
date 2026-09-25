@@ -728,6 +728,9 @@ type pageData struct {
 	// Contributors is set only by handleContributors. contributors.html reads it for the header,
 	// the count line and the rows; every other page leaves it nil.
 	Contributors *contributorsView
+	// Radar is set only by handleRadar. radar.html reads it for the header and the scope; every
+	// other page leaves it nil.
+	Radar *radarView
 	// Waiting is set only by answeredWaiting. waiting.html reads it for the repository count and
 	// the path to poll; every other page leaves it nil.
 	Waiting *waitingView
