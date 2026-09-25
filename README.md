@@ -89,6 +89,7 @@ code; `make check` passes.
 
 | Version | Date | Change |
 |---------|------|--------|
+| 2.0.0 | 2026-09-25 | Radar view and the new Needs-you rule make a new major version; the footer names the stack (Go, htmx) and the host (Fly.io) |
 | 1.10.0 | 2026-09-25 | Every open PR active in the last 6 months needs you, your own and drafts included ("Your PR"); Radar takes the window's width, larger data block |
 | 1.9.0 | 2026-09-25 | Radar view: every item as a blip on a radar scope, security and dependency in hazard tape, a click opens it on GitHub; Radar as landing view |
 | 1.8.0 | 2026-09-24 | Needs-you shows only items active in the last 6 months on top (security excepted); older ones behind a disclosure |

@@ -155,6 +155,32 @@ func TestTheFooterReadsInTheOrderItIsDrawn(t *testing.T) {
 	}
 }
 
+// The footer names what the page is made of and where it runs, between where it was made and
+// which build it is, each a link that opens in a new tab like every other outside link.
+func TestTheFooterNamesTheStackAndTheHost(t *testing.T) {
+	for _, path := range []string{"/", "/login"} {
+		rec := get(dashHandler(t, &fakeSource{}), path)
+		if path == "/" {
+			rec = getAuthed(t, dashHandler(t, &fakeSource{}), path)
+		}
+		body := rec.Body.String()
+		footer := body[strings.Index(body, "<footer"):]
+		for _, want := range []string{
+			`<a href="https://go.dev" target="_blank" rel="noopener noreferrer">Go</a>`,
+			`<a href="https://htmx.org" target="_blank" rel="noopener noreferrer">htmx</a>`,
+			`running on <a href="https://fly.io" target="_blank" rel="noopener noreferrer">Fly.io</a>`,
+		} {
+			if !strings.Contains(footer, want) {
+				t.Errorf("%s: the footer lacks %s", path, want)
+			}
+		}
+		made, stack, ver := strings.Index(footer, "footer-made"), strings.Index(footer, "footer-stack"), strings.Index(footer, `class="version"`)
+		if made < 0 || stack < made || ver < stack {
+			t.Errorf("%s: the footer reads made=%d, stack=%d, version=%d; want that order", path, made, stack, ver)
+		}
+	}
+}
+
 // The appearance switch (FR-1.5). It is a form post, not a script: the CSP carries no
 // 'unsafe-inline' (QS-4.4) and the page has to work with JavaScript switched off (FR-1.5 AC1).
 func TestTheThemeSwitchCyclesThroughTheThreeAppearances(t *testing.T) {

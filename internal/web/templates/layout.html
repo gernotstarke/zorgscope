@@ -210,15 +210,16 @@
 <main>
 {{template "content" .}}
 </main>
-{{/* One line, three things, each in its own place: where this was made on the left, which build
-     it is in the middle, and where the writing is on the right. The order in the markup is the
-     order it is read aloud and the order the keyboard reaches it, so the middle column is written
-     in the middle rather than positioned there afterwards. */}}
+{{/* One line, three things, each in its own place: where this was made on the left, what it is
+     built with and where it runs in the middle, and which build it is on the right. The order in
+     the markup is the order it is read aloud and the order the keyboard reaches it, so the middle
+     column is written in the middle rather than positioned there afterwards. */}}
 <footer class="footer">
   {{/* role="img" with a label, so the heart is read as the word it stands for rather than as
        "black heart suit" — and so it is one thing to a screen reader rather than a symbol
        stranded between two halves of a sentence. */}}
   <span class="footer-made">Made with <span class="heart" role="img" aria-label="love">&#9829;</span> in Cologne</span>
+  <span class="footer-stack">Built with <a href="https://go.dev" target="_blank" rel="noopener noreferrer">Go</a> and <a href="https://htmx.org" target="_blank" rel="noopener noreferrer">htmx</a> · running on <a href="https://fly.io" target="_blank" rel="noopener noreferrer">Fly.io</a></span>
   <span class="version">{{.Version}}</span>
 </footer>
 </body>

@@ -506,11 +506,12 @@ button:hover,
 
 /* ---------------------------------------------------------------- the footer */
 
-.footer-made { color: var(--muted); }
+.footer-made,
+.footer-stack { color: var(--muted); }
 .heart { color: var(--danger); }
 .version { color: var(--muted); font-variant-numeric: tabular-nums; }
 
-/* A phone stacks the two parts and centres them rather than keeping them on one cramped row. */
+/* A phone stacks the three parts and centres them rather than keeping them on one cramped row. */
 @media (max-width: 34rem) {
   .footer {
     flex-direction: column;

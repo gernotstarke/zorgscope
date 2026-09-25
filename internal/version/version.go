@@ -17,7 +17,7 @@ import (
 // deploy/Dockerfile from a source copy with no .git directory, so a version stamped at link time
 // would be empty in exactly the build that matters most. The commit below is the part that can
 // only come from the toolchain, and it is allowed to be absent.
-const Version = "1.10.0"
+const Version = "2.0.0"
 
 // shortRevisionLen is how much of the commit hash is shown. Seven characters is what git itself
 // abbreviates to and what a person can read back to `git show`.
