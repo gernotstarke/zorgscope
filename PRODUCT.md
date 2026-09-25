@@ -38,7 +38,7 @@ each in that site's registry colour, and marks security and dependency items fro
 ## Capabilities and Constraints
 
 - Views: List (grouped by repository, filterable), Sites (one tile per site, plus the Security
-  tile), Contributors, Search (Cmd‑K).
+  tile), Radar (every item as a blip on a radar scope), Contributors, Search (Cmd‑K).
 - Every open item of every watched repository is shown; a failing repository never hides the
   others (QG‑1). Anything that emphasises some items must not hide the rest.
 - Go server-rendered HTML with htmx; hand-written CSS, no build step (ADR‑0002). Strict CSP with no
