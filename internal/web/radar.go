@@ -22,7 +22,7 @@ import (
 // The scope's geometry, in the SVG's own units (viewBox 0 0 radarWidth radarHeight). The scope sits
 // on the left with room for the site names around it; the data-block panel on the right.
 const (
-	radarWidth  = 1640
+	radarWidth  = 1700
 	radarHeight = 1000
 	radarCX     = 660
 	radarCY     = 500
@@ -40,7 +40,7 @@ const (
 	// The panel the data block is drawn in.
 	radarPanelX = 1230
 	radarPanelY = 60
-	radarPanelW = 380
+	radarPanelW = 440
 	radarPanelH = 880
 	// radarTitleWidth and radarSummaryWidth are how many characters a line of the data block holds.
 	radarTitleWidth   = 30
@@ -60,9 +60,13 @@ type radarView struct {
 	Width, Height, CX, CY, R, R0 int
 	Panel                        radarRect
 	// Leader is where the dotted line from a hovered blip meets the panel.
-	Leader  radarPoint
-	Sectors []radarSector
-	Rings   []radarRing
+	Leader radarPoint
+	// CardKeys are the data block's keys, drawn once for every card, and ValueX where the values
+	// stand beside them.
+	CardKeys []radarLine
+	ValueX   int
+	Sectors  []radarSector
+	Rings    []radarRing
 	// Sweep is the beam's far end and Glow the afterglow wedge behind it, both drawn pointing
 	// north; app.css turns the group they are in.
 	Sweep radarPoint
@@ -109,25 +113,43 @@ type radarBlip struct {
 	// Hue, Bearing and Age are class names: the site's colour, the sweep delay, the fade.
 	Hue, Bearing, Age string
 	URL               string
-	// Label is what a screen reader says for the link: the card is hidden until hover.
-	Label string
 	// Tag is the short text beside a loud blip, "⚠ #12" or "#12", drawn at TagX, TagY.
 	Tag        string
 	TagX, TagY float64
 	Card       radarCard
 }
 
-// radarCard is the data block a hovered or focused blip shows in the panel.
+// radarCard is the data block a hovered or focused blip shows in the panel. Its layout is fixed,
+// like an air-traffic data block: every line has its own place whatever the lines before it hold,
+// so the keys — author, opened, activity, labels, summary — are drawn once for every card
+// (radarView.CardKeys) instead of once per item, which QS-2.3's budget could not afford.
 type radarCard struct {
-	Head        string
-	Title       []string
-	Reason      string
-	ReasonClass string
-	Facts       []radarFact
-	Summary     []string
+	Head    string
+	Title   []radarLine
+	Reason  radarLine
+	Values  []radarLine
+	Summary []radarLine
 }
 
-type radarFact struct{ Key, Value string }
+// radarLine is one line of the data block, at its fixed height in the panel.
+type radarLine struct {
+	Y    int
+	Text string
+}
+
+// The data block's fixed lines, in panel units: the title's up to three lines, the reason, the
+// four facts and the two lines of summary; values stand at radarValueX.
+const (
+	radarTitleY   = 84
+	radarReasonY  = 186
+	radarFactY    = 228
+	radarSummaryY = 364
+	radarLineGap  = 30
+	radarValueX   = 130
+)
+
+// radarKeys are the fact keys, in the order newRadarCard fills the values.
+var radarKeys = []string{"author", "opened", "activity", "labels"}
 
 // handleRadar renders the Radar view (FR-1.15). Like every page it reads only the snapshot.
 func (s *Server) handleRadar(w http.ResponseWriter, r *http.Request) {
@@ -171,7 +193,9 @@ func buildRadar(items []domain.Item, gh config.GitHub, now time.Time) radarView 
 		Panel:  radarRect{radarPanelX, radarPanelY, radarPanelW, radarPanelH},
 		Sweep:  polar(radarR, 0),
 		Leader: radarPoint{X: radarPanelX, Y: radarPanelY + 60},
+		ValueX: radarValueX,
 	}
+	v.CardKeys = append(radarLines(radarKeys, radarFactY), radarLine{Y: radarSummaryY, Text: "summary"})
 	glow := polar(radarR, -40)
 	v.Glow = "M" + coord(radarCX, radarCY) + " L" + coord(glow.X, glow.Y) +
 		" A" + strconv.Itoa(radarR) + "," + strconv.Itoa(radarR) + " 0 0 1 " + coord(v.Sweep.X, v.Sweep.Y) + " Z"
@@ -302,31 +326,29 @@ func newRadarBlip(it domain.Item, gh config.GitHub, now time.Time, a0, width flo
 	}
 
 	b.Card = newRadarCard(it, b.Mark, need, now)
-	b.Label = kindShort(it.Kind) + " " + it.Repo + " #" + strconv.Itoa(it.Number) + ": " + it.Title
-	if b.Card.Reason != "" {
-		b.Label += " — " + b.Card.Reason
-	}
 	return b
 }
 
 func newRadarCard(it domain.Item, mark string, need domain.Need, now time.Time) radarCard {
-	kind := "ISSUE"
-	if it.Kind == domain.KindPR {
-		kind = "PULL REQUEST"
-	}
 	c := radarCard{
-		Head:  kind + " · " + it.Repo + " #" + strconv.Itoa(it.Number),
-		Title: wrapLines(it.Title, radarTitleWidth, 3),
+		// "PR", not "PULL REQUEST": a site repository's name is long, and the head is one line.
+		Head:   strings.ToUpper(kindShort(it.Kind)) + " · " + it.Repo + " #" + strconv.Itoa(it.Number),
+		Title:  radarLines(wrapLines(it.Title, radarTitleWidth, 3), radarTitleY),
+		Reason: radarLine{Y: radarReasonY},
 	}
 	switch mark {
 	case "security":
-		c.Reason, c.ReasonClass = "Security: "+newTierView(it).Evidence, "security"
+		c.Reason.Text = "Security: " + newTierView(it).Evidence
 	case "dependency":
-		c.Reason, c.ReasonClass = "Dependency update", "dependency"
+		c.Reason.Text = "Dependency update"
 	case "needs":
-		c.Reason, c.ReasonClass = "Needs you: contribution waiting", "needs"
-		if need == domain.NeedReview {
-			c.Reason = "Needs you: review requested"
+		switch need {
+		case domain.NeedReview:
+			c.Reason.Text = "Needs you: review requested"
+		case domain.NeedOwn:
+			c.Reason.Text = "Needs you: your PR, not merged"
+		default:
+			c.Reason.Text = "Needs you: contribution waiting"
 		}
 	}
 	labels := "—"
@@ -337,19 +359,26 @@ func newRadarCard(it domain.Item, mark string, need domain.Need, now time.Time) 
 	if author == "" {
 		author = "unknown"
 	}
-	c.Facts = []radarFact{
-		{"author", author},
-		{"opened", relative(it.CreatedAt, now)},
-		{"activity", relative(it.UpdatedAt, now)},
-		{"labels", labels},
+	var values []string
+	for _, v := range []string{author, relative(it.CreatedAt, now), relative(it.UpdatedAt, now), labels} {
+		values = append(values, wrapLines(v, radarFactWidth, 1)[0])
 	}
-	for i := range c.Facts {
-		if lines := wrapLines(c.Facts[i].Value, radarFactWidth, 1); len(lines) > 0 {
-			c.Facts[i].Value = lines[0]
-		}
+	c.Values = radarLines(values, radarFactY)
+	summary := wrapLines(it.Summary, radarSummaryWidth, 2)
+	if len(summary) == 0 {
+		summary = []string{"—"}
 	}
-	c.Summary = wrapLines(it.Summary, radarSummaryWidth, 2)
+	c.Summary = radarLines(summary, radarSummaryY+radarLineGap)
 	return c
+}
+
+// radarLines places lines one radarLineGap apart, the first at y.
+func radarLines(lines []string, y int) []radarLine {
+	out := make([]radarLine, 0, len(lines))
+	for i, l := range lines {
+		out = append(out, radarLine{Y: y + i*radarLineGap, Text: l})
+	}
+	return out
 }
 
 // relative is "4 days ago", or "unknown" for a time GitHub did not report.
@@ -400,10 +429,12 @@ func radarRadius(days float64) float64 {
 	return radarR0 + (radarR-radarR0-10)*math.Log1p(days)/math.Log1p(radarMaxDays)
 }
 
-// polar is the point at radius r and compass bearing deg (north 0, clockwise), rounded to a tenth.
+// polar is the point at radius r and compass bearing deg (north 0, clockwise), rounded to a whole
+// unit: a unit is well under a pixel at any width the page is drawn at, and the decimals would cost
+// QS-2.3's budget two characters per coordinate, eight coordinates per item.
 func polar(r, deg float64) radarPoint {
 	a := (deg - 90) * math.Pi / 180
-	return radarPoint{X: round1(radarCX + r*math.Cos(a)), Y: round1(radarCY + r*math.Sin(a))}
+	return radarPoint{X: math.Round(radarCX + r*math.Cos(a)), Y: math.Round(radarCY + r*math.Sin(a))}
 }
 
 func round1(f float64) float64 { return math.Round(f*10) / 10 }

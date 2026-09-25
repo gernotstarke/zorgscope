@@ -22,7 +22,7 @@ tape is a security or dependency item.
 | Fill | The site's colour (`hue-*` classes, lightened in dark as the tiles do). |
 | Security (Tier security, FR‑1.13) | Larger mark, red hazard-tape ring, fast red pulse, red `⚠ #n` tag. Never fades. |
 | Dependency (Tier dependency) | Amber hazard-tape ring. Never fades. |
-| Needs you (`domain.NeedsNow`, reason review or contribution) | Accent-blue ring with a slow pulse, blue `#n` tag. |
+| Needs you (`domain.NeedsNow`: since 1.10.0 every open pull request active in the last six months — review, contribution or the owner's own) | Accent-blue ring, blue `#n` tag; no pulse, since there are many. |
 | Age fade | Four fade buckets by the item's ring (≤1 wk, ≤1 mo, ≤6 mo, older). |
 
 Colour is never the only signal: the shapes, the tape rings, the tags and the data block say it in

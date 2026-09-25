@@ -33,7 +33,7 @@ func (v needsView) Count() int { return len(v.Shown) + len(v.More) }
 // needView is one row of the band: one line, less than a list row, because the list below still
 // carries every item in full.
 type needView struct {
-	// Reason is the class suffix — "security", "dependency", "review" or "contribution" — and
+	// Reason is the class suffix — "security", "dependency", "review", "contribution" or "own" — and
 	// ReasonLabel the word the row carries. Colour is never the only signal.
 	Reason, ReasonLabel string
 	// Tier is set for a marked item, so the band draws the very chip the list draws.
@@ -91,6 +91,8 @@ func newNeedView(n domain.Needed, gh config.GitHub, now time.Time) needView {
 		v.ReasonLabel = "Review requested"
 	case domain.NeedContribution:
 		v.ReasonLabel = "Contribution"
+	case domain.NeedOwn:
+		v.ReasonLabel = "Your PR"
 	default:
 	}
 	v.Kind, v.KindClass = kindShort(it.Kind), string(it.Kind)

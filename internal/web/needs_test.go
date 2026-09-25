@@ -61,7 +61,7 @@ func TestTheListOpensWithTheNeedsYouBand(t *testing.T) {
 		t.Error("a band holding a Security item is not framed as such")
 	}
 	section := body[band:list]
-	order := []string{"Leaked token", "Rework the glossary", "Fix a typo"}
+	order := []string{"Leaked token", "Rework the glossary", "Fix a typo", "My own refactoring"}
 	last := -1
 	for _, title := range order {
 		i := strings.Index(section, title)
@@ -73,20 +73,18 @@ func TestTheListOpensWithTheNeedsYouBand(t *testing.T) {
 		}
 		last = i
 	}
-	for _, want := range []string{">Security<", ">Review requested<", ">Contribution<", `class="needs-count">3<`} {
+	for _, want := range []string{">Security<", ">Review requested<", ">Contribution<", ">Your PR<", `class="needs-count">4<`} {
 		if !strings.Contains(section, want) {
 			t.Errorf("the band lacks %s", want)
 		}
 	}
-	for _, absent := range []string{"My own refactoring", "Nobody is waiting"} {
-		if strings.Contains(section, absent) {
-			t.Errorf("the band holds %q, which needs nobody", absent)
-		}
+	if strings.Contains(section, "Nobody is waiting") {
+		t.Error("the band holds an unmarked issue, which needs nobody")
 	}
 
 	rows := body[list:]
-	if n := strings.Count(rows, `class="item is-needed`); n != 3 {
-		t.Errorf("the list marks %d rows as needed, want 3", n)
+	if n := strings.Count(rows, `class="item is-needed`); n != 4 {
+		t.Errorf("the list marks %d rows as needed, want 4", n)
 	}
 	for _, title := range []string{"My own refactoring", "Nobody is waiting", "Leaked token", "Fix a typo"} {
 		if !strings.Contains(rows, title) {
@@ -155,7 +153,7 @@ func TestTheTopBarLeadsWithWhatNeedsYou(t *testing.T) {
 	h := needsHandler(t, needsItems())
 	c := signIn(t, h)
 	for _, path := range []string{"/sites", "/contributors"} {
-		if !strings.Contains(getAs(h, path, c).Body.String(), `<a class="open-count-needs" href="/?view=list#needs">3 need you</a>`) {
+		if !strings.Contains(getAs(h, path, c).Body.String(), `<a class="open-count-needs" href="/?view=list#needs">4 need you</a>`) {
 			t.Errorf("%s does not lead its top bar with the needs count", path)
 		}
 	}

@@ -20,9 +20,10 @@ func TestNeedForClassifiesByTheLoudestReason(t *testing.T) {
 		{"a review request for the owner, in any case", Item{Kind: KindPR, Author: "amy", ReviewRequested: []string{"bob", "GernotStarke"}}, NeedReview},
 		{"a review request on the owner's own draft", Item{Kind: KindPR, Author: owner, State: "DRAFT", ReviewRequested: []string{owner}}, NeedReview},
 		{"someone else's ready pull request", Item{Kind: KindPR, Author: "amy"}, NeedContribution},
-		{"someone else's draft waits on its author", Item{Kind: KindPR, Author: "amy", State: "DRAFT"}, NeedNone},
-		{"the owner's own pull request", Item{Kind: KindPR, Author: owner}, NeedNone},
-		{"a review asked of someone else only", Item{Kind: KindPR, Author: owner, ReviewRequested: []string{"amy"}}, NeedNone},
+		{"someone else's draft is still a contribution", Item{Kind: KindPR, Author: "amy", State: "DRAFT"}, NeedContribution},
+		{"the owner's own pull request, in any case", Item{Kind: KindPR, Author: "GernotStarke"}, NeedOwn},
+		{"the owner's own draft", Item{Kind: KindPR, Author: owner, State: "DRAFT"}, NeedOwn},
+		{"a review asked of someone else only", Item{Kind: KindPR, Author: owner, ReviewRequested: []string{"amy"}}, NeedOwn},
 		{"an unmarked issue", Item{Kind: KindIssue, Author: "amy"}, NeedNone},
 	}
 	for _, tc := range tests {
@@ -32,10 +33,14 @@ func TestNeedForClassifiesByTheLoudestReason(t *testing.T) {
 	}
 }
 
-// Without an owner nobody's pull request is a contribution; only the marked items need anyone.
-func TestNeedForWithoutAnOwnerKeepsOnlyTheMarkedItems(t *testing.T) {
-	if got := NeedFor(Item{Kind: KindPR, Author: "amy"}, ""); got != NeedNone {
-		t.Errorf("contribution without an owner = %v, want none", got)
+// Without an owner every pull request is a contribution: nobody's can be the owner's own, and none
+// can ask the owner for a review.
+func TestNeedForWithoutAnOwner(t *testing.T) {
+	if got := NeedFor(Item{Kind: KindPR, Author: "amy"}, ""); got != NeedContribution {
+		t.Errorf("pull request without an owner = %v, want contribution", got)
+	}
+	if got := NeedFor(Item{Kind: KindIssue, Author: "amy"}, ""); got != NeedNone {
+		t.Errorf("issue without an owner = %v, want none", got)
 	}
 	if got := NeedFor(Item{Kind: KindPR, Author: "renovate"}, ""); got != NeedDependency {
 		t.Errorf("bump without an owner = %v, want dependency", got)

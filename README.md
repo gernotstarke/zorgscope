@@ -89,6 +89,7 @@ code; `make check` passes.
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.10.0 | 2026-09-25 | Every open PR active in the last 6 months needs you, your own and drafts included ("Your PR"); Radar takes the window's width, larger data block |
 | 1.9.0 | 2026-09-25 | Radar view: every item as a blip on a radar scope, security and dependency in hazard tape, a click opens it on GitHub; Radar as landing view |
 | 1.8.0 | 2026-09-24 | Needs-you shows only items active in the last 6 months on top (security excepted); older ones behind a disclosure |
 | 1.7.0 | 2026-09-23 | Needs-you band first and louder (tape, red frame on security), stays under filters; top bar leads with "N need you"; fetched age; segmented settings |

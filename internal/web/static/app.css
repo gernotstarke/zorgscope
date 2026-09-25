@@ -1111,7 +1111,7 @@ button:hover,
 .need-reason .tier-chip { margin-right: 0; }
 
 /* The reason as a word for the two that are not tiers. Outlined, where a tier chip is solid: a
-   review or a contribution is somebody waiting, not an alarm. */
+   review, a contribution or your own open pull request is somebody waiting, not an alarm. */
 .need-chip {
   display: inline-block;
   padding: 0 0.45em;
@@ -1123,7 +1123,8 @@ button:hover,
   white-space: nowrap;
 }
 .need-review .need-chip { color: var(--accent); }
-.need-contribution .need-chip { color: var(--muted); }
+.need-contribution .need-chip,
+.need-own .need-chip { color: var(--muted); }
 
 /* PR or Issue, in the top bar's colours, so the count up there and the rows down here are one
    code. */
@@ -1271,20 +1272,25 @@ mark { background: #fde68a; color: #1f2937; border-radius: 2px; padding: 0 0.1em
   --radar-security-deep: light-dark(#6d1611, #5a120e);
   --radar-dependency: light-dark(#b87400, #f0b43c);
   --radar-dependency-deep: light-dark(#4a3000, #3a2600);
+  /* Wider than the page's reading column: the scope is a picture, and it earns the whole window.
+     As wide as the window allows, but never taller than the window below the top bar (1.7 is the
+     viewBox's aspect ratio, radar.go's radarWidth / radarHeight), centred on the column it sits in. */
   display: block;
-  width: 100%;
+  position: relative;
+  left: 50%;
+  width: min(calc(100vw - 2rem), calc((100vh - 9rem) * 1.7), 1900px);
+  min-width: 100%;
   height: auto;
-  max-width: 1400px;
-  margin: 0 auto;
+  transform: translateX(-50%);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 17px;
+  font-size: 19px;
 }
 .radar-svg text { fill: var(--text); }
 .radar-scope { fill: var(--radar-ground); stroke: var(--radar-ring); stroke-width: 2; }
 .radar-ring { fill: none; stroke: var(--radar-ring); stroke-width: 1; }
-.radar-svg .radar-ring-label { fill: var(--radar-ring-text); font-size: 13px; }
+.radar-svg .radar-ring-label { fill: var(--radar-ring-text); font-size: 14px; }
 .radar-centre { fill: none; stroke: var(--radar-sweep); stroke-width: 1.5; opacity: 0.6; }
-.radar-svg .radar-site { font-size: 16px; font-weight: 600; }
+.radar-svg .radar-site { font-size: 18px; font-weight: 600; }
 
 /* A site's colour, as the tiles draw it: its own hue in the light appearance, its signature colour
    lightened in the dark one, where the deep brand hues would vanish into the scope. */
@@ -1305,13 +1311,13 @@ mark { background: #fde68a; color: #1f2937; border-radius: 2px; padding: 0 0.1em
 /* The panel beside the scope: the legend, or the data block of the blip under the pointer. */
 .radar-panel { fill: var(--surface); stroke: var(--border); stroke-width: 1.5; }
 .radar-in-panel, .blip .card { transform: translate(1230px, 60px); }
-.radar-svg .legend-head { font-weight: 700; font-size: 19px; }
-.radar-svg .legend-note { fill: var(--muted); font-size: 14px; }
+.radar-svg .legend-head { font-weight: 700; font-size: 22px; }
+.radar-svg .legend-note { fill: var(--muted); font-size: 16px; }
 .radar-svg .count-needs { fill: var(--accent); font-weight: 700; }
 .radar-svg .count-security { fill: var(--radar-security); font-weight: 700; }
 .radar-svg .count-dependency { fill: var(--radar-dependency); font-weight: 700; }
-.radar-open-hint { display: none; }
-.radar-svg .radar-open-hint { fill: var(--accent); }
+.radar-card-keys { display: none; }
+.radar-svg .radar-card-keys .radar-open-hint { fill: var(--accent); font-size: 17px; }
 
 /* A blip. The flash as the beam passes is its bearing class's delay; how far it fades afterwards
    is its age class. A marked item never fades: an old vulnerability is the one that must stay in
@@ -1366,11 +1372,12 @@ mark { background: #fde68a; color: #1f2937; border-radius: 2px; padding: 0 0.1em
 .bearing-35 .mark { animation-delay: -0.22s; }
 
 /* The loud ones. Needs you is the accent, as the band's count is; Security and Dependency wear the
-   list's hazard tape in its own two colours (FR-1.13 AC2), Security larger and pulsing. */
+   list's hazard tape in its own two colours (FR-1.13 AC2), Security larger and the only one that
+   pulses — every open pull request needs the owner, and forty pulsing rings would be noise. */
 .ring { fill: none; }
 .ring-pulse { fill: none; transform-box: fill-box; transform-origin: center; animation: radar-pulse 2s ease-out infinite; }
 @keyframes radar-pulse { from { transform: scale(1); opacity: 0.8; } to { transform: scale(2.2); opacity: 0; } }
-.mark-needs .ring, .mark-needs .ring-pulse { stroke: var(--accent); stroke-width: 2; }
+.mark-needs .ring { stroke: var(--accent); stroke-width: 2.5; }
 .mark-security .ring { stroke: url(#radar-tape-security); stroke-width: 6; }
 .mark-security .ring-pulse { stroke: var(--radar-security); stroke-width: 3; animation-duration: 1.4s; }
 .mark-dependency .ring { stroke: url(#radar-tape-dependency); stroke-width: 5; }
@@ -1380,24 +1387,25 @@ mark { background: #fde68a; color: #1f2937; border-radius: 2px; padding: 0 0.1em
 #radar-tape-security .tape-b { fill: var(--radar-security-deep); }
 #radar-tape-dependency .tape-a { fill: var(--radar-dependency); }
 #radar-tape-dependency .tape-b { fill: var(--radar-dependency-deep); }
-.radar-svg .tag { font-size: 13px; font-weight: 700; pointer-events: none; }
+.radar-svg .tag { font-size: 14px; font-weight: 700; pointer-events: none; }
 .radar-svg .mark-needs .tag { fill: var(--accent); }
 .radar-svg .mark-security .tag { fill: var(--radar-security); font-weight: 800; }
 
 /* The data block: hidden until its blip is hovered or reached with the keyboard. A click opens the
    item on GitHub, so there is nothing to pin. The one-letter classes are the block's parts — head,
-   title, reason, key — kept short because they repeat once per item (QS-2.3). */
+   title, reason — kept short because they repeat once per item (QS-2.3); the keys beside the
+   values are drawn once, in .radar-card-keys, and shown with whichever block is showing. */
 .blip .card, .blip .leader { display: none; }
 .blip:hover .card, .blip:focus-visible .card, .blip:hover .leader, .blip:focus-visible .leader { display: inline; }
 .blip:hover .mark, .blip:focus-visible .mark { stroke: var(--text); stroke-width: 2.5; }
 .blip:focus { outline: none; }
 .radar-svg:has(.blip:hover, .blip:focus-visible) .radar-legend { display: none; }
-.radar-svg:has(.blip:hover, .blip:focus-visible) .radar-open-hint { display: inline; }
+.radar-svg:has(.blip:hover, .blip:focus-visible) .radar-card-keys { display: inline; }
 .radar-svg:has(.blip:hover) .blip:not(:hover) .card,
 .radar-svg:has(.blip:hover) .blip:not(:hover) .leader { display: none; }
 .leader { fill: none; stroke: var(--text); stroke-width: 1; stroke-dasharray: 3 4; pointer-events: none; }
-.radar-svg .card .h, .radar-svg .card .k { fill: var(--muted); font-size: 14px; }
-.radar-svg .card .t { font-family: system-ui, sans-serif; font-size: 21px; font-weight: 700; }
+.radar-svg .card .h, .radar-svg .radar-card-keys text { fill: var(--muted); font-size: 16px; }
+.radar-svg .card .t { font-family: system-ui, sans-serif; font-size: 24px; font-weight: 700; }
 .radar-svg .card .r { font-weight: 700; fill: var(--accent); }
 .radar-svg .mark-security .card .r { fill: var(--radar-security); }
 .radar-svg .mark-dependency .card .r { fill: var(--radar-dependency); }

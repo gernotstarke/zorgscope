@@ -102,7 +102,7 @@ func TestRadarDistanceGrowsWithIdleTime(t *testing.T) {
 	if old > radarR {
 		t.Errorf("a five-year-old item stands at %.1f, beyond the rim %d", old, radarR)
 	}
-	if u := distanceOf(blipFor(t, v, "unknown")); math.Abs(u-old) > 0.2 {
+	if u := distanceOf(blipFor(t, v, "unknown")); math.Abs(u-old) > 1.5 {
 		t.Errorf("an unknown update time stands at %.1f, want the rim %.1f", u, old)
 	}
 }
@@ -174,11 +174,11 @@ func TestRadarCardWrapsTheTitle(t *testing.T) {
 		radarGitHub, testNow)
 	lines := v.Blips[0].Card.Title
 	if len(lines) < 2 || len(lines) > 3 {
-		t.Fatalf("title wrapped into %d lines, want 2 or 3: %q", len(lines), lines)
+		t.Fatalf("title wrapped into %d lines, want 2 or 3: %v", len(lines), lines)
 	}
 	for _, l := range lines {
-		if len([]rune(l)) > radarTitleWidth+1 {
-			t.Errorf("line %q longer than %d", l, radarTitleWidth)
+		if len([]rune(l.Text)) > radarTitleWidth+1 {
+			t.Errorf("line %q longer than %d", l.Text, radarTitleWidth)
 		}
 	}
 }

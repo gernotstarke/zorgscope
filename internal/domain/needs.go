@@ -21,6 +21,7 @@ const (
 	NeedDependency
 	NeedReview
 	NeedContribution
+	NeedOwn
 )
 
 // String is the reason as the page names it in a class, and so is fixed text.
@@ -34,6 +35,8 @@ func (n Need) String() string {
 		return "review"
 	case NeedContribution:
 		return "contribution"
+	case NeedOwn:
+		return "own"
 	default:
 		return ""
 	}
@@ -45,10 +48,13 @@ func (n Need) String() string {
 //
 //   - Security or Dependency: the item is marked (FR-1.13), whoever opened it.
 //   - Review: a pull request that asks owner for a review.
-//   - Contribution: a pull request someone else opened and is ready — someone is waiting for a
-//     merge or a review. A draft is not ready, so it waits on its author, not on owner.
+//   - Contribution: a pull request someone else opened, draft or ready — somebody is waiting for
+//     the owner to look at it.
+//   - Own: a pull request owner opened — it is open, so it is waiting for the owner to merge it.
 //
-// An empty owner matches nobody, so without one only the marked items need anyone.
+// Every open pull request therefore needs the owner; what goes stale after six months is decided
+// by Needed.Stale, not here. An empty owner matches nobody, so without one every pull request is a
+// contribution.
 func NeedFor(it Item, owner string) Need {
 	switch it.Tier() {
 	case TierSecurity:
@@ -57,18 +63,21 @@ func NeedFor(it Item, owner string) Need {
 		return NeedDependency
 	default:
 	}
-	if it.Kind != KindPR || owner == "" {
+	if it.Kind != KindPR {
 		return NeedNone
+	}
+	if owner == "" {
+		return NeedContribution
 	}
 	for _, login := range it.ReviewRequested {
 		if strings.EqualFold(login, owner) {
 			return NeedReview
 		}
 	}
-	if !strings.EqualFold(it.Author, owner) && it.State != StateDraft {
-		return NeedContribution
+	if strings.EqualFold(it.Author, owner) {
+		return NeedOwn
 	}
-	return NeedNone
+	return NeedContribution
 }
 
 // Needed is one item of the band, with the reason it is there.

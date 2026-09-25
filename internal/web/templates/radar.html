@@ -34,48 +34,49 @@
 <rect class="radar-panel" x="{{.Panel.X}}" y="{{.Panel.Y}}" width="{{.Panel.W}}" height="{{.Panel.H}}" rx="12"/>
 {{/* The legend fills the panel until a blip is hovered or focused; then the blip's data block does. */}}
 <g class="radar-legend radar-in-panel">
-  <text x="24" y="42" class="legend-head">Radar</text>
-  <text x="24" y="66" class="legend-note">Hover a blip for its data block,</text>
-  <text x="24" y="84" class="legend-note">click it to open it on GitHub.</text>
+  <text x="24" y="44" class="legend-head">Radar</text>
+  <text x="24" y="72" class="legend-note">Hover a blip for its data block,</text>
+  <text x="24" y="94" class="legend-note">click it to open it on GitHub.</text>
   <g class="hue-slate">
-    <circle class="mark" cx="36" cy="130" r="7"/><text x="62" y="135">Issue</text>
-    <path class="mark" d="M36,159 l9,9 l-9,9 l-9,-9Z"/><text x="62" y="173">Pull request</text>
-    <g class="mark-needs"><circle class="ring" cx="36" cy="206" r="12"/><circle class="mark" cx="36" cy="206" r="7"/></g>
-    <text x="62" y="211">Needs you</text><text x="62" y="229" class="legend-note">review or contribution waiting</text>
-    <g class="mark-security"><circle class="ring" cx="36" cy="256" r="13"/><circle class="mark" cx="36" cy="256" r="8"/></g>
-    <text x="62" y="261">Security</text><text x="62" y="279" class="legend-note">cites a CVE or GHSA</text>
-    <g class="mark-dependency"><circle class="ring" cx="36" cy="306" r="12"/><circle class="mark" cx="36" cy="306" r="7"/></g>
-    <text x="62" y="311">Dependency</text><text x="62" y="329" class="legend-note">Dependabot, Renovate</text>
+    <circle class="mark" cx="38" cy="146" r="8"/><text x="68" y="152">Issue</text>
+    <path class="mark" d="M38,178 l10,10 l-10,10 l-10,-10Z"/><text x="68" y="194">Pull request</text>
+    <g class="mark-needs"><circle class="ring" cx="38" cy="236" r="13"/><circle class="mark" cx="38" cy="236" r="8"/></g>
+    <text x="68" y="242">Needs you</text><text x="68" y="264" class="legend-note">every PR active in 6 months</text>
+    <g class="mark-security"><circle class="ring" cx="38" cy="306" r="14"/><circle class="mark" cx="38" cy="306" r="9"/></g>
+    <text x="68" y="312">Security</text><text x="68" y="334" class="legend-note">cites a CVE or GHSA</text>
+    <g class="mark-dependency"><circle class="ring" cx="38" cy="376" r="13"/><circle class="mark" cx="38" cy="376" r="8"/></g>
+    <text x="68" y="382">Dependency</text><text x="68" y="404" class="legend-note">Dependabot, Renovate</text>
   </g>
-  <text x="24" y="377">Direction: site</text>
-  <text x="24" y="401">Distance: time idle</text>
-  <text x="24" y="423" class="legend-note">since last activity: centre = now,</text>
-  <text x="24" y="443" class="legend-note">rim = two years or more</text>
+  <text x="24" y="462">Direction: site</text>
+  <text x="24" y="492">Distance: time idle</text>
+  <text x="24" y="516" class="legend-note">since last activity: centre = now,</text>
+  <text x="24" y="538" class="legend-note">rim = two years or more</text>
   {{if .Total}}
-  <text x="24" y="485">{{.Total}} open · {{.PRs}} {{if eq .PRs 1}}PR{{else}}PRs{{end}} · {{.Issues}} {{if eq .Issues 1}}issue{{else}}issues{{end}}</text>
-  <text x="24" y="511"><tspan class="count-security">{{.Security}} security</tspan> · <tspan class="count-dependency">{{.Dependency}} dependency</tspan></text>
-  <text x="24" y="537" class="count-needs">{{.Needs}} waiting for you</text>
+  <text x="24" y="592">{{.Total}} open · {{.PRs}} {{if eq .PRs 1}}PR{{else}}PRs{{end}} · {{.Issues}} {{if eq .Issues 1}}issue{{else}}issues{{end}}</text>
+  <text x="24" y="622"><tspan class="count-security">{{.Security}} security</tspan> · <tspan class="count-dependency">{{.Dependency}} dependency</tspan></text>
+  <text x="24" y="652" class="count-needs">{{.Needs}} {{if eq .Needs 1}}PR needs{{else}}PRs need{{end}} you</text>
   {{else}}
-  <text x="24" y="485">Nothing open.</text>
+  <text x="24" y="592">Nothing open.</text>
   {{end}}
 </g>
-{{$leader := .Leader}}
+{{$leader := .Leader}}{{$vx := .ValueX}}
 {{/* Each blip is a link to its item, opened in a new tab like every item link on the other views.
      Its accessible name is its data block, referenced by id: the block is hidden until hover, and
      a hidden element still names what points at it, so the text is written once, not twice. The
      one-letter classes inside a data block are there for QS-2.3's budget: they repeat 150 times. */}}
-<text class="radar-open-hint radar-in-panel" x="24" y="840">click to open it on GitHub ↗</text>
+<g class="radar-card-keys radar-in-panel">{{range .CardKeys}}<text x="24" y="{{.Y}}">{{.Text}}</text>{{end}}
+  <text class="radar-open-hint" x="24" y="840">click to open it on GitHub ↗</text></g>
 {{range $n, $b := .Blips}}
 <a class="blip {{.Hue}} {{.Bearing}} {{.Age}}{{with .Mark}} mark-{{.}}{{end}}" href="{{.URL}}" target="_blank" rel="noopener noreferrer" aria-labelledby="b{{$n}}">
-{{- if .Ring}}{{if or (eq .Mark "security") (eq .Mark "needs")}}<circle class="ring-pulse" cx="{{printf "%g" .X}}" cy="{{printf "%g" .Y}}" r="{{printf "%g" .Ring}}"/>{{end}}<circle class="ring" cx="{{printf "%g" .X}}" cy="{{printf "%g" .Y}}" r="{{printf "%g" .Ring}}"/>{{end -}}
+{{- if .Ring}}{{if eq .Mark "security"}}<circle class="ring-pulse" cx="{{printf "%g" .X}}" cy="{{printf "%g" .Y}}" r="{{printf "%g" .Ring}}"/>{{end}}<circle class="ring" cx="{{printf "%g" .X}}" cy="{{printf "%g" .Y}}" r="{{printf "%g" .Ring}}"/>{{end -}}
 {{if .Shape}}<path class="mark" d="{{.Shape}}"/>{{else}}<circle class="mark" cx="{{printf "%g" .X}}" cy="{{printf "%g" .Y}}" r="{{printf "%g" .R}}"/>{{end -}}
 {{with .Tag}}<text class="tag" x="{{printf "%g" $b.TagX}}" y="{{printf "%g" $b.TagY}}">{{.}}</text>{{end -}}
 <path class="leader" d="M{{printf "%g" .X}},{{printf "%g" .Y}}L{{printf "%g" $leader.X}},{{printf "%g" $leader.Y}}"/>
-{{- with .Card}}<text class="card" id="b{{$n}}" x="24" y="40"><tspan class="h">{{.Head}}</tspan>
-{{- range $i, $l := .Title}}<tspan class="t" x="24" dy="{{if $i}}26{{else}}42{{end}}">{{$l}}</tspan>{{end}}
-{{- with .Reason}}<tspan class="r" x="24" dy="38">{{.}}</tspan>{{end}}
-{{- range $i, $f := .Facts}}<tspan class="k" x="24" dy="{{if $i}}26{{else}}38{{end}}">{{$f.Key}}</tspan><tspan x="118">{{$f.Value}}</tspan>{{end}}
-{{- if .Summary}}<tspan class="k" x="24" dy="36">summary</tspan>{{range .Summary}}<tspan x="24" dy="24">{{.}}</tspan>{{end}}{{end -}}
+{{- with .Card}}<text class="card" id="b{{$n}}"><tspan class="h" x="24" y="40">{{.Head}}</tspan>
+{{- range .Title}}<tspan class="t" x="24" y="{{.Y}}">{{.Text}}</tspan>{{end}}
+{{- if .Reason.Text}}<tspan class="r" x="24" y="{{.Reason.Y}}">{{.Reason.Text}}</tspan>{{end}}
+{{- range .Values}}<tspan x="{{$vx}}" y="{{.Y}}">{{.Text}}</tspan>{{end}}
+{{- range .Summary}}<tspan x="24" y="{{.Y}}">{{.Text}}</tspan>{{end -}}
 </text>{{end -}}
 </a>
 {{end}}
