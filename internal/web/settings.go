@@ -38,10 +38,11 @@ const (
 // landing is which view GET / leads to.
 type landing string
 
-// The three landing views, which are exactly the three the view switch offers.
+// The landing views, which are exactly the views the switch offers.
 const (
 	landingList         landing = "list"
 	landingSites        landing = "sites"
+	landingRadar        landing = "radar"
 	landingContributors landing = "contributors"
 )
 
@@ -51,6 +52,8 @@ func (l landing) path() string {
 	switch l {
 	case landingSites:
 		return "/sites"
+	case landingRadar:
+		return "/radar"
 	case landingContributors:
 		return "/contributors"
 	default:
@@ -64,6 +67,8 @@ func parseLanding(s string) landing {
 	switch landing(s) {
 	case landingSites:
 		return landingSites
+	case landingRadar:
+		return landingRadar
 	case landingContributors:
 		return landingContributors
 	default:

@@ -101,7 +101,7 @@ func (s *Server) answeredWaiting(w http.ResponseWriter, r *http.Request) (snapsh
 // as part of a page view.
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	// The visitor's landing view (FR-1.12 AC3). "/" is where the list lives, so only the other
-	// two redirect; landingList falling through is what keeps "/" from bouncing to itself.
+	// views redirect; landingList falling through is what keeps "/" from bouncing to itself.
 	//
 	// The cache is asked before redirecting, and that is the whole reason this is three lines
 	// rather than one. A fetch is started by whichever handler asks the cache, so a redirect that

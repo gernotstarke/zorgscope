@@ -147,6 +147,7 @@ func TestLandingViewRedirects(t *testing.T) {
 	for _, tc := range []struct{ cookie, wantLocation string }{
 		{"sites", "/sites"},
 		{"contributors", "/contributors"},
+		{"radar", "/radar"},
 	} {
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		req.AddCookie(c)
@@ -403,5 +404,19 @@ func TestTheCacheSettingReachesTheDocument(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if !strings.Contains(rec.Body.String(), `data-cache="off"`) {
 		t.Error("the document does not say the browser list is off")
+	}
+}
+
+// FR-1.12 AC1, FR-1.15: the popover offers Radar as a landing view, and marks it when chosen.
+func TestSettingsOfferRadarAsLanding(t *testing.T) {
+	h := dashHandler(t, &fakeSource{items: representativeItems()})
+	c := signIn(t, h)
+	req := httptest.NewRequest(http.MethodGet, "/radar", nil)
+	req.AddCookie(c)
+	req.AddCookie(&http.Cookie{Name: landingCookieName, Value: "radar"})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if body := rec.Body.String(); !strings.Contains(body, `value="radar" aria-current="true">Radar</button>`) {
+		t.Error("the popover does not offer Radar as the current landing view")
 	}
 }

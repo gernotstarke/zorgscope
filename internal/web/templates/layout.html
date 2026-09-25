@@ -142,9 +142,9 @@
 
         <fieldset class="setting">
           <legend>Open at</legend>
-          {{/* Three buttons in one form rather than a select and a submit: with JavaScript off a
-               select needs a button beside it anyway, and a button says what it does. There are
-               exactly three views and there is no fourth coming, so they are written out. */}}
+          {{/* One button per view in one form rather than a select and a submit: with JavaScript
+               off a select needs a button beside it anyway, and a button says what it does. The
+               views are few and fixed, so they are written out. */}}
           <form class="segmented" method="post" action="/settings">
             <input type="hidden" name="name" value="landing">
             {{/* $.Chrome.Return, not $.Path: Path is r.URL.Path alone, and would drop a query
@@ -156,6 +156,7 @@
             <input type="hidden" name="return" value="{{$.Chrome.Return}}">
             <button type="submit" name="value" value="list"{{if $.LandingIs "list"}} aria-current="true"{{end}}>List</button>
             <button type="submit" name="value" value="sites"{{if $.LandingIs "sites"}} aria-current="true"{{end}}>Sites</button>
+            <button type="submit" name="value" value="radar"{{if $.LandingIs "radar"}} aria-current="true"{{end}}>Radar</button>
             <button type="submit" name="value" value="contributors"{{if $.LandingIs "contributors"}} aria-current="true"{{end}}>Contributors</button>
           </form>
         </fieldset>
