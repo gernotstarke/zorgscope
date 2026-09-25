@@ -1,0 +1,85 @@
+{{/* The Radar view (FR-1.15). Inline SVG whose every coordinate and every line of text was
+     computed in radar.go; every colour, delay, fade and hover rule lives in app.css, because the
+     policy grants no 'unsafe-inline' and a style attribute would not apply (QS-4.4). */}}
+{{define "content"}}
+{{with .Radar}}
+{{template "header" .}}
+<section class="radar" aria-labelledby="radar-title">
+<h1 class="visually-hidden" id="radar-title">Radar</h1>
+<svg class="radar-svg" viewBox="0 0 {{.Width}} {{.Height}}" role="group" aria-labelledby="radar-title">
+<defs>
+  <pattern id="radar-tape-security" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect class="tape-a" width="4" height="8"/><rect class="tape-b" x="4" width="4" height="8"/></pattern>
+  <pattern id="radar-tape-dependency" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect class="tape-a" width="4" height="8"/><rect class="tape-b" x="4" width="4" height="8"/></pattern>
+  <linearGradient id="radar-glow" x1="1" y1="0" x2="0" y2="0.45"><stop class="glow-head" offset="0"/><stop class="glow-tail" offset="1"/></linearGradient>
+</defs>
+<circle class="radar-scope" cx="{{.CX}}" cy="{{.CY}}" r="{{.R}}"/>
+{{range .Sectors}}
+<g class="radar-sector {{.Hue | printf "hue-%s"}}">
+  <line class="radar-edge" x1="{{printf "%g" (index .EdgeA 0).X}}" y1="{{printf "%g" (index .EdgeA 0).Y}}" x2="{{printf "%g" (index .EdgeA 1).X}}" y2="{{printf "%g" (index .EdgeA 1).Y}}"/>
+  <line class="radar-edge" x1="{{printf "%g" (index .EdgeB 0).X}}" y1="{{printf "%g" (index .EdgeB 0).Y}}" x2="{{printf "%g" (index .EdgeB 1).X}}" y2="{{printf "%g" (index .EdgeB 1).Y}}"/>
+  <path class="radar-rim" d="{{.Rim}}"/>
+  <text class="radar-site" x="{{printf "%g" .Label.X}}" y="{{printf "%g" .Label.Y}}" text-anchor="{{.Anchor}}">{{.Name}}</text>
+</g>
+{{end}}
+{{$cx := .CX}}{{$cy := .CY}}
+{{range .Rings}}
+<circle class="radar-ring" cx="{{$cx}}" cy="{{$cy}}" r="{{printf "%g" .R}}"/>
+<text class="radar-ring-label" x="{{$cx}}" dx="4" y="{{printf "%g" .LabelY}}">{{.Label}}</text>
+{{end}}
+<circle class="radar-centre" cx="{{.CX}}" cy="{{.CY}}" r="{{.R0}}"/>
+<g class="radar-sweep" aria-hidden="true">
+  <path class="radar-glow" d="{{.Glow}}"/>
+  <line class="radar-beam" x1="{{.CX}}" y1="{{.CY}}" x2="{{printf "%g" .Sweep.X}}" y2="{{printf "%g" .Sweep.Y}}"/>
+</g>
+<rect class="radar-panel" x="{{.Panel.X}}" y="{{.Panel.Y}}" width="{{.Panel.W}}" height="{{.Panel.H}}" rx="12"/>
+{{/* The legend fills the panel until a blip is hovered or focused; then the blip's data block does. */}}
+<g class="radar-legend radar-in-panel">
+  <text x="24" y="42" class="legend-head">Radar</text>
+  <text x="24" y="66" class="legend-note">Hover a blip for its data block,</text>
+  <text x="24" y="84" class="legend-note">click it to open it on GitHub.</text>
+  <g class="hue-slate">
+    <circle class="mark" cx="36" cy="130" r="7"/><text x="62" y="135">Issue</text>
+    <path class="mark" d="M36,159 l9,9 l-9,9 l-9,-9Z"/><text x="62" y="173">Pull request</text>
+    <g class="mark-needs"><circle class="ring" cx="36" cy="206" r="12"/><circle class="mark" cx="36" cy="206" r="7"/></g>
+    <text x="62" y="211">Needs you</text><text x="62" y="229" class="legend-note">review or contribution waiting</text>
+    <g class="mark-security"><circle class="ring" cx="36" cy="256" r="13"/><circle class="mark" cx="36" cy="256" r="8"/></g>
+    <text x="62" y="261">Security</text><text x="62" y="279" class="legend-note">cites a CVE or GHSA</text>
+    <g class="mark-dependency"><circle class="ring" cx="36" cy="306" r="12"/><circle class="mark" cx="36" cy="306" r="7"/></g>
+    <text x="62" y="311">Dependency</text><text x="62" y="329" class="legend-note">Dependabot, Renovate</text>
+  </g>
+  <text x="24" y="377">Direction: site</text>
+  <text x="24" y="401">Distance: time idle</text>
+  <text x="24" y="423" class="legend-note">since last activity: centre = now,</text>
+  <text x="24" y="443" class="legend-note">rim = two years or more</text>
+  {{if .Total}}
+  <text x="24" y="485">{{.Total}} open · {{.PRs}} {{if eq .PRs 1}}PR{{else}}PRs{{end}} · {{.Issues}} {{if eq .Issues 1}}issue{{else}}issues{{end}}</text>
+  <text x="24" y="511"><tspan class="count-security">{{.Security}} security</tspan> · <tspan class="count-dependency">{{.Dependency}} dependency</tspan></text>
+  <text x="24" y="537" class="count-needs">{{.Needs}} waiting for you</text>
+  {{else}}
+  <text x="24" y="485">Nothing open.</text>
+  {{end}}
+</g>
+{{$leader := .Leader}}
+{{/* Each blip is a link to its item, opened in a new tab like every item link on the other views.
+     Its accessible name is its data block, referenced by id: the block is hidden until hover, and
+     a hidden element still names what points at it, so the text is written once, not twice. The
+     one-letter classes inside a data block are there for QS-2.3's budget: they repeat 150 times. */}}
+<text class="radar-open-hint radar-in-panel" x="24" y="840">click to open it on GitHub ↗</text>
+{{range $n, $b := .Blips}}
+<a class="blip {{.Hue}} {{.Bearing}} {{.Age}}{{with .Mark}} mark-{{.}}{{end}}" href="{{.URL}}" target="_blank" rel="noopener noreferrer" aria-labelledby="b{{$n}}">
+{{- if .Ring}}{{if or (eq .Mark "security") (eq .Mark "needs")}}<circle class="ring-pulse" cx="{{printf "%g" .X}}" cy="{{printf "%g" .Y}}" r="{{printf "%g" .Ring}}"/>{{end}}<circle class="ring" cx="{{printf "%g" .X}}" cy="{{printf "%g" .Y}}" r="{{printf "%g" .Ring}}"/>{{end -}}
+{{if .Shape}}<path class="mark" d="{{.Shape}}"/>{{else}}<circle class="mark" cx="{{printf "%g" .X}}" cy="{{printf "%g" .Y}}" r="{{printf "%g" .R}}"/>{{end -}}
+{{with .Tag}}<text class="tag" x="{{printf "%g" $b.TagX}}" y="{{printf "%g" $b.TagY}}">{{.}}</text>{{end -}}
+<path class="leader" d="M{{printf "%g" .X}},{{printf "%g" .Y}}L{{printf "%g" $leader.X}},{{printf "%g" $leader.Y}}"/>
+{{- with .Card}}<text class="card" id="b{{$n}}" x="24" y="40"><tspan class="h">{{.Head}}</tspan>
+{{- range $i, $l := .Title}}<tspan class="t" x="24" dy="{{if $i}}26{{else}}42{{end}}">{{$l}}</tspan>{{end}}
+{{- with .Reason}}<tspan class="r" x="24" dy="38">{{.}}</tspan>{{end}}
+{{- range $i, $f := .Facts}}<tspan class="k" x="24" dy="{{if $i}}26{{else}}38{{end}}">{{$f.Key}}</tspan><tspan x="118">{{$f.Value}}</tspan>{{end}}
+{{- if .Summary}}<tspan class="k" x="24" dy="36">summary</tspan>{{range .Summary}}<tspan x="24" dy="24">{{.}}</tspan>{{end}}{{end -}}
+</text>{{end -}}
+</a>
+{{end}}
+</svg>
+</section>
+{{end}}
+{{end}}

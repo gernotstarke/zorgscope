@@ -44,7 +44,8 @@ const (
 	radarPanelH = 880
 	// radarTitleWidth and radarSummaryWidth are how many characters a line of the data block holds.
 	radarTitleWidth   = 30
-	radarSummaryWidth = 36
+	radarSummaryWidth = 32
+	radarFactWidth    = 23
 )
 
 // radarRingDays are the range rings, labelled.
@@ -58,15 +59,17 @@ type radarView struct {
 	headerView
 	Width, Height, CX, CY, R, R0 int
 	Panel                        radarRect
-	Sectors                      []radarSector
-	Rings                        []radarRing
+	// Leader is where the dotted line from a hovered blip meets the panel.
+	Leader  radarPoint
+	Sectors []radarSector
+	Rings   []radarRing
 	// Sweep is the beam's far end and Glow the afterglow wedge behind it, both drawn pointing
 	// north; app.css turns the group they are in.
 	Sweep radarPoint
 	Glow  string
 	// Blips are drawn in this order: calm first, loud last, so a security item is never under a
 	// quieter one.
-	Blips                                          []radarBlip
+	Blips                                           []radarBlip
 	Total, PRs, Issues, Needs, Security, Dependency int
 }
 
@@ -87,8 +90,9 @@ type radarSector struct {
 }
 
 type radarRing struct {
-	R     float64
-	Label string
+	// R is the ring's radius and LabelY where its label stands, just above it on the north line.
+	R, LabelY float64
+	Label     string
 }
 
 // radarBlip is one item.
@@ -107,9 +111,10 @@ type radarBlip struct {
 	URL               string
 	// Label is what a screen reader says for the link: the card is hidden until hover.
 	Label string
-	// Tag is the short text beside a loud blip: "⚠ #12" or "#12".
-	Tag  string
-	Card radarCard
+	// Tag is the short text beside a loud blip, "⚠ #12" or "#12", drawn at TagX, TagY.
+	Tag        string
+	TagX, TagY float64
+	Card       radarCard
 }
 
 // radarCard is the data block a hovered or focused blip shows in the panel.
@@ -163,8 +168,9 @@ func buildRadar(items []domain.Item, gh config.GitHub, now time.Time) radarView 
 
 	v := radarView{
 		Width: radarWidth, Height: radarHeight, CX: radarCX, CY: radarCY, R: radarR, R0: radarR0,
-		Panel: radarRect{radarPanelX, radarPanelY, radarPanelW, radarPanelH},
-		Sweep: polar(radarR, 0),
+		Panel:  radarRect{radarPanelX, radarPanelY, radarPanelW, radarPanelH},
+		Sweep:  polar(radarR, 0),
+		Leader: radarPoint{X: radarPanelX, Y: radarPanelY + 60},
 	}
 	glow := polar(radarR, -40)
 	v.Glow = "M" + coord(radarCX, radarCY) + " L" + coord(glow.X, glow.Y) +
@@ -175,7 +181,8 @@ func buildRadar(items []domain.Item, gh config.GitHub, now time.Time) radarView 
 		v.Sectors = append(v.Sectors, newRadarSector(spec, float64(i)*width, float64(i+1)*width))
 	}
 	for _, ring := range radarRingDays {
-		v.Rings = append(v.Rings, radarRing{R: round1(radarRadius(ring.days)), Label: ring.label})
+		r := round1(radarRadius(ring.days))
+		v.Rings = append(v.Rings, radarRing{R: r, LabelY: round1(radarCY - r - 4), Label: ring.label})
 	}
 
 	for _, it := range items {
@@ -278,6 +285,10 @@ func newRadarBlip(it domain.Item, gh config.GitHub, now time.Time, a0, width flo
 			" l-" + num(k) + ",-" + num(k) + "Z"
 	}
 
+	if b.Tag != "" {
+		b.TagX, b.TagY = round1(b.X+b.Ring+5), round1(b.Y-b.Ring+2)
+	}
+
 	b.Age = "age-0"
 	if b.Mark != "security" && b.Mark != "dependency" {
 		switch {
@@ -331,6 +342,11 @@ func newRadarCard(it domain.Item, mark string, need domain.Need, now time.Time) 
 		{"opened", relative(it.CreatedAt, now)},
 		{"activity", relative(it.UpdatedAt, now)},
 		{"labels", labels},
+	}
+	for i := range c.Facts {
+		if lines := wrapLines(c.Facts[i].Value, radarFactWidth, 1); len(lines) > 0 {
+			c.Facts[i].Value = lines[0]
+		}
 	}
 	c.Summary = wrapLines(it.Summary, radarSummaryWidth, 2)
 	return c

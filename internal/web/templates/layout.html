@@ -73,6 +73,7 @@
          preference says "this is where I arrive", which is a different question. */}}
     <a href="/?view=list"{{if eq .View "list"}} aria-current="page"{{end}}>List</a>
     <a href="/sites"{{if eq .View "sites"}} aria-current="page"{{end}}>Sites</a>
+    <a href="/radar"{{if eq .View "radar"}} aria-current="page"{{end}}>Radar</a>
     <a href="/contributors"{{if eq .View "contributors"}} aria-current="page"{{end}}>Contributors</a>
   </nav>
   {{/* What needs the owner first (FR-1.14), then what is open across every configured repository.

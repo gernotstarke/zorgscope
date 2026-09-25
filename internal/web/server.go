@@ -47,7 +47,7 @@ var embedded embed.FS
 // pageFiles are the page templates, each of which supplies the "content" block that layout.html
 // wraps. They are parsed one page at a time — layout plus that page — because every page defines a
 // block of the same name, so a single template set would have them overwrite each other.
-var pageFiles = []string{"login.html", "dashboard.html", "sites.html", "search.html", "contributors.html", "waiting.html"}
+var pageFiles = []string{"login.html", "dashboard.html", "sites.html", "search.html", "contributors.html", "radar.html", "waiting.html"}
 
 // fragmentGlob matches the templates that are both part of a page and answerable on their own.
 // They are parsed twice on purpose: into every page set, so that dashboard.html can compose the
@@ -317,6 +317,8 @@ func (s *Server) routes() []route {
 		// The Contributors page (FR-12.2): the same snapshot again, grouped by who opened each
 		// item — the one view that lists people rather than items.
 		{http.MethodGet, "/contributors", authSessionPage, s.handleContributors, ""},
+		// The Radar view (FR-1.15): the same snapshot once more, drawn as a radar scope.
+		{http.MethodGet, "/radar", authSessionPage, s.handleRadar, ""},
 		{http.MethodGet, "/items", authSessionFragment, s.handleItems, ""},
 		{http.MethodPost, "/refresh", authSessionFragment, s.handleRefresh, ""},
 		{http.MethodPost, "/logout", authSessionFragment, s.handleLogout, ""},

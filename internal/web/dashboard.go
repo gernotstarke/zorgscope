@@ -217,7 +217,7 @@ type headerView struct {
 
 // chromeView is what layout.html draws between the brand and the appearance control.
 type chromeView struct {
-	// View is "list", "sites", "contributors" or "search"; the switch marks the first three.
+	// View is "list", "sites", "radar", "contributors" or "search"; the switch marks all but search.
 	View string
 	// Query is the search box's text: the query on the results page, empty everywhere else —
 	// the list's own filter also uses q, and its text is not a search.
@@ -455,7 +455,7 @@ func (s *Server) headerView(snap snapshot.Snapshot) headerView {
 }
 
 // views maps a page's path to the name the switch marks.
-var views = map[string]string{"/": "list", "/sites": "sites", "/contributors": "contributors", "/search": "search"}
+var views = map[string]string{"/": "list", "/sites": "sites", "/contributors": "contributors", "/radar": "radar", "/search": "search"}
 
 // chromeFor is the top bar for the signed-in page answering r, counting what is open in snap and
 // what of it needs owner.

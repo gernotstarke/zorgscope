@@ -3,6 +3,7 @@ package web
 import (
 	"fmt"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -179,5 +180,58 @@ func TestRadarCardWrapsTheTitle(t *testing.T) {
 		if len([]rune(l)) > radarTitleWidth+1 {
 			t.Errorf("line %q longer than %d", l, radarTitleWidth)
 		}
+	}
+}
+
+// FR-1.15 AC4: every item is a blip, and every blip opens its item on GitHub in a new tab.
+func TestRadarPageDrawsEveryItemAsALink(t *testing.T) {
+	h := dashHandler(t, &fakeSource{items: []domain.Item{
+		{Kind: domain.KindPR, Repo: "o/a", Number: 1, Title: "Bump <x>", URL: "https://github.com/o/a/pull/1", Author: "dependabot", UpdatedAt: testNow},
+		{Kind: domain.KindIssue, Repo: "o/a", Number: 2, Title: "Broken", URL: "https://github.com/o/a/issues/2", Author: "amy", UpdatedAt: testNow},
+	}})
+	body := getAuthed(t, h, "/radar").Body.String()
+	if n := strings.Count(body, `<a class="blip `); n != 2 {
+		t.Errorf("%d blips, want 2", n)
+	}
+	for _, want := range []string{
+		"<title>Radar · zorgscope</title>",
+		`href="https://github.com/o/a/pull/1" target="_blank" rel="noopener noreferrer"`,
+		`href="https://github.com/o/a/issues/2" target="_blank" rel="noopener noreferrer"`,
+		`<a href="/radar" aria-current="page">Radar</a>`,
+		"Bump &lt;x&gt;", "mark-dependency",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("radar page lacks %s", want)
+		}
+	}
+	if strings.Contains(body, "Bump <x>") {
+		t.Error("a title reached the page unescaped")
+	}
+}
+
+// QS-4.4: the policy grants no 'unsafe-inline', so a style attribute would not apply — every colour,
+// delay and fade is a class.
+func TestRadarPageHasNoStyleAttribute(t *testing.T) {
+	body := getAuthed(t, dashHandler(t, &fakeSource{items: representativeItems()}), "/radar").Body.String()
+	if strings.Contains(body, " style=") {
+		t.Error("the radar page carries a style attribute")
+	}
+}
+
+// QS-2.3: the Radar page over the representative fixture stays inside its budget.
+func TestRadarPageStaysInsideItsBudget(t *testing.T) {
+	body := getAuthed(t, dashHandler(t, &fakeSource{items: representativeItems()}), "/radar").Body.String()
+	if n := len(body); n > 150*1024 {
+		t.Errorf("Radar view is %d bytes, budget is 150 kB (QS-2.3)", n)
+	} else {
+		t.Logf("Radar view is %d bytes of the 150 kB budget (QS-2.3)", n)
+	}
+}
+
+// An empty snapshot still draws the scope, and says nothing is open.
+func TestRadarPageWithNothingOpen(t *testing.T) {
+	body := getAuthed(t, dashHandler(t, &fakeSource{}), "/radar").Body.String()
+	if !strings.Contains(body, `class="radar-scope"`) || !strings.Contains(body, "Nothing open") {
+		t.Error("an empty radar should draw the scope and say nothing is open")
 	}
 }
