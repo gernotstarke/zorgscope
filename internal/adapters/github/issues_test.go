@@ -29,7 +29,9 @@ func TestFetchReturnsIssuesAndPRs(t *testing.T) {
 		Token: "x", BaseURL: srv.URL + "/graphql", Repos: []string{"org/repo"},
 	}, srv.Client())
 
-	items, err := f.Fetch(context.Background())
+	fetched, err := f.Fetch(context.Background())
+
+	items := fetched.Items
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -79,7 +81,9 @@ func TestPullRequestDraftFlagIsFetched(t *testing.T) {
 		Token: "x", BaseURL: srv.URL + "/graphql", Repos: []string{"org/repo"},
 	}, srv.Client())
 
-	items, err := f.Fetch(context.Background())
+	fetched, err := f.Fetch(context.Background())
+
+	items := fetched.Items
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -185,7 +189,8 @@ func TestPullRequestReviewRequestsAreFetched(t *testing.T) {
 	f := github.NewIssueFetcher(github.Config{
 		Token: "x", BaseURL: srv.URL + "/graphql", Repos: []string{"org/repo"},
 	}, srv.Client())
-	items, err := f.Fetch(context.Background())
+	fetched, err := f.Fetch(context.Background())
+	items := fetched.Items
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -204,7 +209,8 @@ func TestFetchFollowsPagination(t *testing.T) {
 	defer srv.Close()
 
 	f := github.NewIssueFetcher(github.Config{Token: "x", BaseURL: srv.URL + "/graphql", Repos: []string{"org/paged"}}, srv.Client())
-	items, err := f.Fetch(context.Background())
+	fetched, err := f.Fetch(context.Background())
+	items := fetched.Items
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -239,7 +245,8 @@ func TestFetchReportsFailureButKeepsGoodRepos(t *testing.T) {
 	defer srv.Close()
 
 	f := github.NewIssueFetcher(github.Config{Token: "x", BaseURL: srv.URL + "/graphql", Repos: []string{"org/repo", "org/bad"}}, srv.Client())
-	items, err := f.Fetch(context.Background())
+	fetched, err := f.Fetch(context.Background())
+	items := fetched.Items
 
 	if err == nil {
 		t.Fatal("want an error naming the failing repository")
@@ -324,7 +331,8 @@ func fetchWithTimeout(t *testing.T, f *github.IssueFetcher, timeout time.Duratio
 	}
 	done := make(chan result, 1)
 	go func() {
-		items, err := f.Fetch(context.Background())
+		fetched, err := f.Fetch(context.Background())
+		items := fetched.Items
 		done <- result{items: items, err: err}
 	}()
 
@@ -403,7 +411,9 @@ func TestIssueBodyTextReachesTheItem(t *testing.T) {
 		Token: "x", BaseURL: srv.URL + "/graphql", Repos: []string{"org/repo"},
 	}, srv.Client())
 
-	items, err := f.Fetch(context.Background())
+	fetched, err := f.Fetch(context.Background())
+
+	items := fetched.Items
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -451,7 +461,9 @@ func TestFetchCarriesAdvisories(t *testing.T) {
 		Token: "x", BaseURL: srv.URL + "/graphql", Repos: []string{"org/deps"},
 	}, srv.Client())
 
-	items, err := f.Fetch(context.Background())
+	fetched, err := f.Fetch(context.Background())
+
+	items := fetched.Items
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -523,7 +535,9 @@ func TestFetchKeepsConfigurationOrder(t *testing.T) {
 	repos := []string{"org/one", "org/two", "org/three", "org/four"}
 	f := github.NewIssueFetcher(github.Config{Token: "x", BaseURL: srv.URL, Repos: repos}, srv.Client())
 
-	items, err := f.Fetch(context.Background())
+	fetched, err := f.Fetch(context.Background())
+
+	items := fetched.Items
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -560,7 +574,9 @@ func TestFetchCollectsEveryErrorAndKeepsTheGoodItems(t *testing.T) {
 	repos := []string{"org/good", "org/broken", "not-a-repo", "org/fine"}
 	f := github.NewIssueFetcher(github.Config{Token: "x", BaseURL: srv.URL, Repos: repos}, srv.Client())
 
-	items, err := f.Fetch(context.Background())
+	fetched, err := f.Fetch(context.Background())
+
+	items := fetched.Items
 	if err == nil {
 		t.Fatal("want an error naming the broken repository and the malformed name")
 	}
@@ -621,7 +637,8 @@ func TestFetchCarriesLabelsInGitHubsOrder(t *testing.T) {
 	f := github.NewIssueFetcher(github.Config{
 		Token: "x", BaseURL: srv.URL + "/graphql", Repos: []string{"org/repo"},
 	}, srv.Client())
-	items, err := f.Fetch(context.Background())
+	fetched, err := f.Fetch(context.Background())
+	items := fetched.Items
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}

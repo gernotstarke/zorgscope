@@ -46,15 +46,16 @@ type SystemClock struct{}
 // Now returns the current time in UTC.
 func (SystemClock) Now() time.Time { return time.Now().UTC() }
 
-// Source is where the item list comes from. One call returns every open issue and pull request
-// of every configured repository; a partial failure returns the items that could be fetched
-// together with a non-nil error, never one without the other.
+// Source is where the item list comes from. One call returns every open issue, pull request and
+// Dependabot alert of every configured repository, and per repository what could be said about its
+// alerts (FR-1.16); a partial failure returns what could be fetched together with a non-nil error,
+// never one without the other.
 type Source interface {
-	Fetch(ctx context.Context) ([]domain.Item, error)
+	Fetch(ctx context.Context) (domain.Fetched, error)
 }
 
 // SourceFunc adapts a function to Source.
-type SourceFunc func(ctx context.Context) ([]domain.Item, error)
+type SourceFunc func(ctx context.Context) (domain.Fetched, error)
 
 // Fetch calls f.
-func (f SourceFunc) Fetch(ctx context.Context) ([]domain.Item, error) { return f(ctx) }
+func (f SourceFunc) Fetch(ctx context.Context) (domain.Fetched, error) { return f(ctx) }

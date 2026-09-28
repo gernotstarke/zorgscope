@@ -1,0 +1,20 @@
+{
+  "issues": [],
+  "pullRequests": [
+    {
+      "number": 1,
+      "title": "Fix a typo",
+      "url": "https://github.com/org/alerts-scope/pull/1",
+      "author": {
+        "login": "amy"
+      },
+      "createdAt": "2026-09-26T08:00:00Z",
+      "updatedAt": "2026-09-26T09:00:00Z",
+      "state": "OPEN"
+    }
+  ],
+  "alerts": {
+    "enabled": true,
+    "refuse": "query"
+  }
+}

@@ -60,12 +60,12 @@ func TestLoggingSourceLogsFailuresRedacted(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
 			log := slog.New(slog.NewJSONHandler(&buf, nil))
-			inner := ports.SourceFunc(func(context.Context) ([]domain.Item, error) { return items, tc.err })
+			inner := ports.SourceFunc(func(context.Context) (domain.Fetched, error) { return domain.Fetched{Items: items}, tc.err })
 
 			got, err := loggingSource(inner, log, config.Secrets{GitHubToken: secret}).Fetch(context.Background())
 
-			if len(got) != len(items) || !errors.Is(err, tc.err) {
-				t.Errorf("Fetch = %d items, %v; want the source's %d items, %v", len(got), err, len(items), tc.err)
+			if len(got.Items) != len(items) || !errors.Is(err, tc.err) {
+				t.Errorf("Fetch = %d items, %v; want the source's %d items, %v", len(got.Items), err, len(items), tc.err)
 			}
 			out := buf.String()
 			if !tc.wantLog {

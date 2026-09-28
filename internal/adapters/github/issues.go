@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unicode/utf8"
 
 	"github.com/shurcooL/githubv4"
@@ -44,6 +45,11 @@ type Config struct {
 type IssueFetcher struct {
 	client *githubv4.Client
 	repos  []string
+	// alertsRefused is set once GitHub has refused the alert fields while answering the same page
+	// without them (ADR-0015). From then on this process stops asking: a refused token costs one
+	// extra request per repository once, not on every fetch. A restart — on this machine every
+	// wake from zero — asks again.
+	alertsRefused atomic.Bool
 }
 
 // NewIssueFetcher builds an IssueFetcher from cfg. hc supplies the transport and any test-only
@@ -82,10 +88,11 @@ func NewIssueFetcher(cfg Config, hc *http.Client) *IssueFetcher {
 // writes into its own slot, and the slots are read out in order once every goroutine has finished,
 // so the result is the one the sequential loop produced — repositories in configuration order, a
 // repository's issues before its pull requests — whatever order the upstream answered in.
-func (f *IssueFetcher) Fetch(ctx context.Context) ([]domain.Item, error) {
+func (f *IssueFetcher) Fetch(ctx context.Context) (domain.Fetched, error) {
 	type slot struct {
-		items []domain.Item
-		err   error
+		items    []domain.Item
+		coverage domain.Coverage
+		err      error
 	}
 	// Two slots per repository: issues at 2i, pull requests at 2i+1.
 	slots := make([]slot, 2*len(f.repos))
@@ -107,7 +114,7 @@ func (f *IssueFetcher) Fetch(ctx context.Context) ([]domain.Item, error) {
 		}(&slots[2*i])
 		go func(s *slot) {
 			defer wg.Done()
-			s.items, s.err = f.fetchPullRequests(ctx, owner, name)
+			s.items, s.coverage, s.err = f.fetchPullRequests(ctx, owner, name)
 			if s.err != nil {
 				s.err = fmt.Errorf("github: fetching pull requests for %s: %w", repo, s.err)
 			}
@@ -115,15 +122,18 @@ func (f *IssueFetcher) Fetch(ctx context.Context) ([]domain.Item, error) {
 	}
 	wg.Wait()
 
-	var items []domain.Item
+	got := domain.Fetched{Coverage: make(map[string]domain.Coverage, len(f.repos))}
 	var errs []error
-	for _, s := range slots {
-		items = append(items, s.items...)
+	for i, s := range slots {
+		got.Items = append(got.Items, s.items...)
+		if s.coverage != domain.CoverageUnknown {
+			got.Coverage[f.repos[i/2]] = s.coverage
+		}
 		if s.err != nil {
 			errs = append(errs, s.err)
 		}
 	}
-	return items, errors.Join(errs...)
+	return got, errors.Join(errs...)
 }
 
 // ghIssueConnection is one page of the issues connection: a page of nodes plus pageInfo.
@@ -154,6 +164,60 @@ type pullRequestsQuery struct {
 	Repository struct {
 		PullRequests ghPRConnection `graphql:"pullRequests(states: OPEN, first: 100, after: $after, orderBy: {field: CREATED_AT, direction: ASC})"`
 	} `graphql:"repository(owner: $owner, name: $name)"`
+}
+
+// pullRequestsFirstPageQuery is pullRequestsQuery's first page, which also asks for the
+// repository's Dependabot alerts (FR-1.16, ADR-0015). Nested in the query already made, they cost
+// GitHub points but no request (QS-3.5). It is a type of its own because shurcooL/graphql builds
+// the query text from the struct, so a field cannot be left out per call; later pages use
+// pullRequestsQuery and do not ask for the alerts again.
+type pullRequestsFirstPageQuery struct {
+	Repository struct {
+		PullRequests                  ghPRConnection `graphql:"pullRequests(states: OPEN, first: 100, after: $after, orderBy: {field: CREATED_AT, direction: ASC})"`
+		HasVulnerabilityAlertsEnabled githubv4.Boolean
+		VulnerabilityAlerts           ghAlertConnection `graphql:"vulnerabilityAlerts(states: OPEN, first: 100)"`
+	} `graphql:"repository(owner: $owner, name: $name)"`
+}
+
+// ghAlertConnection is the open Dependabot alerts of one repository. At most 100 are read; no
+// arc42 repository has had more than one open at a time, so paginating would be code for a case
+// that does not occur.
+type ghAlertConnection struct {
+	Nodes []ghAlertNode
+}
+
+// ghAlertNode is one Dependabot alert, with what the page shows of it.
+type ghAlertNode struct {
+	Number                 githubv4.Int
+	CreatedAt              githubv4.DateTime
+	VulnerableManifestPath githubv4.String
+	VulnerableRequirements githubv4.String
+	SecurityAdvisory       struct {
+		Summary     githubv4.String
+		Identifiers []struct {
+			Type  githubv4.String
+			Value githubv4.String
+		}
+	}
+	SecurityVulnerability struct {
+		Severity githubv4.String
+		Package  struct {
+			Name      githubv4.String
+			Ecosystem githubv4.String
+		}
+		// FirstPatchedVersion is null while no fixed release exists.
+		FirstPatchedVersion *struct {
+			Identifier githubv4.String
+		}
+	}
+	// DependabotUpdate is null unless Dependabot tried to open a fix; its pullRequest is null
+	// unless it did.
+	DependabotUpdate *struct {
+		PullRequest *struct {
+			Number githubv4.Int
+			State  githubv4.String
+		}
+	}
 }
 
 // ghIssueNode is one issue node.
@@ -270,39 +334,84 @@ func (f *IssueFetcher) fetchIssues(ctx context.Context, owner, name string) ([]d
 
 // fetchPullRequests fetches every open pull request for owner/name, following
 // pageInfo.hasNextPage with the after cursor until exhausted, bounded by nextAfter's
-// forward-progress check and maxPages.
-func (f *IssueFetcher) fetchPullRequests(ctx context.Context, owner, name string) ([]domain.Item, error) {
+// forward-progress check and maxPages. Its first page also brings the repository's Dependabot
+// alerts, which follow the pull requests in the result, and what could be said about them.
+func (f *IssueFetcher) fetchPullRequests(ctx context.Context, owner, name string) ([]domain.Item, domain.Coverage, error) {
+	repo := owner + "/" + name
+	conn, alerts, coverage, err := f.firstPullRequestPage(ctx, owner, name)
+	if err != nil {
+		return nil, domain.CoverageUnknown, err
+	}
+
 	var items []domain.Item
 	var after *githubv4.String
-	repo := owner + "/" + name
-
-	for page := 0; ; page++ {
-		if page >= maxPages {
-			return items, fmt.Errorf("github: %s: pull request pagination did not stop after %d pages", repo, maxPages)
-		}
-
-		var q pullRequestsQuery
-		vars := map[string]interface{}{
-			"owner": githubv4.String(owner),
-			"name":  githubv4.String(name),
-			"after": after,
-		}
-		if err := f.client.Query(ctx, &q, vars); err != nil {
-			return items, err
-		}
-
-		for _, n := range q.Repository.PullRequests.Nodes {
+	for page := 1; ; page++ {
+		for _, n := range conn.Nodes {
 			items = append(items, toPRItem(owner, name, n))
 		}
 
-		next, done, err := nextAfter(after, q.Repository.PullRequests.PageInfo, repo)
+		next, done, err := nextAfter(after, conn.PageInfo, repo)
 		if err != nil {
-			return items, err
+			return append(items, alerts...), coverage, err
 		}
 		if done {
-			return items, nil
+			return append(items, alerts...), coverage, nil
+		}
+		if page >= maxPages {
+			return append(items, alerts...), coverage,
+				fmt.Errorf("github: %s: pull request pagination did not stop after %d pages", repo, maxPages)
 		}
 		after = next
+
+		var q pullRequestsQuery
+		if err := f.client.Query(ctx, &q, prVars(owner, name, after)); err != nil {
+			return append(items, alerts...), coverage, err
+		}
+		conn = q.Repository.PullRequests
+	}
+}
+
+// firstPullRequestPage fetches the first page of owner/name's open pull requests together with its
+// Dependabot alerts, and reports the alerts' coverage (FR-1.16, ADR-0015).
+//
+// Asking for alerts must never cost the repository its pull requests (QS-1.4). GitHub refuses them
+// in two shapes — the whole query with no data when the token lacks the scope, or only the alert
+// fields when its owner may not see them — and shurcooL/graphql hands back only the messages, whose
+// wording is GitHub's to change. So neither shape is recognised by its text: any error on the
+// page that asks for alerts is followed by the same page without them. If that one is answered,
+// the alerts were what GitHub refused, and the process stops asking (alertsRefused). If it fails
+// too, it is the ordinary failure of the repository it would have been without alerts.
+func (f *IssueFetcher) firstPullRequestPage(ctx context.Context, owner, name string) (ghPRConnection, []domain.Item, domain.Coverage, error) {
+	vars := prVars(owner, name, nil)
+	if !f.alertsRefused.Load() {
+		var q pullRequestsFirstPageQuery
+		if err := f.client.Query(ctx, &q, vars); err == nil {
+			r := q.Repository
+			if !bool(r.HasVulnerabilityAlertsEnabled) {
+				return r.PullRequests, nil, domain.CoverageOff, nil
+			}
+			alerts := make([]domain.Item, 0, len(r.VulnerabilityAlerts.Nodes))
+			for _, n := range r.VulnerabilityAlerts.Nodes {
+				alerts = append(alerts, toAlertItem(owner, name, n))
+			}
+			return r.PullRequests, alerts, domain.CoverageOn, nil
+		}
+	}
+
+	var q pullRequestsQuery
+	if err := f.client.Query(ctx, &q, vars); err != nil {
+		return ghPRConnection{}, nil, domain.CoverageUnknown, err
+	}
+	f.alertsRefused.Store(true)
+	return q.Repository.PullRequests, nil, domain.CoverageUnavailable, nil
+}
+
+// prVars are the variables of both pull request queries.
+func prVars(owner, name string, after *githubv4.String) map[string]interface{} {
+	return map[string]interface{}{
+		"owner": githubv4.String(owner),
+		"name":  githubv4.String(name),
+		"after": after,
 	}
 }
 
@@ -382,6 +491,80 @@ func toPRItem(owner, name string, n ghPRNode) domain.Item {
 		}
 	}
 	return it
+}
+
+// dependabotLogin is who every alert is by: GitHub's Dependabot raised it, nobody opened it.
+const dependabotLogin = "dependabot"
+
+// toAlertItem maps one Dependabot alert to a domain.Item of KindAlert (FR-1.16).
+//
+// GraphQL offers no URL for an alert, so the link is built from its number, the address GitHub
+// itself uses for it. An alert has no update time either: it is raised, and then it is open until
+// it is fixed or dismissed, so its creation time stands for both — it is what the list sorts by and
+// what the radar measures.
+func toAlertItem(owner, name string, n ghAlertNode) domain.Item {
+	v := n.SecurityVulnerability
+	facts := &domain.AlertFacts{
+		Severity:   domain.ParseSeverity(string(v.Severity)),
+		Package:    string(v.Package.Name),
+		Ecosystem:  string(v.Package.Ecosystem),
+		Manifest:   string(n.VulnerableManifestPath),
+		Vulnerable: string(n.VulnerableRequirements),
+	}
+	if v.FirstPatchedVersion != nil {
+		facts.PatchedIn = string(v.FirstPatchedVersion.Identifier)
+	}
+	if u := n.DependabotUpdate; u != nil && u.PullRequest != nil && strings.EqualFold(string(u.PullRequest.State), "OPEN") {
+		facts.FixPR = int(u.PullRequest.Number)
+	}
+
+	// GHSA first, as GitHub names its own advisories, then CVE; normalised as a cited identifier is.
+	var ghsa, cve []string
+	for _, id := range n.SecurityAdvisory.Identifiers {
+		if strings.EqualFold(string(id.Type), "GHSA") {
+			ghsa = append(ghsa, string(id.Value))
+		} else {
+			cve = append(cve, string(id.Value))
+		}
+	}
+
+	created := n.CreatedAt.UTC()
+	number := int(n.Number)
+	return domain.Item{
+		Kind:       domain.KindAlert,
+		Repo:       owner + "/" + name,
+		Number:     number,
+		Title:      string(n.SecurityAdvisory.Summary),
+		Summary:    summarise(alertSummary(facts)),
+		Advisories: advisoryIDs(strings.Join(ghsa, " "), strings.Join(cve, " ")),
+		URL:        fmt.Sprintf("https://github.com/%s/%s/security/dependabot/%d", owner, name, number),
+		Author:     dependabotLogin,
+		Alert:      facts,
+		State:      "OPEN",
+		CreatedAt:  created,
+		UpdatedAt:  created,
+	}
+}
+
+// alertSummary is the line the page shows under an alert's title: the package, the version the
+// manifest pins and the one that fixes it, and the manifest — "rubyzip 2.3.2 → 3.4.0 ·
+// Gemfile.lock". A requirement that pins one version ("= 2.3.2") is shown as that version; any
+// other is shown as GitHub states it.
+func alertSummary(a *domain.AlertFacts) string {
+	vulnerable := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(a.Vulnerable), "="))
+	line := a.Package
+	if vulnerable != "" {
+		line += " " + vulnerable
+	}
+	if a.PatchedIn != "" {
+		line += " → " + a.PatchedIn
+	} else {
+		line += " · no patched version"
+	}
+	if a.Manifest != "" {
+		line += " · " + a.Manifest
+	}
+	return line
 }
 
 // labelNames is the names of a label connection, in GitHub's order; nil for none, so an item

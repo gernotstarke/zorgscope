@@ -85,12 +85,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 // lives here rather than in internal/snapshot because only main holds both the logger and the
 // secrets, and the error text is scrubbed of the latter before it is written (QS-4.3).
 func loggingSource(src ports.Source, log *slog.Logger, secrets config.Secrets) ports.Source {
-	return ports.SourceFunc(func(ctx context.Context) ([]domain.Item, error) {
-		items, err := src.Fetch(ctx)
+	return ports.SourceFunc(func(ctx context.Context) (domain.Fetched, error) {
+		got, err := src.Fetch(ctx)
 		if err != nil {
-			log.Warn("fetch failed", "err", web.Redact(secrets, err.Error()), "items", len(items))
+			log.Warn("fetch failed", "err", web.Redact(secrets, err.Error()), "items", len(got.Items))
 		}
-		return items, err
+		return got, err
 	})
 }
 

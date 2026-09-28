@@ -19,22 +19,23 @@ func (c *fakeClock) Now() time.Time { return c.t }
 
 // countingSource counts calls and answers with whatever items/err are set at call time.
 type countingSource struct {
-	mu    sync.Mutex
-	calls int
-	items []domain.Item
-	err   error
-	block chan struct{} // when non-nil, Fetch waits on it before returning
+	mu       sync.Mutex
+	calls    int
+	items    []domain.Item
+	coverage map[string]domain.Coverage
+	err      error
+	block    chan struct{} // when non-nil, Fetch waits on it before returning
 }
 
-func (s *countingSource) Fetch(_ context.Context) ([]domain.Item, error) {
+func (s *countingSource) Fetch(_ context.Context) (domain.Fetched, error) {
 	s.mu.Lock()
 	s.calls++
-	items, err, block := s.items, s.err, s.block
+	items, cov, err, block := s.items, s.coverage, s.err, s.block
 	s.mu.Unlock()
 	if block != nil {
 		<-block
 	}
-	return items, err
+	return domain.Fetched{Items: items, Coverage: cov}, err
 }
 
 func (s *countingSource) count() int { s.mu.Lock(); defer s.mu.Unlock(); return s.calls }
@@ -178,12 +179,12 @@ type panicSource struct {
 	panics bool
 }
 
-func (s *panicSource) Fetch(_ context.Context) ([]domain.Item, error) {
+func (s *panicSource) Fetch(_ context.Context) (domain.Fetched, error) {
 	s.calls++
 	if s.panics {
 		panic("boom")
 	}
-	return s.items, nil
+	return domain.Fetched{Items: s.items}, nil
 }
 
 // I1: a fetch that panics is a bug in a Source, never a deliberate error, but it must not take the
@@ -286,17 +287,17 @@ type ctxSource struct {
 	items            []domain.Item
 }
 
-func (s *ctxSource) Fetch(ctx context.Context) ([]domain.Item, error) {
+func (s *ctxSource) Fetch(ctx context.Context) (domain.Fetched, error) {
 	close(s.started)
 	select {
 	case <-s.release:
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return domain.Fetched{}, ctx.Err()
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return domain.Fetched{}, err
 	}
-	return s.items, nil
+	return domain.Fetched{Items: s.items}, nil
 }
 
 // The fetch is detached from the request that started it: the visitor who happened to trigger it
@@ -357,6 +358,37 @@ func TestAPartialFetchKeepsTheFailingRepositorysItemsAndTheOldFetchedAt(t *testi
 	// The previous slice is shared with renders that may still be running; it must be untouched.
 	if good.Items[0].Title != "a/b before" || len(good.Items) != 3 {
 		t.Errorf("the previous snapshot's slice was mutated: %+v", good.Items)
+	}
+}
+
+// FR-1.16 AC5: coverage is merged like items. A repository the partial fetch said nothing about keeps
+// what the fetch before said; one it did report on takes the new word.
+func TestAPartialFetchKeepsTheFailingRepositorysCoverage(t *testing.T) {
+	clock := &fakeClock{t: time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)}
+	src := &countingSource{
+		items:    []domain.Item{{Repo: "a/b", Number: 1}, {Repo: "c/d", Number: 2}},
+		coverage: map[string]domain.Coverage{"a/b": domain.CoverageOn, "c/d": domain.CoverageOff},
+	}
+	c := snapshot.New(src, time.Minute, clock)
+	good := settled(t, c)
+	if good.Coverage["c/d"] != domain.CoverageOff {
+		t.Fatalf("a clean fetch's coverage did not land: %v", good.Coverage)
+	}
+
+	clock.t = clock.t.Add(2 * time.Minute)
+	src.mu.Lock()
+	src.items = []domain.Item{{Repo: "a/b", Number: 1}}
+	src.coverage = map[string]domain.Coverage{"a/b": domain.CoverageUnavailable}
+	src.err = errors.New("c/d: unexpected status 502")
+	src.mu.Unlock()
+	s := settled(t, c)
+
+	want := map[string]domain.Coverage{"a/b": domain.CoverageUnavailable, "c/d": domain.CoverageOff}
+	if len(s.Coverage) != len(want) || s.Coverage["a/b"] != want["a/b"] || s.Coverage["c/d"] != want["c/d"] {
+		t.Errorf("coverage = %v, want %v", s.Coverage, want)
+	}
+	if good.Coverage["a/b"] != domain.CoverageOn {
+		t.Errorf("the previous snapshot's map was mutated: %v", good.Coverage)
 	}
 }
 

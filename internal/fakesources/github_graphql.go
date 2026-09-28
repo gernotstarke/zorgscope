@@ -37,13 +37,33 @@ type graphqlRequest struct {
 // key with no corresponding struct field is a decode error, not something ignored. A zero-value
 // (non-pointer) ghConnection is never "empty" to encoding/json, so a value field would always be
 // serialised even if the caller never populated it.
+//
+// The alert fields follow the same rule (FR-1.16): present only when the query names
+// vulnerabilityAlerts. Errors carries GitHub's refusal of them, which arrives beside whatever data
+// GitHub did answer — or with no data at all.
 type graphqlResponse struct {
-	Data struct {
-		Repository struct {
-			Issues       *ghConnection `json:"issues,omitempty"`
-			PullRequests *ghConnection `json:"pullRequests,omitempty"`
-		} `json:"repository"`
-	} `json:"data"`
+	Data   *graphqlData   `json:"data"`
+	Errors []graphqlError `json:"errors,omitempty"`
+}
+
+// graphqlData is the data object: the one repository asked about.
+type graphqlData struct {
+	Repository struct {
+		Issues                        *ghConnection      `json:"issues,omitempty"`
+		PullRequests                  *ghConnection      `json:"pullRequests,omitempty"`
+		HasVulnerabilityAlertsEnabled *bool              `json:"hasVulnerabilityAlertsEnabled,omitempty"`
+		VulnerabilityAlerts           *ghAlertConnection `json:"vulnerabilityAlerts,omitempty"`
+	} `json:"repository"`
+}
+
+// ghAlertConnection is the vulnerabilityAlerts connection: the adapter reads its nodes only.
+type ghAlertConnection struct {
+	Nodes []ghAlert `json:"nodes"`
+}
+
+// graphqlError is one entry of a GraphQL response's errors array.
+type graphqlError struct {
+	Message string `json:"message"`
 }
 
 // ghConnection is one paginated GraphQL connection: a page of nodes plus pageInfo.
@@ -88,8 +108,10 @@ func (s *server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 	fx := s.githubRepos[repo] // nil (zero value) for an unconfigured repo: served as empty.
 
 	wantIssues, wantPRs := connectionsRequested(req.Query)
+	wantAlerts := strings.Contains(req.Query, "vulnerabilityAlerts")
 
 	var resp graphqlResponse
+	resp.Data = &graphqlData{}
 	if wantIssues {
 		c := paginateOrEmpty(fx, req.Variables.After, true)
 		resp.Data.Repository.Issues = &c
@@ -97,6 +119,30 @@ func (s *server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 	if wantPRs {
 		c := paginateOrEmpty(fx, req.Variables.After, false)
 		resp.Data.Repository.PullRequests = &c
+	}
+	if wantAlerts {
+		var alerts ghAlertsFixture
+		if fx != nil {
+			alerts = fx.Alerts
+		}
+		switch alerts.Refuse {
+		case "query":
+			// A token without the scope: GitHub refuses the whole query and answers no data.
+			resp.Data = nil
+			resp.Errors = []graphqlError{{Message: "Your token has not been granted the required scopes to execute this query."}}
+		case "field":
+			// A token whose owner may not see the alerts: the rest is answered, the alert fields
+			// are not.
+			resp.Errors = []graphqlError{{Message: "Resource not accessible by integration"}}
+		default:
+			enabled := alerts.Enabled
+			nodes := alerts.Nodes
+			if !enabled || nodes == nil {
+				nodes = []ghAlert{}
+			}
+			resp.Data.Repository.HasVulnerabilityAlertsEnabled = &enabled
+			resp.Data.Repository.VulnerabilityAlerts = &ghAlertConnection{Nodes: nodes}
+		}
 	}
 
 	writeJSON(w, http.StatusOK, resp)

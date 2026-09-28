@@ -1,0 +1,85 @@
+{
+  "issues": [],
+  "pullRequests": [
+    {
+      "number": 30,
+      "title": "Bump rubyzip from 2.3.2 to 3.4.0",
+      "url": "https://github.com/org/alerts/pull/30",
+      "author": {
+        "login": "dependabot"
+      },
+      "createdAt": "2026-09-26T08:00:00Z",
+      "updatedAt": "2026-09-26T09:00:00Z",
+      "state": "OPEN",
+      "bodyText": "Bumps rubyzip from 2.3.2 to 3.4.0. Fixes GHSA-47m2-wp7j-p9vc."
+    }
+  ],
+  "alerts": {
+    "enabled": true,
+    "nodes": [
+      {
+        "number": 62,
+        "createdAt": "2026-09-26T06:24:52Z",
+        "vulnerableManifestPath": "Gemfile.lock",
+        "vulnerableRequirements": "= 2.3.2",
+        "securityAdvisory": {
+          "summary": "rubyzip path traversal vulnerability",
+          "identifiers": [
+            {
+              "type": "GHSA",
+              "value": "GHSA-47M2-WP7J-P9VC"
+            },
+            {
+              "type": "CVE",
+              "value": "cve-2026-85396"
+            }
+          ]
+        },
+        "securityVulnerability": {
+          "severity": "HIGH",
+          "package": {
+            "name": "rubyzip",
+            "ecosystem": "RUBYGEMS"
+          },
+          "firstPatchedVersion": {
+            "identifier": "3.4.0"
+          }
+        },
+        "dependabotUpdate": {
+          "pullRequest": {
+            "number": 30,
+            "state": "OPEN"
+          }
+        }
+      },
+      {
+        "number": 64,
+        "createdAt": "2026-08-09T09:24:57Z",
+        "vulnerableManifestPath": "Gemfile.lock",
+        "vulnerableRequirements": "= 2.20.0",
+        "securityAdvisory": {
+          "summary": "Ruby JSON: JSON::ResumableParser#partial_value dereferences a freed input buffer",
+          "identifiers": [
+            {
+              "type": "GHSA",
+              "value": "GHSA-9hj4-r449-hfvc"
+            },
+            {
+              "type": "CVE",
+              "value": "CVE-2026-71847"
+            }
+          ]
+        },
+        "securityVulnerability": {
+          "severity": "LOW",
+          "package": {
+            "name": "json",
+            "ecosystem": "RUBYGEMS"
+          },
+          "firstPatchedVersion": null
+        },
+        "dependabotUpdate": null
+      }
+    ]
+  }
+}

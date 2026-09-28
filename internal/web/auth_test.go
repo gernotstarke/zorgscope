@@ -779,11 +779,11 @@ type fakeSource struct {
 	calls int
 }
 
-func (f *fakeSource) Fetch(context.Context) ([]domain.Item, error) {
+func (f *fakeSource) Fetch(context.Context) (domain.Fetched, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
-	return f.items, f.err
+	return domain.Fetched{Items: f.items}, f.err
 }
 
 // CallCount returns the number of times Fetch has been called so far.

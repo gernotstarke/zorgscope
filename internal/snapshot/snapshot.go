@@ -34,7 +34,11 @@ import (
 // Fetching reports that a fetch is in flight: everything else in the snapshot is what was known
 // before it started. A page that would rather wait than show that (FR-1.9) reads this field.
 type Snapshot struct {
-	Items     []domain.Item
+	Items []domain.Item
+	// Coverage is, per repository, what the fetch could say about its Dependabot alerts (FR-1.16
+	// AC5). It is merged like Items: a repository a partial fetch said nothing about keeps what the
+	// fetch before said.
+	Coverage  map[string]domain.Coverage
 	FetchedAt time.Time // zero until a fetch has returned items
 	Err       error     // the most recent fetch error, nil once a fetch succeeds cleanly
 	ErrAt     time.Time // when Err was recorded
@@ -99,7 +103,7 @@ func (c *Cache) Get(ctx context.Context) Snapshot {
 	// failure.
 	go func() {
 		defer cancel()
-		var items []domain.Item
+		var got domain.Fetched
 		var err error
 		func() {
 			defer func() {
@@ -107,9 +111,9 @@ func (c *Cache) Get(ctx context.Context) Snapshot {
 					err = fmt.Errorf("snapshot: the fetch panicked: %v", p)
 				}
 			}()
-			items, err = c.src.Fetch(fetchCtx)
+			got, err = c.src.Fetch(fetchCtx)
 		}()
-		c.land(now, items, err)
+		c.land(now, got, err)
 	}()
 	return c.fetching()
 }
@@ -140,23 +144,25 @@ func (c *Cache) due(now time.Time) bool {
 
 // land records the result of a fetch that began at began. A failed fetch never discards the
 // previous items.
-func (c *Cache) land(began time.Time, items []domain.Item, err error) {
+func (c *Cache) land(began time.Time, got domain.Fetched, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	c.inflight = false
 	c.stale = false
+	items := got.Items
 	switch {
 	case err == nil:
-		c.cur.Items, c.cur.FetchedAt = items, began
-	case items == nil:
+		c.cur.Items, c.cur.Coverage, c.cur.FetchedAt = items, got.Coverage, began
+	case items == nil && len(got.Coverage) == 0:
 		// Nothing fetched at all: the previous snapshot stands as it was.
 	case c.cur.FetchedAt.IsZero():
 		// A partial first fetch has no older list to fill in from.
-		c.cur.Items, c.cur.FetchedAt = items, began
+		c.cur.Items, c.cur.Coverage, c.cur.FetchedAt = items, got.Coverage, began
 	default:
 		// A partial fetch: fill in the repositories that failed, and leave FetchedAt alone.
 		c.cur.Items = mergePartial(c.cur.Items, items)
+		c.cur.Coverage = mergeCoverage(c.cur.Coverage, got.Coverage)
 	}
 	if err != nil {
 		c.cur.Err = err
@@ -188,6 +194,20 @@ func mergePartial(prev, fresh []domain.Item) []domain.Item {
 		if !fetched[it.Repo] {
 			out = append(out, it)
 		}
+	}
+	return out
+}
+
+// mergeCoverage is mergePartial for coverage: every fresh entry, plus the previous entry of each
+// repository the fresh result says nothing about. Like mergePartial it writes into neither
+// argument.
+func mergeCoverage(prev, fresh map[string]domain.Coverage) map[string]domain.Coverage {
+	out := make(map[string]domain.Coverage, len(prev)+len(fresh))
+	for repo, c := range prev {
+		out[repo] = c
+	}
+	for repo, c := range fresh {
+		out[repo] = c
 	}
 	return out
 }

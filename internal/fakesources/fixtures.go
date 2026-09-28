@@ -78,6 +78,51 @@ type ghLabel struct {
 type ghRepoFixture struct {
 	Issues       []ghIssue `json:"issues"`
 	PullRequests []ghIssue `json:"pullRequests"`
+	// Alerts is the repository's Dependabot alerts (FR-1.16). A fixture without the key has alerts
+	// switched off, as most repositories on GitHub do by default.
+	Alerts ghAlertsFixture `json:"alerts"`
+}
+
+// ghAlertsFixture is what a repository says about its Dependabot alerts, and how it refuses to.
+type ghAlertsFixture struct {
+	Enabled bool      `json:"enabled"`
+	Nodes   []ghAlert `json:"nodes"`
+	// Refuse imitates GitHub declining to answer: "field" answers the pull requests but not the
+	// alert fields, with an error — a token whose owner cannot see the alerts; "query" answers
+	// nothing at all, with an error — a token without the scope. "" answers.
+	Refuse string `json:"refuse"`
+}
+
+// ghAlert is one Dependabot alert, shaped exactly as the adapter's query asks for it: every key
+// present, the nullable objects as null rather than absent.
+type ghAlert struct {
+	Number                 int    `json:"number"`
+	CreatedAt              string `json:"createdAt"`
+	VulnerableManifestPath string `json:"vulnerableManifestPath"`
+	VulnerableRequirements string `json:"vulnerableRequirements"`
+	SecurityAdvisory       struct {
+		Summary     string `json:"summary"`
+		Identifiers []struct {
+			Type  string `json:"type"`
+			Value string `json:"value"`
+		} `json:"identifiers"`
+	} `json:"securityAdvisory"`
+	SecurityVulnerability struct {
+		Severity string `json:"severity"`
+		Package  struct {
+			Name      string `json:"name"`
+			Ecosystem string `json:"ecosystem"`
+		} `json:"package"`
+		FirstPatchedVersion *struct {
+			Identifier string `json:"identifier"`
+		} `json:"firstPatchedVersion"`
+	} `json:"securityVulnerability"`
+	DependabotUpdate *struct {
+		PullRequest *struct {
+			Number int    `json:"number"`
+			State  string `json:"state"`
+		} `json:"pullRequest"`
+	} `json:"dependabotUpdate"`
 }
 
 // githubRepoFiles maps a "owner/name" repository to the fixture file holding its issues and pull
@@ -89,6 +134,11 @@ var githubRepoFiles = map[string]string{
 	"org/paged": "testdata/github/repos/org-paged.json",
 	"org/bad":   "testdata/github/repos/org-bad.json",
 	"org/deps":  "testdata/github/repos/org-deps.json",
+	// FR-1.16: alerts read, alerts switched off, and GitHub's two ways of refusing them.
+	"org/alerts":           "testdata/github/repos/org-alerts.json",
+	"org/alerts-off":       "testdata/github/repos/org-alerts-off.json",
+	"org/alerts-forbidden": "testdata/github/repos/org-alerts-forbidden.json",
+	"org/alerts-scope":     "testdata/github/repos/org-alerts-scope.json",
 }
 
 // loadFixtures reads every embedded fixture document fresh and returns a new, independent copy of

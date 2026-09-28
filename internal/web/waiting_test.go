@@ -26,12 +26,12 @@ type blockingSource struct {
 	items   []domain.Item
 }
 
-func (s *blockingSource) Fetch(ctx context.Context) ([]domain.Item, error) {
+func (s *blockingSource) Fetch(ctx context.Context) (domain.Fetched, error) {
 	select {
 	case <-s.release:
-		return s.items, nil
+		return domain.Fetched{Items: s.items}, nil
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return domain.Fetched{}, ctx.Err()
 	}
 }
 
@@ -198,19 +198,19 @@ type refetchBlockSource struct {
 	release chan struct{}
 }
 
-func (s *refetchBlockSource) Fetch(ctx context.Context) ([]domain.Item, error) {
+func (s *refetchBlockSource) Fetch(ctx context.Context) (domain.Fetched, error) {
 	s.mu.Lock()
 	s.calls++
 	first := s.calls == 1
 	s.mu.Unlock()
 	if first {
-		return s.items, nil
+		return domain.Fetched{Items: s.items}, nil
 	}
 	select {
 	case <-s.release:
-		return s.items, nil
+		return domain.Fetched{Items: s.items}, nil
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return domain.Fetched{}, ctx.Err()
 	}
 }
 
