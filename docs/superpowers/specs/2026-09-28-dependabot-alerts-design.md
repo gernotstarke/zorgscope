@@ -20,7 +20,7 @@ Measured against the ten configured repositories on 2026-09-28 with a token that
 
 | Repository | Alerts enabled | Open alerts | Fix pull request |
 |---|---|---|---|
-| `quality.arc42.org-site` #62, `docs.arc42.org-site` #45, `faq.arc42.org-site` #1, `examples.arc42.org-site` #1 | yes | **HIGH** — `rubyzip` 2.3.2 in `Gemfile.lock`, "rubyzip path traversal vulnerability", GHSA‑47m2‑wp7j‑p9vc / CVE‑2026‑85396, patched in 3.4.0; raised 2026‑09‑26 | none |
+| `quality.arc42.org-site` #62, `docs.arc42.org-site` #45, `faq.arc42.org-site` #1, `examples.arc42.org-site` #1 | yes | **HIGH** — `rubyzip` 2.3.2 (quality) or 2.4.1 (the other three) in `Gemfile.lock`, "rubyzip path traversal vulnerability", GHSA‑47m2‑wp7j‑p9vc / CVE‑2026‑85396, patched in 3.4.0; raised 2026‑09‑26 | none |
 | `arc42.org-site` #64, `arc42.de-site` #34 | yes | LOW — `json` 2.20.0 in `Gemfile.lock`, a use‑after‑free crash in `JSON::ResumableParser#partial_value` on truncated duplicate‑key streams, GHSA‑9hj4‑r449‑hfvc / CVE‑2026‑71847, patched in 2.21.2; raised 2026‑08‑08/09 | none |
 | `arc42-generator` | yes | none | — |
 | `arc42-template`, `trainings.arc42.org-site`, `zorgscope` | **no** | unknown | — |

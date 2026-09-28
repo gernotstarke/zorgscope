@@ -15,7 +15,7 @@ Measured on 2026‑09‑28 against the ten configured repositories:
 
 | Repository | Alerts enabled | Open alerts |
 |---|---|---|
-| `quality.arc42.org-site`, `docs.arc42.org-site`, `faq.arc42.org-site`, `examples.arc42.org-site` | yes | one each, **HIGH** — `rubyzip` 2.3.2, path traversal, GHSA‑47m2‑wp7j‑p9vc, patched in 3.4.0 |
+| `quality.arc42.org-site`, `docs.arc42.org-site`, `faq.arc42.org-site`, `examples.arc42.org-site` | yes | one each, **HIGH** — `rubyzip` 2.3.2 or 2.4.1, path traversal, GHSA‑47m2‑wp7j‑p9vc, patched in 3.4.0 |
 | `arc42.org-site`, `arc42.de-site` | yes | one each, LOW — `json` 2.20.0, GHSA‑9hj4‑r449‑hfvc, patched in 2.21.2, open since 2026‑08‑08/09 |
 | `arc42-generator` | yes | none |
 | `arc42-template`, `trainings.arc42.org-site`, `zorgscope` | **no** | — |
