@@ -17,8 +17,9 @@ type Query struct {
 }
 
 // ParseQuery splits q on whitespace, lower-cases every word, and takes the reserved words out:
-// "issue" and "issues" set Kind to KindIssue, "pr", "prs" and "pull" set it to KindPR. A query
-// with both kinds keeps the last one typed. Everything else is a word to find.
+// "issue" and "issues" set Kind to KindIssue, "pr", "prs" and "pull" set it to KindPR, "alert" and
+// "alerts" set it to KindAlert. A query with several kinds keeps the last one typed. Everything
+// else is a word to find.
 func ParseQuery(q string) Query {
 	var out Query
 	for _, w := range strings.Fields(strings.ToLower(q)) {
@@ -27,6 +28,8 @@ func ParseQuery(q string) Query {
 			out.Kind = KindIssue
 		case "pr", "prs", "pull":
 			out.Kind = KindPR
+		case "alert", "alerts":
+			out.Kind = KindAlert
 		default:
 			out.Words = append(out.Words, w)
 		}

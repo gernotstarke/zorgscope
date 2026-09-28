@@ -22,11 +22,15 @@ type Contributor struct {
 
 // BuildContributors groups items by author. The order is by open items descending, then
 // LastActive descending, then Login case-insensitively; the unknown author, if present, is last.
-// It is a pure function and never modifies items. nil for no items.
+// It is a pure function and never modifies items. nil for no items. Alerts are left out: GitHub
+// raised them, nobody opened them, and the page is a list of people (FR-1.16).
 func BuildContributors(items []Item, repos []string) []Contributor {
 	byLogin := make(map[string]*Contributor)
 	var order []string
 	for _, it := range items {
+		if it.Kind == KindAlert {
+			continue
+		}
 		c, ok := byLogin[it.Author]
 		if !ok {
 			c = &Contributor{Login: it.Author}

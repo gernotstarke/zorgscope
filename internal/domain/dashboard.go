@@ -40,6 +40,9 @@ type Dashboard struct {
 	// the filter, like Total (FR-1.13 AC4). A visitor filtered to one repository still needs to
 	// know that another has an open vulnerability.
 	Security int
+	// Alerts is how many Dependabot alerts are open, and Serious how many of them are High or
+	// Critical — both over every item regardless of the filter, like Security (FR-1.16).
+	Alerts, Serious int
 	// Filter is the filter that was applied, echoed back so the page can render it as the
 	// visitor left it.
 	Filter Filter
@@ -58,8 +61,15 @@ func BuildDashboard(in DashboardInput) Dashboard {
 
 	d.Total = len(in.Items)
 	for _, it := range in.Items {
-		if it.Tier() == TierSecurity {
+		switch it.Tier() {
+		case TierSecurity:
 			d.Security++
+		case TierAlert:
+			d.Alerts++
+			if it.Alert == nil || it.Alert.Severity.Serious() {
+				d.Serious++
+			}
+		default:
 		}
 	}
 	d.Groups = groupByRepo(in.Items, in.Repos, in.Filter)

@@ -14,11 +14,78 @@ import (
 // Kind distinguishes the two shapes of item zorgscope tracks.
 type Kind string
 
-// The set of item kinds zorgscope understands.
+// The set of item kinds zorgscope understands. An alert is a Dependabot alert (FR-1.16): not a
+// conversation anybody opened, but GitHub's own statement that a dependency is vulnerable.
 const (
 	KindIssue Kind = "issue"
 	KindPR    Kind = "pr"
+	KindAlert Kind = "alert"
 )
+
+// Severity is a Dependabot alert's severity, as GitHub grades it (FR-1.16). The zero value is
+// SeverityLow; the order of the constants is the order of loudness.
+type Severity int
+
+// GitHub's four severities, from quietest to loudest.
+const (
+	SeverityLow Severity = iota
+	SeverityMedium
+	SeverityHigh
+	SeverityCritical
+)
+
+// ParseSeverity reads GitHub's spelling of a severity (LOW, MODERATE, HIGH, CRITICAL, in any case;
+// MEDIUM too). A severity this build does not know is High: an alert GitHub raised at a grade
+// nobody here has heard of should err loud, not quiet.
+func ParseSeverity(s string) Severity {
+	switch strings.ToUpper(s) {
+	case "LOW":
+		return SeverityLow
+	case "MODERATE", "MEDIUM":
+		return SeverityMedium
+	case "CRITICAL":
+		return SeverityCritical
+	default:
+		return SeverityHigh
+	}
+}
+
+// String is the severity as the page names it, in a class and in words, and so is fixed text.
+func (s Severity) String() string {
+	switch s {
+	case SeverityLow:
+		return "low"
+	case SeverityMedium:
+		return "medium"
+	case SeverityCritical:
+		return "critical"
+	default:
+		return "high"
+	}
+}
+
+// Serious reports whether the severity is High or Critical: what needs the owner (FR-1.16 AC2)
+// and what the page draws loud. Low and Medium are shown, but never counted as needing anyone —
+// a mark that is always on stops being read (ADR-0012).
+func (s Severity) Serious() bool { return s >= SeverityHigh }
+
+// AlertFacts is what a Dependabot alert says beyond what every item carries (FR-1.16). It is
+// borrowed text like Title, and is escaped, never trusted.
+type AlertFacts struct {
+	Severity Severity
+	// Package and Ecosystem name the vulnerable dependency: "rubyzip", "RUBYGEMS".
+	Package   string
+	Ecosystem string
+	// Manifest is the file GitHub found the dependency in: "Gemfile.lock".
+	Manifest string
+	// Vulnerable is the requirement the manifest states, "= 2.3.2"; PatchedIn the first version
+	// that fixes it, "3.4.0", or "" when there is none yet.
+	Vulnerable string
+	PatchedIn  string
+	// FixPR is the number of the open Dependabot pull request that fixes the alert; 0 when there is
+	// none.
+	FixPR int
+}
 
 // Item is a single tracked unit from GitHub: an issue or a pull request.
 type Item struct {
@@ -49,9 +116,11 @@ type Item struct {
 	// people only, since a team is not somebody who can be told "this needs you". nil for an issue
 	// and for a pull request nobody was asked to review (FR-1.14).
 	ReviewRequested []string
-	State           string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	// Alert is set for a KindAlert item and nil for every other: what the Dependabot alert says.
+	Alert     *AlertFacts
+	State     string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // SortItems orders items most recently updated first. The sort is stable, so items with equal
@@ -83,17 +152,21 @@ func (i Item) IsQuiet(now time.Time, after time.Duration) bool {
 // nobody classified is simply not marked.
 type Tier int
 
-// The tiers, from quietest to loudest.
+// The tiers, from quietest to loudest. Alert is the loudest: a pull request citing an advisory
+// says someone is working on a vulnerability, an alert says GitHub has found one in a manifest.
 const (
 	TierNone Tier = iota
 	TierDependency
 	TierSecurity
+	TierAlert
 )
 
 // String is the tier as the page names it in a class, and so is fixed text: never anything an
 // upstream said.
 func (t Tier) String() string {
 	switch t {
+	case TierAlert:
+		return "alert"
 	case TierSecurity:
 		return "security"
 	case TierDependency:
@@ -115,7 +188,13 @@ var dependencyBots = []string{"dependabot", "renovate"}
 // for a published vulnerability, which is the thing the red exists to say. One that cites nothing
 // is maintenance, and gets the quiet mark, so that the red keeps meaning something: a mark that is
 // always on is read as noise, which is what retired the NEW badge (ADR-0012).
+//
+// An alert is TierAlert whatever its severity, and is decided first: an alert always cites its
+// advisory, which would otherwise make it Security.
 func (i Item) Tier() Tier {
+	if i.Kind == KindAlert {
+		return TierAlert
+	}
 	if len(i.Advisories) > 0 || i.hasLabel("security") {
 		return TierSecurity
 	}
@@ -141,12 +220,35 @@ func (i Item) hasLabel(name string) bool {
 	return false
 }
 
-// ShowsQuiet is IsQuiet, except that a Security item is never quiet (FR-1.13 AC3). An old, unfixed
-// vulnerability is exactly the item a reader most needs to see, and dimming it would hide it.
-// The list and the search results both call this rather than IsQuiet, so that the override lives
-// in one place and the two cannot disagree.
+// ShowsQuiet is IsQuiet, except that a Security item and an alert are never quiet (FR-1.13 AC3,
+// FR-1.16 AC3). An old, unfixed vulnerability is exactly the item a reader most needs to see, and
+// dimming it would hide it; an alert has no conversation to go quiet in the first place. The list
+// and the search results both call this rather than IsQuiet, so that the override lives in one
+// place and the two cannot disagree.
 func (i Item) ShowsQuiet(now time.Time, after time.Duration) bool {
-	return i.Tier() != TierSecurity && i.IsQuiet(now, after)
+	return i.Tier() < TierSecurity && i.IsQuiet(now, after)
+}
+
+// Coverage is how much a fetch could say about one repository's Dependabot alerts (FR-1.16 AC5).
+// The zero value is CoverageUnknown, so a repository nobody reported on claims nothing.
+type Coverage int
+
+// The coverages. Only CoverageOn lets "no alerts" mean "no vulnerabilities".
+const (
+	CoverageUnknown Coverage = iota
+	// CoverageOn: alerts are enabled and were read.
+	CoverageOn
+	// CoverageOff: the repository has Dependabot alerts switched off.
+	CoverageOff
+	// CoverageUnavailable: GitHub would not say — the token lacks the scope, or its owner the access.
+	CoverageUnavailable
+)
+
+// Fetched is what one fetch of every configured repository produced: the items, and per
+// repository ("owner/name") what could be said about its alerts.
+type Fetched struct {
+	Items    []Item
+	Coverage map[string]Coverage
 }
 
 // AgeBucket classifies how long ago something happened, relative to a display cutoff.

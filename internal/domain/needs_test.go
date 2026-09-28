@@ -84,12 +84,12 @@ func TestStaleNeedsAfterSixMonthsExceptSecurity(t *testing.T) {
 		n    Needed
 		want bool
 	}{
-		{"a contribution exactly six months old", Needed{Item{UpdatedAt: fresh}, NeedContribution}, false},
-		{"a contribution just older", Needed{Item{UpdatedAt: old}, NeedContribution}, true},
-		{"an old review request", Needed{Item{UpdatedAt: old}, NeedReview}, true},
-		{"an old bump", Needed{Item{UpdatedAt: old}, NeedDependency}, true},
-		{"an old vulnerability", Needed{Item{UpdatedAt: old}, NeedSecurity}, false},
-		{"an unknown update time", Needed{Item{}, NeedContribution}, false},
+		{"a contribution exactly six months old", Needed{Item: Item{UpdatedAt: fresh}, Need: NeedContribution}, false},
+		{"a contribution just older", Needed{Item: Item{UpdatedAt: old}, Need: NeedContribution}, true},
+		{"an old review request", Needed{Item: Item{UpdatedAt: old}, Need: NeedReview}, true},
+		{"an old bump", Needed{Item: Item{UpdatedAt: old}, Need: NeedDependency}, true},
+		{"an old vulnerability", Needed{Item: Item{UpdatedAt: old}, Need: NeedSecurity}, false},
+		{"an unknown update time", Needed{Item: Item{}, Need: NeedContribution}, false},
 	}
 	for _, tc := range tests {
 		if got := tc.n.Stale(now); got != tc.want {
