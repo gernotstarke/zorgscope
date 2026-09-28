@@ -14,7 +14,7 @@ signed in, the other reads GitHub on this process's behalf. Neither can do the o
 | Credential | Environment variable | Authorises | Never authorises |
 |------------|----------------------|------------|-------------------|
 | OAuth client secret | `GITHUB_OAUTH_CLIENT_SECRET` | Exchanging the code at `/auth/callback`, and — as the seed of the session key — verifying every later request that carries the session cookie | Reading anything on GitHub |
-| GitHub read tokens | `GITHUB_TOKEN`, plus the visitor's own token at sign-in | Reading GitHub: the backend's token fetches issues and pull requests, the visitor's token answers exactly one question about their permission on `github.auth_repo` | Anything at all in zorgscope itself — neither token is ever presented back to this process as a credential |
+| GitHub read tokens | `GITHUB_TOKEN`, plus the visitor's own token at sign-in | Reading GitHub: the backend's token fetches issues, pull requests and Dependabot alerts, the visitor's token answers exactly one question about their permission on `github.auth_repo` | Anything at all in zorgscope itself — neither token is ever presented back to this process as a credential |
 
 A leaked client secret lets someone mint themselves a valid session cookie once they also hold it
 (it is never sent anywhere except to GitHub's token endpoint and used locally to sign and verify
@@ -31,6 +31,22 @@ GITHUB_OAUTH_CLIENT_ID=
 GITHUB_OAUTH_CLIENT_SECRET=
 GITHUB_TOKEN=
 ```
+
+## What `GITHUB_TOKEN` may read
+
+Since 2.1.0 the backend's token reads Dependabot alerts as well as issues and pull requests
+([ADR‑0015](../decisions/0015-dependabot-alerts-nested-in-the-pull-request-query.md)). It is a
+classic personal access token with the `security_events` scope and no other: the issue and pull
+request queries on these public repositories need no scope at all, and `security_events` is what
+GitHub asks for to read alerts. `public_repo` would be accepted too, but it also grants write
+access to code, so it is not used. The token's owner must be able to see the alerts — an admin of
+each repository.
+
+This makes the token more sensitive than it was. Leaked, it tells its holder which of the
+repositories have unpatched vulnerabilities, and in which dependency. Rotating it works as before —
+a new token in `.env` and as a Fly secret, the old one revoked on GitHub — and a token that loses the
+scope or its owner's access degrades rather than breaks: the Security tile says the alerts are
+unavailable to the token, and every issue and pull request is still fetched.
 
 ## What the sign-in checks
 

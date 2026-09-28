@@ -20,7 +20,7 @@ the old record stays, because the reasoning is the point.
 | 0012 | No seen mark: the page shows what is open, not what is new | `0012-no-seen-mark.md` | accepted |
 | 0013 | Stale while revalidating: the page shows what it has, and says it is refreshing | `0013-stale-while-revalidating.md` | accepted |
 | 0014 | Security from evidence already fetched: two tiers, no security API | `0014-security-from-evidence-already-fetched.md` | accepted; option E (no security API) superseded by 0015 for Dependabot alerts |
-| 0015 | Dependabot alerts, nested in the pull request query | `0015-dependabot-alerts-nested-in-the-pull-request-query.md` | proposed |
+| 0015 | Dependabot alerts, nested in the pull request query | `0015-dependabot-alerts-nested-in-the-pull-request-query.md` | accepted |
 
 The records are kept current with the design specs. A spec that decides something — the reset
 design of 2026-08-17, the GitHub sign-in and focus design of 2026-09-14, the stateless reset design

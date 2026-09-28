@@ -1,6 +1,6 @@
 # Dependabot alerts on the list, the tiles and the radar — design
 
-Date: 2026-09-28. Status: draft for Gernot's review. Decisions taken in conversation on
+Date: 2026-09-28. Status: implemented in 2.1.0 (§12 lists where the build departs from the draft). Decisions taken in conversation on
 2026-09-28 are in §3. The fetching decision is
 [ADR‑0015](../../decisions/0015-dependabot-alerts-nested-in-the-pull-request-query.md), which
 supersedes ADR‑0014's option E for Dependabot alerts only. It builds on the security highlight
@@ -147,9 +147,9 @@ previous coverage.
   }
   ```
 
-  At most 100 alerts per repository are read. When `totalCount` is higher, the repository's
-  coverage is still `On`, and the list states "and N more on GitHub" in that repository's group.
-  That is a backstop for a situation that does not exist today, not something to paginate for.
+  At most 100 alerts per repository are read, and no `totalCount` is asked for: no arc42
+  repository has had more than one open at a time, so neither paginating nor saying "and N more"
+  earns its code.
 * **Refusal and fallback** (ADR‑0015):
   1. First page answers with data and no error: read everything, coverage `On` or `Off`.
   2. First page answers with pull requests but an error, and `vulnerabilityAlerts` is `null`: keep
@@ -318,3 +318,24 @@ line 34 changes from "any personal access token; public repositories need no sco
   either way; this point decides only which fixture mirrors production.
 * **`--alert`'s exact values** — chosen in implementation against the contrast tests, and shown to
   Gernot before merge, as the amber was.
+
+## 12. As built (2.1.0)
+
+Where the implementation departs from the draft above, and why:
+
+* **Refusal is one rule, not two.** Any error on the first page that asks for alerts is followed by
+  the same page without them; the draft's separate "field refused, keep the data" path (§5 step 2)
+  is gone. The retry costs one request in the field‑refusal case too, but only once per process,
+  and it means neither refusal shape is recognised by anything GitHub might reword. The process
+  stops asking only when that retry succeeds, so a transport failure does not switch alerts off.
+* **No `totalCount`** (§5): see there.
+* **Unknown coverage is not named on the tile.** A repository nobody reported on is one whose fetch
+  failed outright, which the page's error notice already says; the tile names only repositories
+  GitHub reported *off* or *unavailable to the token*.
+* **The top bar counts the band.** It used to count item by item; an alert absorbing its fix pull
+  request would then have been one row in the band and two in the top bar. It now counts the
+  band's rows that are not stale, so the two cannot disagree.
+* **Colour:** `--alert` is `#9c1f8f` light / `#e38ae0` dark (6.99:1 and 6.90:1 against the surface;
+  chip ink white / `#1a0620`, 6.99:1 and 8.23:1); the tile band is `#9c1f8f` hatched with
+  `#5e1256` under white. `contrast_test.go` asserts the rule, the solid chip and the outlined chip
+  in both appearances.

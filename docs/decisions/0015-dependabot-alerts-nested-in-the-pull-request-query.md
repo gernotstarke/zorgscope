@@ -1,6 +1,6 @@
 # 0015. Dependabot alerts, nested in the pull request query
 
-* Status: proposed
+* Status: accepted (implemented in 2.1.0)
 * Date: 2026-09-28
 * Supersedes: [ADR‑0014](0014-security-from-evidence-already-fetched.md), option E, for Dependabot
   alerts only — code scanning and secret scanning stay ruled out
@@ -50,10 +50,11 @@ ADR‑0014's option E for Dependabot alerts only.
   still makes exactly 20 requests.
 * **When GitHub refuses.** Asking for alerts must never cost a repository its pull requests
   (QS‑1.4). GitHub refuses in two shapes: a missing token scope fails the *whole* query with no
-  data; missing repository access fails only the field and returns the rest. Either way the
-  adapter keeps whatever pull requests arrived and, if none did, asks for the first page once more
-  without alerts. It records the repository's alert coverage as *unavailable*, and the process
-  remembers that the token was refused, so later fetches stop asking until the process restarts. A
+  data; missing repository access fails only the field and returns the rest. Either way — and
+  without telling the two apart — the adapter asks for the same first page once more without
+  alerts. If that is answered, it records the repository's alert coverage as *unavailable*, and
+  the process remembers that the token was refused, so later fetches stop asking until the process
+  restarts; if it fails too, it is the ordinary failure of that repository. A
   refused token therefore costs at most one extra request per repository, once per process
   lifetime, and on this scale-to-zero machine that means once per wake.
 * **Coverage is a fact of its own.** For each repository the fetch reports *on*, *off*
@@ -88,15 +89,16 @@ item kind, the tier and need it gets, and how it is drawn.
 * Bad: the token must belong to someone who can see the alerts. If that person loses admin rights
   on a repository, its coverage silently becomes *unavailable*. It is drawn, but nothing forces
   anyone to notice.
-* Bad: the refused‑token path is keyed on GitHub's error, and `shurcooL/graphql` passes on only the
-  error's message, not its type. Telling "refused" apart from any other GraphQL error means reading
-  the data that did arrive rather than the error text: pull requests present but alerts `null`
-  means refused on the field; no data at all on the first page means refused on the query.
+* Bad: `shurcooL/graphql` passes on only an error's message, not its type, so "refused" cannot be
+  told from any other error on the first page. The retry without alerts is what tells them apart:
+  it succeeds only when the alerts were the problem. A transient failure that hits exactly the
+  first request and not the retry would switch alerts off until the next restart — on this
+  scale-to-zero machine, the next wake.
 * Bad: the point cost of the pull request query rises by up to 100 alert nodes per repository.
   That is well inside GitHub's 5,000 points an hour at the page views this deployment sees, but it
   is no longer free.
 * Neutral: `ports.Source.Fetch` now returns coverage beside the items, so the snapshot, its partial
-  merge and every fake source change shape once.
+  merge and every fake source changed shape once.
 * Neutral: dismissing or fixing an alert stays on GitHub. zorgscope reads, it never writes
   (unchanged).
 

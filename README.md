@@ -31,7 +31,7 @@ make dev                     # the backend on http://localhost:8080, fetching st
 ```env
 GITHUB_OAUTH_CLIENT_ID=      # the local OAuth App, callback http://localhost:8080/auth/callback
 GITHUB_OAUTH_CLIENT_SECRET=
-GITHUB_TOKEN=                # any personal access token; public repositories need no scope
+GITHUB_TOKEN=                # a classic personal access token with the security_events scope only (Dependabot alerts)
 ```
 
 See [configuration](docs/concepts/configuration.md) for where these come from and
@@ -89,6 +89,7 @@ code; `make check` passes.
 
 | Version | Date | Change |
 |---------|------|--------|
+| 2.1.0 | 2026-09-28 | Dependabot alerts on the list, the Needs-you band, the Security tile and the Radar, in a colour and pattern of their own; High and Critical need you (FR-1.16, ADR-0015) |
 | 2.0.0 | 2026-09-25 | Radar view and the new Needs-you rule make a new major version; the footer names the stack (Go, htmx) and the host (Fly.io) |
 | 1.10.0 | 2026-09-25 | Every open PR active in the last 6 months needs you, your own and drafts included ("Your PR"); Radar takes the window's width, larger data block |
 | 1.9.0 | 2026-09-25 | Radar view: every item as a blip on a radar scope, security and dependency in hazard tape, a click opens it on GitHub; Radar as landing view |
