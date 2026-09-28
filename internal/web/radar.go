@@ -75,6 +75,9 @@ type radarView struct {
 	// quieter one.
 	Blips                                           []radarBlip
 	Total, PRs, Issues, Needs, Security, Dependency int
+	// Alerts is how many Dependabot alerts are drawn, and Serious how many of them are High or
+	// Critical (FR-1.16).
+	Alerts, Serious int
 }
 
 type radarPoint struct{ X, Y float64 }
@@ -102,13 +105,14 @@ type radarRing struct {
 // radarBlip is one item.
 type radarBlip struct {
 	X, Y float64
-	// Shape is a diamond's path for a pull request, empty for an issue, which is a circle of
-	// radius R.
+	// Shape is a diamond's path for a pull request and a triangle's for a Dependabot alert, empty
+	// for an issue, which is a circle of radius R.
 	Shape string
 	R     float64
 	// Ring is the radius of the mark's ring, when it has one.
 	Ring float64
-	// Mark is "security", "dependency", "needs" or "": fixed text, never anything an upstream said.
+	// Mark is "alert" (a High or Critical Dependabot alert), "alert-low" (a Low or Medium one),
+	// "security", "dependency", "needs" or "": fixed text, never anything an upstream said.
 	Mark string
 	// Hue, Bearing and Age are class names: the site's colour, the sweep delay, the fade.
 	Hue, Bearing, Age string
@@ -222,10 +226,15 @@ func buildRadar(items []domain.Item, gh config.GitHub, now time.Time) radarView 
 			v.Dependency++
 		case "needs":
 			v.Needs++
+		case "alert":
+			v.Serious++
 		}
-		if it.Kind == domain.KindPR {
+		switch it.Kind {
+		case domain.KindPR:
 			v.PRs++
-		} else {
+		case domain.KindAlert:
+			v.Alerts++
+		default:
 			v.Issues++
 		}
 		v.Blips = append(v.Blips, b)
@@ -238,7 +247,7 @@ func buildRadar(items []domain.Item, gh config.GitHub, now time.Time) radarView 
 }
 
 // markRank is the draw order: the loudest last, on top.
-var markRank = map[string]int{"": 0, "needs": 1, "dependency": 2, "security": 3}
+var markRank = map[string]int{"": 0, "needs": 1, "dependency": 2, "alert-low": 3, "security": 4, "alert": 5}
 
 func newRadarSector(spec domain.SiteSpec, a0, a1 float64) radarSector {
 	s := radarSector{Name: spec.Name, Hue: spec.Hue}
@@ -289,6 +298,14 @@ func newRadarBlip(it domain.Item, gh config.GitHub, now time.Time, a0, width flo
 	}
 	need := domain.NeedFor(it, gh.Owner)
 	switch it.Tier() {
+	case domain.TierAlert:
+		// A serious alert is as loud as a Security item, in its own colour and shape; a Low or
+		// Medium one is ringed thinly and says nothing more (FR-1.16 AC4).
+		if need == domain.NeedAlert {
+			b.Mark, b.Ring, b.Tag = "alert", 15, "▲ #"+strconv.Itoa(it.Number)
+		} else {
+			b.Mark, b.Ring = "alert-low", 12
+		}
 	case domain.TierSecurity:
 		b.Mark, b.Ring, b.Tag = "security", 15, "⚠ #"+strconv.Itoa(it.Number)
 	case domain.TierDependency:
@@ -300,13 +317,19 @@ func newRadarBlip(it domain.Item, gh config.GitHub, now time.Time, a0, width flo
 	}
 
 	k := 9.0
-	if b.Mark == "security" {
+	if b.Mark == "security" || b.Mark == "alert" {
 		k = 11
 	}
 	b.R = k - 2
-	if it.Kind == domain.KindPR {
+	switch it.Kind {
+	case domain.KindPR:
 		b.Shape = "M" + coord(b.X, b.Y-k) + " l" + num(k) + "," + num(k) + " l-" + num(k) + "," + num(k) +
 			" l-" + num(k) + ",-" + num(k) + "Z"
+	case domain.KindAlert:
+		// A triangle pointing up, its centroid on the blip's place: apex k above, base k/2 below.
+		h := round1(k * 0.87)
+		b.Shape = "M" + coord(b.X, b.Y-k) + " l" + num(h) + "," + num(round1(k*1.5)) + " l-" + num(round1(2*h)) + ",0Z"
+	default:
 	}
 
 	if b.Tag != "" {
@@ -314,7 +337,7 @@ func newRadarBlip(it domain.Item, gh config.GitHub, now time.Time, a0, width flo
 	}
 
 	b.Age = "age-0"
-	if b.Mark != "security" && b.Mark != "dependency" {
+	if b.Mark != "security" && b.Mark != "dependency" && it.Kind != domain.KindAlert {
 		switch {
 		case days > 182:
 			b.Age = "age-3"
@@ -337,6 +360,8 @@ func newRadarCard(it domain.Item, mark string, need domain.Need, now time.Time) 
 		Reason: radarLine{Y: radarReasonY},
 	}
 	switch mark {
+	case "alert", "alert-low":
+		c.Reason.Text = newTierView(it).Label + ": " + it.Summary
 	case "security":
 		c.Reason.Text = "Security: " + newTierView(it).Evidence
 	case "dependency":

@@ -26,7 +26,9 @@
     {{/* The one place a visitor learns that something is marked leads to it: the link narrows the
          list to the security items, and works without script like every other filtered URL
          (FR-1.13 AC4). */}}
-    <span class="security-count"> · <a href="/?tier=security">{{.Security}} security</a></span>{{end}}
+    <span class="security-count"> · <a href="/?tier=security">{{.Security}} security</a></span>{{end}}{{if .Alerts}}
+    {{/* FR-1.16: the open Dependabot alerts, how many of them serious, leading to them. */}}
+    <span class="alert-count"> · <a href="/?tier=alert">{{.Alerts}} {{if eq .Alerts 1}}alert{{else}}alerts{{end}}{{with .Serious}} ({{.}} high){{end}}</a></span>{{end}}
   </p>
   {{range .Groups}}
   {{/* The site's colour as a stripe down the group's edge (FR-1.10 AC2): the same hue-<key>
@@ -38,7 +40,7 @@
       <span class="repo-count">{{.CountLine}}</span></h2>
     <ul class="items">
       {{range .Items}}
-      <li class="item{{if .Needed}} is-needed{{end}}{{if .Quiet}} is-quiet{{end}}{{with .Tier.Name}} tier-{{.}}{{end}}">
+      <li class="item{{if .Needed}} is-needed{{end}}{{if .Quiet}} is-quiet{{end}}{{with .Tier.Name}} tier-{{.}}{{end}}{{with .Tier.Sev}} sev-{{.}}{{end}}">
         <p class="item-line">
           {{template "item-tier" .Tier}}
           {{if .Number}}<span class="item-number">#{{.Number}}</span>{{end}}
@@ -50,11 +52,12 @@
         {{/* Everything else about the item on one line: what it is, who opened it, when it last
              moved, and its own description filling what is left. "opened" is said only when it
              reads differently from "updated" — two equal phrases side by side said the same thing
-             twice. Both stamps are guarded by .Known: a zero timestamp must read as unknown rather
+             twice. An alert has no update time, only the moment GitHub raised it, so it says
+             "raised" instead (FR-1.16). Both stamps are guarded by .Known: a zero timestamp must read as unknown rather
              than render <time datetime=""></time>, which is invalid HTML and shows the visitor a
              word followed by nothing. The description is cut to the line by the stylesheet, not
              here, so a wide window shows more of it. */}}
-        <p class="item-meta"><span class="item-facts"><span class="item-kind item-kind-{{.KindClass}}">{{.Kind}}</span>{{if .Author}} · {{.Author}}{{end}}{{if .Updated.Known}} · updated <time datetime="{{.Updated.Absolute}}">{{.Updated.Relative}}</time>{{end}}{{if .Created.Known}}{{if ne .Created.Relative .Updated.Relative}} · opened <time datetime="{{.Created.Absolute}}">{{.Created.Relative}}</time>{{end}}{{else}} · opened at an unknown time{{end}}{{if .Quiet}} · quiet{{end}}</span>{{with .Summary}}<span class="item-summary">{{.}}</span>{{end}}</p>
+        <p class="item-meta"><span class="item-facts"><span class="item-kind item-kind-{{.KindClass}}">{{.Kind}}</span>{{if .Author}} · {{.Author}}{{end}}{{if eq .KindClass "alert"}}{{if .Created.Known}} · raised <time datetime="{{.Created.Absolute}}">{{.Created.Relative}}</time>{{end}}{{else}}{{if .Updated.Known}} · updated <time datetime="{{.Updated.Absolute}}">{{.Updated.Relative}}</time>{{end}}{{if .Created.Known}}{{if ne .Created.Relative .Updated.Relative}} · opened <time datetime="{{.Created.Absolute}}">{{.Created.Relative}}</time>{{end}}{{else}} · opened at an unknown time{{end}}{{end}}{{if .Quiet}} · quiet{{end}}</span>{{with .Summary}}<span class="item-summary">{{.}}</span>{{end}}</p>
       </li>
       {{end}}
     </ul>
@@ -84,7 +87,7 @@
      An empty band stays and says so. A band that vanished would read as a check that had stopped
      running, exactly as the Security tile's empty state does. */}}
 {{define "needs"}}
-<section class="needs{{if not .Count}} is-clear{{end}}{{if .Security}} has-security{{end}}" aria-labelledby="needs-title">
+<section class="needs{{if not .Count}} is-clear{{end}}{{if .Security}} has-security{{else if .Alert}} has-alert{{end}}" aria-labelledby="needs-title">
   <h2 class="needs-title" id="needs-title">Needs you{{with .Count}} <span class="needs-count">{{.}}</span>{{end}}</h2>
   {{if .Count}}
   <ol class="needs-items">{{range .Shown}}{{template "need" .}}{{end}}</ol>
@@ -115,10 +118,10 @@
      The site's colour is a swatch beside the repository name rather than a stripe: the band is one
      list across every site, and a stripe per row would be ten colours down one edge. */}}
 {{define "need"}}
-<li class="need need-{{.Reason}}{{with .Tier.Name}} tier-{{.}}{{end}}">
+<li class="need need-{{.Reason}}{{with .Tier.Name}} tier-{{.}}{{end}}{{with .Tier.Sev}} sev-{{.}}{{end}}">
   <span class="need-reason">{{if .Tier.Name}}{{template "item-tier" .Tier}}{{else}}<span class="need-chip">{{.ReasonLabel}}</span>{{end}}</span>
   <span class="need-kind need-kind-{{.KindClass}}">{{.Kind}}</span>
-  <span class="need-main">{{if .Number}}<span class="item-number">#{{.Number}}</span> {{end}}<a class="need-title" href="{{.URL}}" target="_blank" rel="noopener noreferrer">{{.Title}}</a></span>
+  <span class="need-main">{{if .Number}}<span class="item-number">#{{.Number}}</span> {{end}}<a class="need-title" href="{{.URL}}" target="_blank" rel="noopener noreferrer">{{.Title}}</a>{{with .FixReady}} <span class="need-fix">fix ready: #{{.}}</span>{{end}}</span>
   <span class="need-meta">{{with .Author}}{{.}} · {{end}}<span class="need-repo hue-{{.Hue}}">{{.Repo}}</span>{{if .Updated.Known}} · <time datetime="{{.Updated.Absolute}}">{{.Updated.Relative}}</time>{{end}}</span>
 </li>
 {{end}}

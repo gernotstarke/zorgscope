@@ -485,7 +485,7 @@ func TestTheMarkedRowsTapeAndChipKeepTheirContrast(t *testing.T) {
 	}
 	// The tape's two stripes are the tier's colour and that colour mixed halfway into the page,
 	// so the tier's own colour is the strongest thing in it: measuring that one measures the tape.
-	for tier, token := range map[string]string{"security": "danger", "dependency": "warn"} {
+	for tier, token := range map[string]string{"security": "danger", "dependency": "warn", "alert": "alert"} {
 		colour, ok := lightDarkToken(t, css, token)
 		if !ok {
 			continue
@@ -509,6 +509,32 @@ func TestTheMarkedRowsTapeAndChipKeepTheirContrast(t *testing.T) {
 			if r := contrastRatio(ink[i], fill[i]); r < 4.5 {
 				t.Errorf("the %s chip's word on the %s page = %.2f:1, want at least 4.5:1", tier, appearance, r)
 			}
+		}
+	}
+}
+
+// FR-1.16 AC4: a Low or Medium alert's chip is outlined, so its word is the alert colour itself,
+// on the page with a tenth of that colour mixed in. It has to stay readable on that in both
+// appearances, like any other text.
+func TestTheOutlinedAlertChipKeepsItsContrast(t *testing.T) {
+	raw, err := fs.ReadFile(embedded, "static/app.css")
+	if err != nil {
+		t.Fatalf("reading the embedded app.css: %v", err)
+	}
+	css := string(raw)
+	//nolint:misspell // color-mix is the CSS function's own name, not prose to be normalised
+	if !strings.Contains(css, "background: color-mix(in srgb, var(--alert) 10%, transparent);") {
+		t.Fatal("the outlined alert chip no longer tints its background with 10% of --alert")
+	}
+	surface, ok := lightDarkToken(t, css, "surface")
+	alert, ok2 := lightDarkToken(t, css, "alert")
+	if !ok || !ok2 {
+		t.Fatal("no --surface or --alert token")
+	}
+	for i, appearance := range []string{"light", "dark"} {
+		behind := mixSRGB(alert[i], surface[i], 0.10)
+		if r := contrastRatio(alert[i], behind); r < 4.5 {
+			t.Errorf("the outlined alert chip's word on the %s page = %.2f:1, want at least 4.5:1", appearance, r)
 		}
 	}
 }

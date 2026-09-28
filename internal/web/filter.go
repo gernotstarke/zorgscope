@@ -20,8 +20,12 @@ func parseFilter(q url.Values, loc *time.Location) domain.Filter {
 		f.Kind = domain.KindIssue
 	case "pr":
 		f.Kind = domain.KindPR
+	case "alert":
+		f.Kind = domain.KindAlert
 	}
 	switch q.Get("tier") {
+	case "alert":
+		f.MinTier = domain.TierAlert
 	case "security":
 		f.MinTier = domain.TierSecurity
 	case "dependency":

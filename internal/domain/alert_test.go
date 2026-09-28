@@ -167,3 +167,64 @@ func TestContributorsLeaveAlertsOut(t *testing.T) {
 		t.Errorf("BuildContributors listed an alert's author: %+v", got)
 	}
 }
+
+// FR-1.16 AC5: the Security tile lists alerts loudest first, counts them before the cut, and names
+// every repository whose alerts it cannot vouch for. It is clear only when there is nothing at all.
+func TestTheTierTileGathersAlertsAndCoverage(t *testing.T) {
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	items := []Item{
+		alert("o/a", 1, SeverityLow, 0, now),
+		alert("o/a", 2, SeverityHigh, 0, now.Add(-time.Hour)),
+		alert("o/b", 3, SeverityCritical, 0, now.Add(-48*time.Hour)),
+		alert("o/b", 4, SeverityHigh, 0, now),
+		{Kind: KindIssue, Repo: "o/a", Number: 9},
+	}
+	tile := BuildTierTile(TierTileInput{
+		Items: items, MaxPRs: 3, MaxIssues: 4, MaxAlerts: 3,
+		Repos:    []string{"o/a", "o/b", "o/c", "o/d", "o/e"},
+		Coverage: map[string]Coverage{"o/a": CoverageOn, "o/b": CoverageOn, "o/c": CoverageOff, "o/d": CoverageUnavailable},
+	})
+	var got []int
+	for _, it := range tile.Alerts {
+		got = append(got, it.Number)
+	}
+	if len(got) != 3 || got[0] != 3 || got[1] != 4 || got[2] != 2 {
+		t.Errorf("alerts = %v, want [3 4 2]: critical, then high most recent first, cut to three", got)
+	}
+	if tile.AlertTotal != 4 || tile.Serious != 3 || !tile.More {
+		t.Errorf("AlertTotal, Serious, More = %d, %d, %v; want 4, 3, true", tile.AlertTotal, tile.Serious, tile.More)
+	}
+	if tile.Security+tile.Dependency != 0 || len(tile.Issues) != 0 {
+		t.Error("an unmarked issue or an alert reached the security or dependency rows")
+	}
+	if len(tile.AlertsOff) != 1 || tile.AlertsOff[0] != "o/c" ||
+		len(tile.AlertsUnavailable) != 1 || tile.AlertsUnavailable[0] != "o/d" {
+		t.Errorf("off = %v, unavailable = %v; want [o/c] and [o/d] — o/e was never reported on", tile.AlertsOff, tile.AlertsUnavailable)
+	}
+	if tile.Clear() {
+		t.Error("a tile with alerts is clear")
+	}
+
+	quiet := BuildTierTile(TierTileInput{Repos: []string{"o/a"}, Coverage: map[string]Coverage{"o/a": CoverageOn}})
+	if !quiet.Clear() {
+		t.Error("a tile with nothing and full coverage is not clear")
+	}
+	off := BuildTierTile(TierTileInput{Repos: []string{"o/a"}, Coverage: map[string]Coverage{"o/a": CoverageOff}})
+	if off.Clear() {
+		t.Error("a tile is clear although a repository's alerts are off")
+	}
+}
+
+// A site tile counts its alerts but lists none: its rows stay issues and pull requests.
+func TestASiteTileCountsItsAlerts(t *testing.T) {
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	tiles := BuildSiteTiles(SiteTilesInput{
+		Items: []Item{alert("o/a", 1, SeverityHigh, 0, now), alert("o/a", 2, SeverityLow, 0, now), {Kind: KindPR, Repo: "o/a", Number: 3}},
+		Sites: []SiteSpec{{Name: "a", Repos: []string{"o/a"}}}, MaxPRs: 3, MaxIssues: 4,
+	})
+	tile := tiles[0]
+	if tile.Alerts != 2 || tile.Serious != 1 || tile.PRTotal != 1 || tile.IssueTotal != 0 {
+		t.Errorf("Alerts, Serious, PRTotal, IssueTotal = %d, %d, %d, %d; want 2, 1, 1, 0",
+			tile.Alerts, tile.Serious, tile.PRTotal, tile.IssueTotal)
+	}
+}

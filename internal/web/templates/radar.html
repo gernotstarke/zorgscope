@@ -10,6 +10,7 @@
 <defs>
   <pattern id="radar-tape-security" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect class="tape-a" width="4" height="8"/><rect class="tape-b" x="4" width="4" height="8"/></pattern>
   <pattern id="radar-tape-dependency" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect class="tape-a" width="4" height="8"/><rect class="tape-b" x="4" width="4" height="8"/></pattern>
+  <pattern id="radar-hatch-alert" width="6" height="6" patternUnits="userSpaceOnUse"><rect class="tape-b" width="6" height="6"/><path class="tape-a" d="M0,0L6,6M6,0L0,6" stroke-width="2"/></pattern>
   <linearGradient id="radar-glow" x1="1" y1="0" x2="0" y2="0.45"><stop class="glow-head" offset="0"/><stop class="glow-tail" offset="1"/></linearGradient>
 </defs>
 <circle class="radar-scope" cx="{{.CX}}" cy="{{.CY}}" r="{{.R}}"/>
@@ -46,17 +47,19 @@
     <text x="68" y="312">Security</text><text x="68" y="334" class="legend-note">cites a CVE or GHSA</text>
     <g class="mark-dependency"><circle class="ring" cx="38" cy="376" r="13"/><circle class="mark" cx="38" cy="376" r="8"/></g>
     <text x="68" y="382">Dependency</text><text x="68" y="404" class="legend-note">Dependabot, Renovate</text>
+    <g class="mark-alert"><circle class="ring" cx="38" cy="446" r="14"/><path class="mark" d="M38,435 l9.6,16.5 l-19.2,0Z"/></g>
+    <text x="68" y="452">Dependabot alert</text><text x="68" y="474" class="legend-note">GitHub says a dependency is vulnerable</text>
   </g>
-  <text x="24" y="462">Direction: site</text>
-  <text x="24" y="492">Distance: time idle</text>
-  <text x="24" y="516" class="legend-note">since last activity: centre = now,</text>
-  <text x="24" y="538" class="legend-note">rim = two years or more</text>
+  <text x="24" y="532">Direction: site</text>
+  <text x="24" y="562">Distance: time idle</text>
+  <text x="24" y="586" class="legend-note">since last activity: centre = now,</text>
+  <text x="24" y="608" class="legend-note">rim = two years or more</text>
   {{if .Total}}
-  <text x="24" y="592">{{.Total}} open · {{.PRs}} {{if eq .PRs 1}}PR{{else}}PRs{{end}} · {{.Issues}} {{if eq .Issues 1}}issue{{else}}issues{{end}}</text>
-  <text x="24" y="622"><tspan class="count-security">{{.Security}} security</tspan> · <tspan class="count-dependency">{{.Dependency}} dependency</tspan></text>
-  <text x="24" y="652" class="count-needs">{{.Needs}} {{if eq .Needs 1}}PR needs{{else}}PRs need{{end}} you</text>
+  <text x="24" y="662">{{.Total}} open · {{.PRs}} {{if eq .PRs 1}}PR{{else}}PRs{{end}} · {{.Issues}} {{if eq .Issues 1}}issue{{else}}issues{{end}}{{with .Alerts}} · {{.}} {{if eq . 1}}alert{{else}}alerts{{end}}{{end}}</text>
+  <text x="24" y="692"><tspan class="count-security">{{.Security}} security</tspan> · <tspan class="count-dependency">{{.Dependency}} dependency</tspan>{{with .Serious}} · <tspan class="count-alert">{{.}} high {{if eq . 1}}alert{{else}}alerts{{end}}</tspan>{{end}}</text>
+  <text x="24" y="722" class="count-needs">{{.Needs}} {{if eq .Needs 1}}PR needs{{else}}PRs need{{end}} you</text>
   {{else}}
-  <text x="24" y="592">Nothing open.</text>
+  <text x="24" y="662">Nothing open.</text>
   {{end}}
 </g>
 {{$leader := .Leader}}{{$vx := .ValueX}}
@@ -68,7 +71,7 @@
   <text class="radar-open-hint" x="24" y="840">click to open it on GitHub ↗</text></g>
 {{range $n, $b := .Blips}}
 <a class="blip {{.Hue}} {{.Bearing}} {{.Age}}{{with .Mark}} mark-{{.}}{{end}}" href="{{.URL}}" target="_blank" rel="noopener noreferrer" aria-labelledby="b{{$n}}">
-{{- if .Ring}}{{if eq .Mark "security"}}<circle class="ring-pulse" cx="{{printf "%g" .X}}" cy="{{printf "%g" .Y}}" r="{{printf "%g" .Ring}}"/>{{end}}<circle class="ring" cx="{{printf "%g" .X}}" cy="{{printf "%g" .Y}}" r="{{printf "%g" .Ring}}"/>{{end -}}
+{{- if .Ring}}{{if or (eq .Mark "security") (eq .Mark "alert")}}<circle class="ring-pulse" cx="{{printf "%g" .X}}" cy="{{printf "%g" .Y}}" r="{{printf "%g" .Ring}}"/>{{end}}<circle class="ring" cx="{{printf "%g" .X}}" cy="{{printf "%g" .Y}}" r="{{printf "%g" .Ring}}"/>{{end -}}
 {{if .Shape}}<path class="mark" d="{{.Shape}}"/>{{else}}<circle class="mark" cx="{{printf "%g" .X}}" cy="{{printf "%g" .Y}}" r="{{printf "%g" .R}}"/>{{end -}}
 {{with .Tag}}<text class="tag" x="{{printf "%g" $b.TagX}}" y="{{printf "%g" $b.TagY}}">{{.}}</text>{{end -}}
 <path class="leader" d="M{{printf "%g" .X}},{{printf "%g" .Y}}L{{printf "%g" $leader.X}},{{printf "%g" $leader.Y}}"/>

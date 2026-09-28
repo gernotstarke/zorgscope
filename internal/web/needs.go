@@ -24,6 +24,9 @@ type needsView struct {
 	// Security says a Security item is among them, which frames the whole band in red: the one
 	// row that must not be missed should not have to be found first.
 	Security bool
+	// Alert says a serious Dependabot alert is among them (FR-1.16), which frames the band in the
+	// alert colour — unless Security does already: red wins, and the alert keeps its own chip.
+	Alert bool
 }
 
 // Count is how many items need the owner now, for the heading. The older ones are not counted: the
@@ -33,7 +36,7 @@ func (v needsView) Count() int { return len(v.Shown) + len(v.More) }
 // needView is one row of the band: one line, less than a list row, because the list below still
 // carries every item in full.
 type needView struct {
-	// Reason is the class suffix — "security", "dependency", "review", "contribution" or "own" — and
+	// Reason is the class suffix — "alert", "security", "dependency", "review", "contribution" or "own" — and
 	// ReasonLabel the word the row carries. Colour is never the only signal.
 	Reason, ReasonLabel string
 	// Tier is set for a marked item, so the band draws the very chip the list draws.
@@ -46,6 +49,9 @@ type needView struct {
 	// Repo is the repository's name without its owner, and Hue its site's colour key.
 	Repo, Hue string
 	Updated   timeView
+	// FixReady is the number of the open pull request that fixes this alert, which the band then
+	// does not list a second time (FR-1.16 AC2); 0 when there is none.
+	FixReady int
 }
 
 // newNeedsView builds the band from every item the snapshot holds — not the filtered ones: the band
@@ -56,6 +62,8 @@ func newNeedsView(items []domain.Item, gh config.GitHub, now time.Time) *needsVi
 	for _, n := range needed {
 		row := newNeedView(n, gh, now)
 		switch {
+		case n.Need == domain.NeedAlert:
+			v.Alert = true
 		case n.Need == domain.NeedSecurity:
 			v.Security = true
 		case n.Stale(now):
@@ -75,17 +83,18 @@ func newNeedsView(items []domain.Item, gh config.GitHub, now time.Time) *needsVi
 func newNeedView(n domain.Needed, gh config.GitHub, now time.Time) needView {
 	it := n.Item
 	v := needView{
-		Reason:  n.Need.String(),
-		Number:  it.Number,
-		Title:   it.Title,
-		URL:     it.URL,
-		Author:  it.Author,
-		Repo:    it.Repo[strings.IndexByte(it.Repo, '/')+1:],
-		Hue:     hueForRepo(gh, it.Repo),
-		Updated: newTimeView(it.UpdatedAt, now),
+		Reason:   n.Need.String(),
+		Number:   it.Number,
+		Title:    it.Title,
+		URL:      it.URL,
+		Author:   it.Author,
+		Repo:     it.Repo[strings.IndexByte(it.Repo, '/')+1:],
+		Hue:      hueForRepo(gh, it.Repo),
+		Updated:  newTimeView(it.UpdatedAt, now),
+		FixReady: n.FixReady,
 	}
 	switch n.Need {
-	case domain.NeedSecurity, domain.NeedDependency:
+	case domain.NeedAlert, domain.NeedSecurity, domain.NeedDependency:
 		v.Tier = newTierView(it)
 	case domain.NeedReview:
 		v.ReasonLabel = "Review requested"

@@ -293,7 +293,7 @@ func TestTheSecurityTileSaysWhenNothingIsMarked(t *testing.T) {
 	h := dashHandler(t, &fakeSource{items: []domain.Item{ghItem(1, "Fix the header", testNow)}})
 	body := getAuthed(t, h, "/sites").Body.String()
 
-	if !strings.Contains(body, "All clear — no security or dependency items open") {
+	if !strings.Contains(body, "All clear — no security or dependency items, no Dependabot alerts open.") {
 		t.Error("the security tile does not say that nothing is marked")
 	}
 	// FR-1.13 AC6: the hazard tape is up only while something is marked.

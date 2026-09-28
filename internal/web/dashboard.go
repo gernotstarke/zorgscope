@@ -281,6 +281,9 @@ type itemsView struct {
 	// drawn beside ShownLine rather than inside it because it is a link to the list narrowed to
 	// those items, and a link cannot be built out of a sentence.
 	Security int
+	// Alerts is how many Dependabot alerts are open and Serious how many of them are High or
+	// Critical, counted like Security (FR-1.16). Zero alerts draws nothing.
+	Alerts, Serious int
 	// Fetching says a fetch is in flight, so the list draws the poll that will replace it and
 	// states that it is not current (FR-1.9 AC2, AC6). It lives on the items view rather than on
 	// the page, because GET /items renders this struct alone: putting it on the page would mean
@@ -308,8 +311,8 @@ type groupView struct {
 // input carries, and Since in the form <input type="date"> submits.
 type filterView struct {
 	Repo, Text, Since string
-	Kind              string // "", "issue" or "pr"
-	Tier              string // "", "dependency" or "security" (FR-1.13)
+	Kind              string // "", "issue", "pr" or "alert"
+	Tier              string // "", "dependency", "security" (FR-1.13) or "alert" (FR-1.16)
 }
 
 // Active is how many of the filter's axes are in force, for the disclosure's summary: "· 2 active".
@@ -464,8 +467,10 @@ func chromeFor(r *http.Request, snap snapshot.Snapshot, owner string, now time.T
 	if r.URL.Path == "/search" {
 		c.Query = strings.TrimSpace(r.URL.Query().Get("q"))
 	}
-	for _, it := range snap.Items {
-		if domain.NeedsNow(it, owner, now) {
+	// Counted from the band itself rather than item by item, so that the two cannot disagree: an
+	// alert whose fix is open is one row of the band, and one thing needing the owner (FR-1.16 AC2).
+	for _, n := range domain.BuildNeedsYou(snap.Items, owner) {
+		if !n.Stale(now) {
 			c.Needs++
 		}
 	}
@@ -506,6 +511,8 @@ func (s *Server) itemsView(d domain.Dashboard, snap snapshot.Snapshot, now time.
 		Filtered:  !d.Filter.Empty(),
 		ShownLine: shownLine(d),
 		Security:  d.Security,
+		Alerts:    d.Alerts,
+		Serious:   d.Serious,
 		Fetching:  snap.Fetching,
 		Repos:     len(s.cfg.GitHub.Repos),
 	}
@@ -684,6 +691,8 @@ func kindShort(k domain.Kind) string {
 		return "PR"
 	case domain.KindIssue:
 		return "Issue"
+	case domain.KindAlert:
+		return "Alert"
 	default:
 		return string(k)
 	}
@@ -695,6 +704,8 @@ func kindLabel(k domain.Kind) string {
 		return "issue"
 	case domain.KindPR:
 		return "pull request"
+	case domain.KindAlert:
+		return "Dependabot alert"
 	default:
 		return string(k)
 	}

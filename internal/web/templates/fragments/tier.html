@@ -5,5 +5,8 @@
 
      The word is what carries the meaning; the shield is decorative and hidden from assistive
      technology. The title names the evidence, so a red row always answers "why?". It is called
-     with the tierView itself. */}}
-{{define "item-tier"}}{{if .Name}}<span class="tier-chip tier-chip-{{.Name}}"{{with .Evidence}} title="{{.}}"{{end}}>{{if eq .Name "security"}}<svg class="tier-shield" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false"><path d="M8 1.2 2.5 3.3v4.2c0 3.4 2.3 6.3 5.5 7.3 3.2-1 5.5-3.9 5.5-7.3V3.3z" fill="currentColor"/></svg>{{end}}{{.Label}}</span>{{end}}{{end}}
+     with the tierView itself.
+
+     A Dependabot alert (FR-1.16 AC4) carries a shield with an exclamation mark rather than the
+     solid shield, and its severity both in its words and as a class. */}}
+{{define "item-tier"}}{{if .Name}}<span class="tier-chip tier-chip-{{.Name}}{{with .Sev}} sev-{{.}}{{end}}"{{with .Evidence}} title="{{.}}"{{end}}>{{if eq .Name "alert"}}<svg class="tier-shield" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false"><path d="M8 1.9 3.2 3.8v3.7c0 3 2 5.6 4.8 6.5 2.8-.9 4.8-3.5 4.8-6.5V3.8z" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="7.25" y="4.6" width="1.5" height="4.4" fill="currentColor"/><circle cx="8" cy="11" r=".95" fill="currentColor"/></svg>{{end}}{{if eq .Name "security"}}<svg class="tier-shield" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false"><path d="M8 1.2 2.5 3.3v4.2c0 3.4 2.3 6.3 5.5 7.3 3.2-1 5.5-3.9 5.5-7.3V3.3z" fill="currentColor"/></svg>{{end}}{{.Label}}</span>{{end}}{{end}}

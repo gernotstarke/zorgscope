@@ -33,6 +33,13 @@
   --tier-fill-security: light-dark(#b3261e, #a8231d);
   --tier-ink-security: light-dark(#ffffff, #ffffff);
   --tier-ink-dependency: light-dark(#ffffff, #1a1206);
+  /* Dependabot alerts (FR-1.16) have a colour nothing else uses: a magenta-violet, so an alert is
+     told from a Security item by hue as well as by its crosshatch and its words. The tile's
+     heading band is one fixed pair in both appearances, like the red tape, and carries white. */
+  --alert: light-dark(#9c1f8f, #e38ae0);
+  --tier-ink-alert: light-dark(#ffffff, #1a0620);
+  --tape-alert: #9c1f8f;
+  --tape-alert-dark: #5e1256;
 
   --radius: 10px;
   --gap: 1rem;
@@ -58,6 +65,7 @@
     --danger: #b3261e;
     --warn: #8a5300;
     --ok: #1f7a3d;
+    --alert: #9c1f8f;
   }
   .radar-svg {
     --radar-ground: #f8fbf9;
@@ -68,6 +76,8 @@
     --radar-security-deep: #6d1611;
     --radar-dependency: #b87400;
     --radar-dependency-deep: #4a3000;
+    --radar-alert: #9c1f8f;
+    --radar-alert-deep: #3d0b38;
   }
 }
 
@@ -975,6 +985,54 @@ button:hover,
   padding-left: 1rem;
 }
 
+/* Dependabot alerts (FR-1.16 AC4). The chip is solid for High and Critical, outlined for Low and
+   Medium: an alert nobody needs to act on today is still shown, but not as loudly. The row's mark
+   follows the same split — a crosshatch, both diagonals rather than the tape's one, for the
+   serious ones, and a plain 3 px rule for the rest — so an alert is told from a Security row by
+   its pattern as well as by its colour and its words. */
+.tier-chip-alert {
+  color: var(--tier-ink-alert);
+  background: var(--alert);
+  border-color: var(--alert);
+}
+.tier-chip-alert.sev-low,
+.tier-chip-alert.sev-medium {
+  color: var(--alert);
+  background: color-mix(in srgb, var(--alert) 10%, transparent);
+}
+.tier-alert { --tier-tape: var(--alert); }
+.item.tier-alert,
+.hit.tier-alert,
+.need.tier-alert {
+  background-image: linear-gradient(var(--tier-tape), var(--tier-tape));
+  background-repeat: no-repeat;
+  background-size: 3px 100%;
+  background-position: left top;
+}
+.item.tier-alert.sev-high,
+.item.tier-alert.sev-critical,
+.hit.tier-alert.sev-high,
+.hit.tier-alert.sev-critical,
+.need.tier-alert.sev-high,
+.need.tier-alert.sev-critical {
+  /* codespell:ignore-begin */
+  background-image:
+    repeating-linear-gradient(45deg, var(--tier-tape) 0 2px, transparent 2px 6px),
+    repeating-linear-gradient(-45deg, var(--tier-tape) 0 2px, transparent 2px 6px),
+    linear-gradient(color-mix(in srgb, var(--tier-tape) 30%, var(--surface)),
+      color-mix(in srgb, var(--tier-tape) 30%, var(--surface)));
+  /* codespell:ignore-end */
+  background-size: 12px 100%;
+}
+.item.tier-alert {
+  margin-left: -0.75rem;
+  padding-left: 1.35rem;
+}
+.hit.tier-alert { padding-left: 1rem; }
+.need.tier-alert { padding-left: 0.9rem; }
+.need.tier-alert.sev-high,
+.need.tier-alert.sev-critical { background-size: 8px 100%; }
+
 /* The Security tile (FR-1.13): the Sites view's first tile, gathering everything marked wherever
    it is open. It belongs to no site, so it carries no brand hue and no wash. Its heading is hazard
    tape only while something is marked (.is-marked, FR-1.13 AC6): on an ordinary day it is a
@@ -999,6 +1057,22 @@ button:hover,
   color: #ffffff;
 }
 .tile-tier.is-alert { box-shadow: inset 4px 0 0 var(--danger); }
+/* While a serious Dependabot alert is open and nothing is marked, the heading is the alert's own
+   crosshatch rather than red tape (FR-1.16): told apart by pattern and colour, and white text on
+   one fixed pair of deep violets in both appearances, as the red tape is. */
+.tile-tier.is-alerted .tile-title {
+  /* codespell:ignore-begin */
+  background-image:
+    repeating-linear-gradient(45deg, var(--tape-alert-dark) 0 3px, transparent 3px 10px),
+    repeating-linear-gradient(-45deg, var(--tape-alert-dark) 0 3px, transparent 3px 10px),
+    linear-gradient(var(--tape-alert), var(--tape-alert));
+  /* codespell:ignore-end */
+  color: #ffffff;
+}
+/* The repositories whose alerts the tile cannot vouch for, and a site tile's alert count. */
+.tile-coverage { color: var(--muted); font-size: 0.8rem; margin: 0.4rem 0 0; }
+.tile-alerts { margin: 0.4rem 0 0; font-size: 0.85rem; font-weight: 600; }
+.tile-alerts a { color: var(--alert); }
 
 /* The repository a row comes from. The Security tile spans every site, so its rows name what the
    heading cannot. */
@@ -1007,6 +1081,8 @@ button:hover,
 /* The security count above the list, which links to the list narrowed to those items
    (FR-1.13 AC4). */
 .security-count a { color: var(--danger); }
+.alert-count a { color: var(--alert); }
+.need-kind-alert, .item-kind-alert { color: var(--alert); }
 
 /* ---------------------------------------------------------------- Needs you (FR-1.14)
 
@@ -1031,6 +1107,23 @@ button:hover,
 .needs.has-security .needs-count {
   background: var(--tier-fill-security);
   color: var(--tier-ink-security);
+}
+/* A serious Dependabot alert frames the band in its own colour (FR-1.16); a Security item's red
+   wins when both are there, since the template sets only one of the two classes. */
+.needs.has-alert {
+  border-color: var(--alert);
+  box-shadow: 0 0 0 1px var(--alert);
+}
+.needs.has-alert .needs-count {
+  background: var(--alert);
+  color: var(--tier-ink-alert);
+}
+/* "fix ready: #n" on an alert whose fix pull request is open: the thing to do is to merge it. */
+.need-fix {
+  color: var(--ok);
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .needs-title {
@@ -1273,6 +1366,8 @@ mark { background: #fde68a; color: #1f2937; border-radius: 2px; padding: 0 0.1em
   --radar-security-deep: light-dark(#6d1611, #5a120e);
   --radar-dependency: light-dark(#b87400, #f0b43c);
   --radar-dependency-deep: light-dark(#4a3000, #3a2600);
+  --radar-alert: light-dark(#9c1f8f, #e38ae0);
+  --radar-alert-deep: light-dark(#3d0b38, #2e0829);
   /* Wider than the page's reading column: the scope is a picture, and it earns the whole window.
      As wide as the window allows, but never taller than the window below the top bar (1.7 is the
      viewBox's aspect ratio, radar.go's radarWidth / radarHeight), centred on the column it sits in. */
@@ -1317,6 +1412,7 @@ mark { background: #fde68a; color: #1f2937; border-radius: 2px; padding: 0 0.1em
 .radar-svg .count-needs { fill: var(--accent); font-weight: 700; }
 .radar-svg .count-security { fill: var(--radar-security); font-weight: 700; }
 .radar-svg .count-dependency { fill: var(--radar-dependency); font-weight: 700; }
+.radar-svg .count-alert { fill: var(--radar-alert); font-weight: 700; }
 .radar-card-keys { display: none; }
 .radar-svg .radar-card-keys .radar-open-hint { fill: var(--accent); font-size: 17px; }
 
@@ -1382,7 +1478,15 @@ mark { background: #fde68a; color: #1f2937; border-radius: 2px; padding: 0 0.1em
 .mark-security .ring { stroke: url(#radar-tape-security); stroke-width: 6; }
 .mark-security .ring-pulse { stroke: var(--radar-security); stroke-width: 3; animation-duration: 1.4s; }
 .mark-dependency .ring { stroke: url(#radar-tape-dependency); stroke-width: 5; }
-.mark-security .mark, .mark-dependency .mark { stroke: var(--text); }
+/* A Dependabot alert (FR-1.16): a triangle, ringed in crosshatch and pulsing while it is serious,
+   ringed thinly in the alert colour otherwise. */
+.mark-alert .ring { stroke: url(#radar-hatch-alert); stroke-width: 6; }
+.mark-alert .ring-pulse { stroke: var(--radar-alert); stroke-width: 3; animation-duration: 1.4s; }
+.mark-alert-low .ring { stroke: var(--radar-alert); stroke-width: 2; }
+#radar-hatch-alert .tape-a { stroke: var(--radar-alert); }
+#radar-hatch-alert .tape-b { fill: var(--radar-alert-deep); }
+.radar-svg .mark-alert .tag { fill: var(--radar-alert); font-weight: 800; }
+.mark-security .mark, .mark-dependency .mark, .mark-alert .mark, .mark-alert-low .mark { stroke: var(--text); }
 .radar-legend .mark { stroke: var(--surface); stroke-width: 1.5; }
 #radar-tape-security .tape-a { fill: var(--radar-security); }
 #radar-tape-security .tape-b { fill: var(--radar-security-deep); }
@@ -1410,6 +1514,7 @@ mark { background: #fde68a; color: #1f2937; border-radius: 2px; padding: 0 0.1em
 .radar-svg .card .r { font-weight: 700; fill: var(--accent); }
 .radar-svg .mark-security .card .r { fill: var(--radar-security); }
 .radar-svg .mark-dependency .card .r { fill: var(--radar-dependency); }
+.radar-svg .mark-alert .card .r, .radar-svg .mark-alert-low .card .r { fill: var(--radar-alert); }
 
 @media (prefers-reduced-motion: reduce) {
   .radar-sweep, .blip .mark, .ring-pulse { animation: none; }

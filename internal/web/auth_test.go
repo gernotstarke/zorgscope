@@ -775,15 +775,18 @@ func boolPtr(b bool) *bool { return &b }
 type fakeSource struct {
 	mu    sync.Mutex
 	items []domain.Item
-	err   error
-	calls int
+	// coverage is what the fake says about each repository's Dependabot alerts (FR-1.16); nil
+	// says nothing, as a source whose fetch of every repository failed would.
+	coverage map[string]domain.Coverage
+	err      error
+	calls    int
 }
 
 func (f *fakeSource) Fetch(context.Context) (domain.Fetched, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
-	return domain.Fetched{Items: f.items}, f.err
+	return domain.Fetched{Items: f.items, Coverage: f.coverage}, f.err
 }
 
 // CallCount returns the number of times Fetch has been called so far.
