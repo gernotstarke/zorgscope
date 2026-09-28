@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gernotstarke/zorgscope/internal/config"
 	"github.com/gernotstarke/zorgscope/internal/domain"
@@ -121,6 +122,12 @@ type radarBlip struct {
 	Tag        string
 	TagX, TagY float64
 	Card       radarCard
+
+	// The blip's geometry before it is drawn, kept so that spreadBlips can move it: its distance
+	// and bearing, the bearings its sector allows, the half-size of its mark, and its kind, which
+	// decides the mark's shape.
+	radius, bearing, lo, hi, k float64
+	kind                       domain.Kind
 }
 
 // radarCard is the data block a hovered or focused blip shows in the panel. Its layout is fixed,
@@ -239,6 +246,7 @@ func buildRadar(items []domain.Item, gh config.GitHub, now time.Time) radarView 
 		}
 		v.Blips = append(v.Blips, b)
 	}
+	spreadBlips(v.Blips)
 	v.Total = len(v.Blips)
 	sort.SliceStable(v.Blips, func(i, j int) bool {
 		return markRank[v.Blips[i].Mark] < markRank[v.Blips[j].Mark]
@@ -284,17 +292,16 @@ func newRadarSector(spec domain.SiteSpec, a0, a1 float64) radarSector {
 func newRadarBlip(it domain.Item, gh config.GitHub, now time.Time, a0, width float64, hue string) radarBlip {
 	h := float64(crc32.ChecksumIEEE([]byte(it.Repo+"#"+strconv.Itoa(it.Number)))&0xffff) / 0xffff
 	margin := min(radarMargin, width/4)
-	bearing := a0 + margin + h*(width-2*margin)
+	lo, hi := a0+margin, a0+width-margin
 
 	days := float64(radarMaxDays)
 	if !it.UpdatedAt.IsZero() {
 		days = max(0, now.Sub(it.UpdatedAt).Hours()/24)
 	}
-	p := polar(radarRadius(days), bearing)
 
 	b := radarBlip{
-		X: p.X, Y: p.Y, Hue: "hue-" + hue, URL: it.URL,
-		Bearing: "bearing-" + strconv.Itoa(int(bearing/10)%radarBearings),
+		Hue: "hue-" + hue, URL: it.URL,
+		lo: lo, hi: hi, kind: it.Kind,
 	}
 	need := domain.NeedFor(it, gh.Owner)
 	switch it.Tier() {
@@ -316,25 +323,12 @@ func newRadarBlip(it domain.Item, gh config.GitHub, now time.Time, a0, width flo
 		}
 	}
 
-	k := 9.0
+	b.k = 9.0
 	if b.Mark == "security" || b.Mark == "alert" {
-		k = 11
+		b.k = 11
 	}
-	b.R = k - 2
-	switch it.Kind {
-	case domain.KindPR:
-		b.Shape = "M" + coord(b.X, b.Y-k) + " l" + num(k) + "," + num(k) + " l-" + num(k) + "," + num(k) +
-			" l-" + num(k) + ",-" + num(k) + "Z"
-	case domain.KindAlert:
-		// A triangle pointing up, its centroid on the blip's place: apex k above, base k/2 below.
-		h := round1(k * 0.87)
-		b.Shape = "M" + coord(b.X, b.Y-k) + " l" + num(h) + "," + num(round1(k*1.5)) + " l-" + num(round1(2*h)) + ",0Z"
-	default:
-	}
-
-	if b.Tag != "" {
-		b.TagX, b.TagY = round1(b.X+b.Ring+5), round1(b.Y-b.Ring+2)
-	}
+	b.R = b.k - 2
+	b.place(radarRadius(days), lo+h*(hi-lo))
 
 	b.Age = "age-0"
 	if b.Mark != "security" && b.Mark != "dependency" && it.Kind != domain.KindAlert {
@@ -350,6 +344,129 @@ func newRadarBlip(it domain.Item, gh config.GitHub, now time.Time, a0, width flo
 
 	b.Card = newRadarCard(it, b.Mark, need, now)
 	return b
+}
+
+// place puts the blip at radius r and bearing deg, and draws everything that depends on where it
+// stands: its point, its shape, its tag and the delay of its flash.
+func (b *radarBlip) place(r, deg float64) {
+	b.radius, b.bearing = r, deg
+	p := polar(r, deg)
+	b.X, b.Y = p.X, p.Y
+	b.Bearing = "bearing-" + strconv.Itoa(int(deg/10)%radarBearings)
+	k := b.k
+	switch b.kind {
+	case domain.KindPR:
+		b.Shape = "M" + coord(b.X, b.Y-k) + " l" + num(k) + "," + num(k) + " l-" + num(k) + "," + num(k) +
+			" l-" + num(k) + ",-" + num(k) + "Z"
+	case domain.KindAlert:
+		// A triangle pointing up, its centroid on the blip's place: apex k above, base k/2 below.
+		h := round1(k * 0.87)
+		b.Shape = "M" + coord(b.X, b.Y-k) + " l" + num(h) + "," + num(round1(k*1.5)) + " l-" + num(round1(2*h)) + ",0Z"
+	default:
+		b.Shape = ""
+	}
+	if b.Tag != "" {
+		b.TagX, b.TagY = round1(b.X+b.Ring+5), round1(b.Y-b.Ring+2)
+	}
+}
+
+// radarGap is the clear space, in the SVG's units, spreadBlips keeps between two blips, and
+// radarStep how far it moves one at a time.
+const (
+	radarGap  = 2.0
+	radarStep = 4.0
+)
+
+// spreadBlips moves blips that would cover each other until none does (FR-1.15 AC4). Without it
+// two items touched the same afternoon stand a few units apart, and near the centre a sector is
+// barely wider than one ringed blip.
+//
+// The bearing inside a sector means nothing — it is a hash, there only to spread the items — so a
+// blip is first moved sideways, alternately either side of where it stood, within its sector. Only
+// when the sector has no room at that distance is it moved outward, a step at a time: a little
+// older on the scope than it is, which near the centre, on a logarithmic scale, is a matter of
+// hours. The loud blips are placed first and so keep their places; everything here is
+// deterministic, so a blip stands in the same place on every render. A blip that finds no room
+// even at the rim stays where it was: overlapping is better than missing (QG-1).
+func spreadBlips(blips []radarBlip) {
+	order := make([]int, len(blips))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(i, j int) bool {
+		a, b := blips[order[i]], blips[order[j]]
+		if markRank[a.Mark] != markRank[b.Mark] {
+			return markRank[a.Mark] > markRank[b.Mark]
+		}
+		return a.radius < b.radius
+	})
+
+	var placed []*radarBlip
+	for _, i := range order {
+		b := &blips[i]
+		r0, d0 := b.radius, b.bearing
+	search:
+		for r := r0; r <= radarR; r += radarStep {
+			step := radarStep / r * 180 / math.Pi // radarStep along the arc, in degrees
+			for n := 0; ; n++ {
+				// 0, +1, -1, +2, -2, … steps from where the blip stood.
+				off := float64((n+1)/2) * step
+				if n%2 == 0 {
+					off = -off
+				}
+				d := d0 + off
+				if d0+float64((n+1)/2)*step > b.hi && d0-float64((n+1)/2)*step < b.lo {
+					break // both sides of the sector tried at this distance
+				}
+				if d < b.lo || d > b.hi {
+					continue
+				}
+				b.place(r, d)
+				if !collides(b, placed) {
+					break search
+				}
+			}
+			b.place(r0, d0)
+		}
+		placed = append(placed, b)
+	}
+}
+
+// collides reports whether b covers any of placed: two marks closer than their footprints, two
+// tags overlapping, or a tag over a mark.
+func collides(b *radarBlip, placed []*radarBlip) bool {
+	for _, o := range placed {
+		if math.Hypot(b.X-o.X, b.Y-o.Y) < b.footprint()+o.footprint()+radarGap {
+			return true
+		}
+		if b.Tag != "" && (o.Tag != "" && boxesOverlap(b.tagBox(), o.tagBox()) || boxNearPoint(b.tagBox(), o.X, o.Y, o.footprint())) {
+			return true
+		}
+		if o.Tag != "" && boxNearPoint(o.tagBox(), b.X, b.Y, b.footprint()) {
+			return true
+		}
+	}
+	return false
+}
+
+// footprint is how far from its centre a blip draws: its ring, or its mark.
+func (b *radarBlip) footprint() float64 { return max(b.Ring, b.R+2) }
+
+// tagBox is the rectangle the blip's tag covers, x0, y0, x1, y1: 14 px bold type, about nine units
+// a character.
+func (b *radarBlip) tagBox() [4]float64 {
+	return [4]float64{b.TagX, b.TagY - 12, b.TagX + 9*float64(utf8.RuneCountInString(b.Tag)), b.TagY + 3}
+}
+
+func boxesOverlap(a, b [4]float64) bool {
+	return a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
+}
+
+// boxNearPoint reports whether the box comes within r of the point.
+func boxNearPoint(box [4]float64, x, y, r float64) bool {
+	dx := max(box[0]-x, 0, x-box[2])
+	dy := max(box[1]-y, 0, y-box[3])
+	return math.Hypot(dx, dy) < r
 }
 
 func newRadarCard(it domain.Item, mark string, need domain.Need, now time.Time) radarCard {

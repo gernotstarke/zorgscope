@@ -235,3 +235,85 @@ func TestRadarPageWithNothingOpen(t *testing.T) {
 		t.Error("an empty radar should draw the scope and say nothing is open")
 	}
 }
+
+// tenSites is the production shape of the scope: ten repositories, nine claimed by a site, so the
+// sectors are as narrow as they get.
+func tenSites() config.GitHub {
+	gh := config.GitHub{Owner: "gernotstarke"}
+	for i := range 10 {
+		repo := "arc42/site-" + fmt.Sprint(i)
+		gh.Repos = append(gh.Repos, repo)
+		if i < 9 {
+			gh.Sites = append(gh.Sites, config.Site{Name: "site " + fmt.Sprint(i), Repo: repo, Hue: "navy"})
+		}
+	}
+	return gh
+}
+
+// footprint is how far from its centre a blip draws: its ring, or its mark.
+func footprint(b radarBlip) float64 { return max(b.Ring, b.R+2) }
+
+// tagBox is the rectangle a blip's tag covers: 14 px bold, about 9 px a character.
+func tagBox(b radarBlip) (x0, y0, x1, y1 float64) {
+	return b.TagX, b.TagY - 12, b.TagX + 9*float64(len([]rune(b.Tag))), b.TagY + 3
+}
+
+// assertNoCollisions fails for every two blips whose marks overlap, and every two tags that do.
+func assertNoCollisions(t *testing.T, v radarView) {
+	t.Helper()
+	for i, a := range v.Blips {
+		for _, b := range v.Blips[i+1:] {
+			if d := math.Hypot(a.X-b.X, a.Y-b.Y); d < footprint(a)+footprint(b) {
+				t.Errorf("%s and %s overlap: %.1f apart, footprints %.1f and %.1f", a.URL, b.URL, d, footprint(a), footprint(b))
+			}
+			if a.Tag == "" || b.Tag == "" {
+				continue
+			}
+			ax0, ay0, ax1, ay1 := tagBox(a)
+			bx0, by0, bx1, by1 := tagBox(b)
+			if ax0 < bx1 && bx0 < ax1 && ay0 < by1 && by0 < ay1 {
+				t.Errorf("the tags %q of %s and %q of %s overlap", a.Tag, a.URL, b.Tag, b.URL)
+			}
+		}
+	}
+}
+
+// FR-1.15 AC4: two items touched the same afternoon stand side by side, not on top of each other —
+// arc42-generator #67 and #68, both needing the owner, updated two hours and ten minutes ago, in a
+// sector barely wider than one ringed blip at the centre.
+func TestRadarBlipsDoNotOverlap(t *testing.T) {
+	gh := tenSites()
+	repo := gh.Repos[8]
+	at := func(d time.Duration) time.Time { return testNow.Add(-d) }
+	day := 24 * time.Hour
+	items := []domain.Item{
+		{Kind: domain.KindPR, Repo: repo, Number: 68, Author: "gernotstarke", URL: "#68", UpdatedAt: at(10 * time.Minute)},
+		{Kind: domain.KindPR, Repo: repo, Number: 67, Author: "gernotstarke", URL: "#67", UpdatedAt: at(2 * time.Hour)},
+		{Kind: domain.KindPR, Repo: repo, Number: 59, Author: "raifdmueller", State: "DRAFT", URL: "#59", UpdatedAt: at(294 * day)},
+		{Kind: domain.KindPR, Repo: repo, Number: 57, Author: "raifdmueller", URL: "#57", UpdatedAt: at(217 * day)},
+		{Kind: domain.KindPR, Repo: repo, Number: 56, Author: "dominikgoertz", URL: "#56", UpdatedAt: at(348 * day)},
+		{Kind: domain.KindPR, Repo: repo, Number: 51, Author: "KemalSoysal", URL: "#51", UpdatedAt: at(441 * day)},
+		{Kind: domain.KindIssue, Repo: repo, Number: 48, URL: "#48", UpdatedAt: at(522 * day)},
+		{Kind: domain.KindIssue, Repo: repo, Number: 45, URL: "#45", UpdatedAt: at(1273 * day)},
+	}
+	v := buildRadar(items, gh, testNow)
+	assertNoCollisions(t, v)
+	lo, hi := 8*36.0, 9*36.0
+	for _, b := range v.Blips {
+		if deg := bearingOf(b); deg < lo || deg > hi {
+			t.Errorf("%s was moved out of its sector: bearing %.1f outside [%v, %v]", b.URL, deg, lo, hi)
+		}
+	}
+}
+
+// The same holds over the representative fixture: 150 items over ten repositories.
+func TestRadarRepresentativeFixtureHasNoCollisions(t *testing.T) {
+	gh := tenSites()
+	items := representativeItems()
+	for i := range items {
+		items[i].Repo = gh.Repos[i%10]
+		items[i].URL = fmt.Sprintf("u%d", i)
+		items[i].Number = i + 1
+	}
+	assertNoCollisions(t, buildRadar(items, gh, testNow))
+}
