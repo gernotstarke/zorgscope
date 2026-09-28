@@ -1,6 +1,6 @@
 # 0014. Security from evidence already fetched: two tiers, no security API
 
-* Status: accepted
+* Status: accepted; option E superseded by [ADR‑0015](0015-dependabot-alerts-nested-in-the-pull-request-query.md) for Dependabot alerts (2026-09-28)
 * Date: 2026-09-21
 * Requirements: FR‑1.13, FR‑1.10, QS‑3.5
 
