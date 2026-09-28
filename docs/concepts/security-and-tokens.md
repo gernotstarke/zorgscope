@@ -42,6 +42,12 @@ GitHub asks for to read alerts. `public_repo` would be accepted too, but it also
 access to code, so it is not used. The token's owner must be able to see the alerts — an admin of
 each repository.
 
+A fine-grained token works too, if it carries the *Dependabot alerts: read* permission on every
+repository. One without it is the dangerous case: GitHub's GraphQL API does not refuse it, it
+answers with an empty list, which would read as "no vulnerabilities". zorgscope therefore checks an
+empty list once per repository against the REST alerts endpoint, which does refuse such a token,
+and shows the repository as "unavailable to this token" rather than as clean.
+
 This makes the token more sensitive than it was. Leaked, it tells its holder which of the
 repositories have unpatched vulnerabilities, and in which dependency. Rotating it works as before —
 a new token in `.env` and as a Fly secret, the old one revoked on GitHub — and a token that loses the

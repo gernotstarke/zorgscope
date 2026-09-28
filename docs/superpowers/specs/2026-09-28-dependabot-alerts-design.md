@@ -339,3 +339,8 @@ Where the implementation departs from the draft above, and why:
   chip ink white / `#1a0620`, 6.99:1 and 8.23:1); the tile band is `#9c1f8f` hatched with
   `#5e1256` under white. `contrast_test.go` asserts the rule, the solid chip and the outlined chip
   in both appearances.
+* **An empty list is checked before it is believed** (2.1.1, ADR‑0015 amendment). A fine‑grained
+  token without the Dependabot alerts permission gets an empty list from GraphQL and no error; the
+  REST alerts endpoint refuses it with 403. Each repository with alerts on and none open is checked
+  there once per process; only a 200 makes it clean. Fixtures `org/alerts-clean` and
+  `org/alerts-silent` cover both answers.

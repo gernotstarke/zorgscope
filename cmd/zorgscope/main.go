@@ -107,6 +107,7 @@ func githubConfig(cfg config.Config) github.Config {
 	}
 	if cfg.GitHub.BaseURL != "" {
 		gh.BaseURL = cfg.GitHub.BaseURL + "/graphql"
+		gh.RESTBaseURL = cfg.GitHub.BaseURL
 	}
 	return gh
 }

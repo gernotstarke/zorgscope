@@ -102,6 +102,21 @@ item kind, the tier and need it gets, and how it is drawn.
 * Neutral: dismissing or fixing an alert stays on GitHub. zorgscope reads, it never writes
   (unchanged).
 
+### Amendment, 2026-09-28 (2.1.1): an empty list is checked before it is believed
+
+The two refusal shapes above are not the only way GitHub declines. A fine-grained token without the
+*Dependabot alerts* permission is not refused at all: GraphQL answers `hasVulnerabilityAlertsEnabled:
+true` and an empty list, with no error, which reads exactly like a clean repository. Gernot's local
+token did this, and zorgscope said nothing about `quality.arc42.org-site#62`, a HIGH alert. The REST
+endpoint `GET /repos/{owner}/{name}/dependabot/alerts` does refuse the same token, with 403.
+
+So an empty list is now checked once against that endpoint, asking for one alert, and the answer
+is kept per repository for the life of the process. A 200 makes the repository clean; a 401, 403 or
+404 makes it *unavailable*, remembered; anything else makes it *unavailable* for this fetch only, so a
+passing outage does not stick. A list that is not empty is never checked — it could not have been
+read otherwise. The cost is no GraphQL request (QS‑3.5 unchanged) and, once per wake, one small REST
+request per repository that has alerts on and none open.
+
 ## Pros and cons of the options
 
 ### A: Keep ADR‑0014

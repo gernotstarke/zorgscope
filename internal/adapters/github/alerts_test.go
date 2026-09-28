@@ -22,6 +22,7 @@ type countingFake struct {
 	mu            sync.Mutex
 	requests      int
 	alertRequests int
+	probes        int
 	srv           *httptest.Server
 }
 
@@ -40,6 +41,11 @@ func newCountingFake(t *testing.T) *countingFake {
 			c.mu.Unlock()
 			r.Body = io.NopCloser(bytes.NewReader(body))
 		}
+		if strings.HasSuffix(r.URL.Path, "/dependabot/alerts") {
+			c.mu.Lock()
+			c.probes++
+			c.mu.Unlock()
+		}
 		fake.ServeHTTP(w, r)
 	}))
 	t.Cleanup(c.srv.Close)
@@ -54,8 +60,16 @@ func (c *countingFake) counts() (requests, alertRequests int) {
 	return r, a
 }
 
+func (c *countingFake) probeCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.probes
+}
+
 func (c *countingFake) fetcher(repos ...string) *github.IssueFetcher {
-	return github.NewIssueFetcher(github.Config{Token: "x", BaseURL: c.srv.URL + "/graphql", Repos: repos}, c.srv.Client())
+	return github.NewIssueFetcher(github.Config{
+		Token: "x", BaseURL: c.srv.URL + "/graphql", RESTBaseURL: c.srv.URL, Repos: repos,
+	}, c.srv.Client())
 }
 
 // FR-1.16 AC1: an alert arrives as an item of kind Alert, every field mapped, after the repository's
@@ -196,5 +210,38 @@ func TestARefusedTokenCostsOneRequestPerRepositoryOnce(t *testing.T) {
 	}
 	if req, _ := c.counts(); req != 20 {
 		t.Errorf("second fetch made %d requests, want 20", req)
+	}
+}
+
+// FR-1.16 AC5: GitHub answers a token that may not read alerts — a fine-grained token without the
+// Dependabot alerts permission — with no error and an empty list, which reads exactly like a clean
+// repository. An empty list is therefore checked once against the REST endpoint, which does refuse
+// such a token: a repository is reported clean only when that says it may be read.
+func TestAnEmptyAlertListIsCheckedBeforeItIsBelieved(t *testing.T) {
+	c := newCountingFake(t)
+	f := c.fetcher("org/alerts-clean", "org/alerts-silent", "org/alerts")
+	got, err := f.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	for repo, want := range map[string]domain.Coverage{
+		"org/alerts-clean":  domain.CoverageOn,
+		"org/alerts-silent": domain.CoverageUnavailable,
+		"org/alerts":        domain.CoverageOn,
+	} {
+		if got.Coverage[repo] != want {
+			t.Errorf("%s: coverage = %v, want %v", repo, got.Coverage[repo], want)
+		}
+	}
+	if probes := c.probeCount(); probes != 2 {
+		t.Errorf("%d REST probes, want 2: one per repository with an empty list, none where alerts arrived", probes)
+	}
+
+	// The answer holds for the process: the next fetch asks nothing more.
+	if _, err := f.Fetch(context.Background()); err != nil {
+		t.Fatalf("second Fetch: %v", err)
+	}
+	if probes := c.probeCount(); probes != 2 {
+		t.Errorf("the second fetch probed again: %d probes in all, want 2", probes)
 	}
 }

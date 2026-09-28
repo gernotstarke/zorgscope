@@ -89,7 +89,9 @@ type ghAlertsFixture struct {
 	Nodes   []ghAlert `json:"nodes"`
 	// Refuse imitates GitHub declining to answer: "field" answers the pull requests but not the
 	// alert fields, with an error — a token whose owner cannot see the alerts; "query" answers
-	// nothing at all, with an error — a token without the scope. "" answers.
+	// nothing at all, with an error — a token without the scope; "silent" answers with an empty list
+	// and no error, as GitHub does for a fine-grained token without the Dependabot alerts
+	// permission, while the REST endpoint refuses it. "" answers.
 	Refuse string `json:"refuse"`
 }
 
@@ -139,6 +141,8 @@ var githubRepoFiles = map[string]string{
 	"org/alerts-off":       "testdata/github/repos/org-alerts-off.json",
 	"org/alerts-forbidden": "testdata/github/repos/org-alerts-forbidden.json",
 	"org/alerts-scope":     "testdata/github/repos/org-alerts-scope.json",
+	"org/alerts-clean":     "testdata/github/repos/org-alerts-clean.json",
+	"org/alerts-silent":    "testdata/github/repos/org-alerts-silent.json",
 }
 
 // loadFixtures reads every embedded fixture document fresh and returns a new, independent copy of

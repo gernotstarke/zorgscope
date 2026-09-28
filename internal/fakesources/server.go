@@ -58,6 +58,7 @@ func NewServer() http.Handler {
 	mux.HandleFunc("GET /login/oauth/authorize", s.handleAuthorize)
 	mux.HandleFunc("POST /login/oauth/access_token", s.handleAccessToken)
 	mux.HandleFunc("GET /repos/{owner}/{repo}", s.handleRepository)
+	mux.HandleFunc("GET /repos/{owner}/{repo}/dependabot/alerts", s.handleDependabotAlerts)
 	mux.HandleFunc("POST /_control/oauth-user", s.handleControlOAuthUser)
 	return mux
 }

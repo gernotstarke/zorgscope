@@ -89,7 +89,7 @@ code; `make check` passes.
 
 | Version | Date | Change |
 |---------|------|--------|
-| 2.1.1 | 2026-09-28 | Radar: blips no longer cover each other — one that would is moved sideways within its sector, outward only when the sector is full |
+| 2.1.1 | 2026-09-28 | Radar: blips no longer cover each other — one that would is moved sideways within its sector, outward only when the sector is full. A token that may not read Dependabot alerts no longer reads as "no alerts": an empty list is checked once against the REST endpoint |
 | 2.1.0 | 2026-09-28 | Dependabot alerts on the list, the Needs-you band, the Security tile and the Radar, in a colour and pattern of their own; High and Critical need you (FR-1.16, ADR-0015) |
 | 2.0.0 | 2026-09-25 | Radar view and the new Needs-you rule make a new major version; the footer names the stack (Go, htmx) and the host (Fly.io) |
 | 1.10.0 | 2026-09-25 | Every open PR active in the last 6 months needs you, your own and drafts included ("Your PR"); Radar takes the window's width, larger data block |

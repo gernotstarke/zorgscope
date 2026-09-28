@@ -20,8 +20,12 @@ import (
 	"github.com/gernotstarke/zorgscope/internal/domain"
 )
 
-// defaultGraphQLURL is used when Config.BaseURL is empty.
-const defaultGraphQLURL = "https://api.github.com/graphql"
+// defaultGraphQLURL is used when Config.BaseURL is empty, and defaultRESTURL when
+// Config.RESTBaseURL is.
+const (
+	defaultGraphQLURL = "https://api.github.com/graphql"
+	defaultRESTURL    = "https://api.github.com"
+)
 
 // maxPages bounds how many pages a single connection's pagination loop will follow. 100 pages at
 // 100 nodes per page is 10,000 items — far beyond anything real — so this is a backstop against
@@ -36,8 +40,11 @@ const maxPages = 100
 // Config configures access to GitHub for IssueFetcher.
 type Config struct {
 	Token   string
-	BaseURL string   // "" -> https://api.github.com/graphql (GraphQL endpoint)
-	Repos   []string // "owner/name"
+	BaseURL string // "" -> https://api.github.com/graphql (GraphQL endpoint)
+	// RESTBaseURL is the REST root, "" -> https://api.github.com. It is asked one thing only: whether
+	// an empty list of Dependabot alerts may be believed (alertsReadable).
+	RESTBaseURL string
+	Repos       []string // "owner/name"
 }
 
 // IssueFetcher fetches open issues and open pull requests for the repositories in Config, over
@@ -45,6 +52,11 @@ type Config struct {
 type IssueFetcher struct {
 	client *githubv4.Client
 	repos  []string
+	// rest and hc are the REST root and the token-carrying client alertsReadable asks with, and
+	// readable its answers, per repository, for the life of the process.
+	rest     string
+	hc       *http.Client
+	readable sync.Map // "owner/name" -> bool
 	// alertsRefused is set once GitHub has refused the alert fields while answering the same page
 	// without them (ADR-0015). From then on this process stops asking: a refused token costs one
 	// extra request per repository once, not on every fetch. A restart — on this machine every
@@ -70,9 +82,16 @@ func NewIssueFetcher(cfg Config, hc *http.Client) *IssueFetcher {
 		url = defaultGraphQLURL
 	}
 
+	rest := strings.TrimRight(cfg.RESTBaseURL, "/")
+	if rest == "" {
+		rest = defaultRESTURL
+	}
+
 	return &IssueFetcher{
 		client: githubv4.NewEnterpriseClient(url, &authed),
 		repos:  cfg.Repos,
+		rest:   rest,
+		hc:     &authed,
 	}
 }
 
@@ -390,6 +409,12 @@ func (f *IssueFetcher) firstPullRequestPage(ctx context.Context, owner, name str
 			if !bool(r.HasVulnerabilityAlertsEnabled) {
 				return r.PullRequests, nil, domain.CoverageOff, nil
 			}
+			if len(r.VulnerabilityAlerts.Nodes) == 0 {
+				if !f.alertsReadable(ctx, owner, name) {
+					return r.PullRequests, nil, domain.CoverageUnavailable, nil
+				}
+				return r.PullRequests, nil, domain.CoverageOn, nil
+			}
 			alerts := make([]domain.Item, 0, len(r.VulnerabilityAlerts.Nodes))
 			for _, n := range r.VulnerabilityAlerts.Nodes {
 				alerts = append(alerts, toAlertItem(owner, name, n))
@@ -404,6 +429,45 @@ func (f *IssueFetcher) firstPullRequestPage(ctx context.Context, owner, name str
 	}
 	f.alertsRefused.Store(true)
 	return q.Repository.PullRequests, nil, domain.CoverageUnavailable, nil
+}
+
+// alertsReadable reports whether this token may read owner/name's Dependabot alerts, so that an
+// empty list from GraphQL can be believed (FR-1.16 AC5).
+//
+// GraphQL does not refuse a token that may not read them — a fine-grained token without the
+// Dependabot alerts permission gets an empty list and no error, which reads exactly like a clean
+// repository. The REST endpoint does refuse it, with 403. So an empty list is checked there once,
+// with one alert asked for, and the answer is kept for the life of the process; a list that is not
+// empty needs no check, since it could not have been read otherwise. Only a 200 is believed. Any
+// other answer — a refusal, an outage, a timeout — means the repository is not reported clean, and
+// only a refusal is remembered, so that a passing outage does not stick.
+func (f *IssueFetcher) alertsReadable(ctx context.Context, owner, name string) bool {
+	repo := owner + "/" + name
+	if v, ok := f.readable.Load(repo); ok {
+		return v.(bool)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		f.rest+"/repos/"+repo+"/dependabot/alerts?state=open&per_page=1", nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	resp, err := f.hc.Do(req)
+	if err != nil {
+		return false
+	}
+	_ = resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK:
+		f.readable.Store(repo, true)
+		return true
+	case http.StatusForbidden, http.StatusNotFound, http.StatusUnauthorized:
+		f.readable.Store(repo, false)
+		return false
+	default:
+		return false
+	}
 }
 
 // prVars are the variables of both pull request queries.

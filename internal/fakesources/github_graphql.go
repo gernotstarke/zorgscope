@@ -137,7 +137,7 @@ func (s *server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 		default:
 			enabled := alerts.Enabled
 			nodes := alerts.Nodes
-			if !enabled || nodes == nil {
+			if !enabled || nodes == nil || alerts.Refuse == "silent" {
 				nodes = []ghAlert{}
 			}
 			resp.Data.Repository.HasVulnerabilityAlertsEnabled = &enabled
@@ -223,4 +223,23 @@ func paginate(nodes []ghIssue, after string) ghConnection {
 	}
 
 	return ghConnection{Nodes: page, PageInfo: ghPageInfo{HasNextPage: hasNext, EndCursor: cursor}}
+}
+
+// handleDependabotAlerts serves GET /repos/{owner}/{repo}/dependabot/alerts, the REST list the
+// adapter asks when GraphQL answered with an empty one (FR-1.16). A token GitHub would refuse —
+// every refusal shape of the fixture — gets 403, as does a repository with alerts switched off;
+// otherwise it gets 200 and the open alerts' numbers, which is all the adapter looks at: the status.
+func (s *server) handleDependabotAlerts(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	fx := s.githubRepos[r.PathValue("owner")+"/"+r.PathValue("repo")]
+	s.mu.Unlock()
+	if fx == nil || !fx.Alerts.Enabled || fx.Alerts.Refuse != "" {
+		writeJSON(w, http.StatusForbidden, map[string]string{"message": "Resource not accessible by personal access token"})
+		return
+	}
+	out := make([]map[string]int, 0, len(fx.Alerts.Nodes))
+	for _, n := range fx.Alerts.Nodes {
+		out = append(out, map[string]int{"number": n.Number})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
