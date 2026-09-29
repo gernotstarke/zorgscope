@@ -459,3 +459,15 @@ func TestRadarPageDrawsTheGroupSwitch(t *testing.T) {
 		t.Error("an unknown group should show the first group, marked")
 	}
 }
+
+// FR-1.8 / spec 2026-09-29 §3: the iSAQB sites are ordinary tiles on the Sites view, in their
+// orange hues. (That an alerts-off repository, never reported on, is listed neither as off nor as
+// unavailable is BuildTierTile's rule for CoverageUnknown, pinned in internal/domain/alert_test.go.)
+func TestSitesViewDrawsTheISAQBTiles(t *testing.T) {
+	body := getAuthed(t, radarGroupsHandler(t, &fakeSource{items: radarGroupItems()}), "/sites").Body.String()
+	for _, want := range []string{`class="tile hue-orange"`, `class="tile hue-apricot"`, "curriculum-foundation", "glossary"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("sites page lacks %s", want)
+		}
+	}
+}

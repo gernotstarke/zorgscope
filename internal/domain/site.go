@@ -172,8 +172,10 @@ func BuildTierTile(in TierTileInput) TierTile {
 		}
 	}
 
-	// A repository nobody reported on (CoverageUnknown) is one whose fetch failed outright; the
-	// page's error notice already says so, and saying it again here would only repeat it.
+	// A repository nobody reported on (CoverageUnknown) is one whose fetch failed outright — the
+	// page's error notice already says so, and saying it again here would only repeat it — or one
+	// whose site says `alerts: false` and was never asked (FR-1.16 AC8), about which there is nothing
+	// to say. Neither may be listed as off or unavailable.
 	for _, repo := range in.Repos {
 		switch in.Coverage[repo] {
 		case CoverageOff:
