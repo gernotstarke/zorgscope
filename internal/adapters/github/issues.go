@@ -45,6 +45,9 @@ type Config struct {
 	// an empty list of Dependabot alerts may be believed (alertsReadable).
 	RESTBaseURL string
 	Repos       []string // "owner/name"
+	// NoAlerts are the repositories never asked for Dependabot alerts (spec 2026-09-29 §5): their
+	// pull request query leaves the alert connection out and no REST probe follows.
+	NoAlerts []string
 }
 
 // IssueFetcher fetches open issues and open pull requests for the repositories in Config, over
@@ -52,6 +55,8 @@ type Config struct {
 type IssueFetcher struct {
 	client *githubv4.Client
 	repos  []string
+	// noAlerts are the repositories of Config.NoAlerts.
+	noAlerts map[string]bool
 	// rest and hc are the REST root and the token-carrying client alertsReadable asks with, and
 	// readable its answers, per repository, for the life of the process.
 	rest     string
@@ -87,11 +92,17 @@ func NewIssueFetcher(cfg Config, hc *http.Client) *IssueFetcher {
 		rest = defaultRESTURL
 	}
 
+	noAlerts := make(map[string]bool, len(cfg.NoAlerts))
+	for _, repo := range cfg.NoAlerts {
+		noAlerts[repo] = true
+	}
+
 	return &IssueFetcher{
-		client: githubv4.NewEnterpriseClient(url, &authed),
-		repos:  cfg.Repos,
-		rest:   rest,
-		hc:     &authed,
+		client:   githubv4.NewEnterpriseClient(url, &authed),
+		repos:    cfg.Repos,
+		noAlerts: noAlerts,
+		rest:     rest,
+		hc:       &authed,
 	}
 }
 
@@ -103,7 +114,7 @@ func NewIssueFetcher(cfg Config, hc *http.Client) *IssueFetcher {
 //
 // The repositories are fetched side by side (QS-2.7): one goroutine per repository and
 // connection, all started at once. There is no separate concurrency limit, because QS-3.5 caps the
-// configuration at ten repositories and therefore at twenty requests in flight. Each goroutine
+// configuration at fifteen repositories and therefore at thirty requests in flight. Each goroutine
 // writes into its own slot, and the slots are read out in order once every goroutine has finished,
 // so the result is the one the sequential loop produced — repositories in configuration order, a
 // repository's issues before its pull requests — whatever order the upstream answered in.
@@ -402,6 +413,14 @@ func (f *IssueFetcher) fetchPullRequests(ctx context.Context, owner, name string
 // too, it is the ordinary failure of the repository it would have been without alerts.
 func (f *IssueFetcher) firstPullRequestPage(ctx context.Context, owner, name string) (ghPRConnection, []domain.Item, domain.Coverage, error) {
 	vars := prVars(owner, name, nil)
+	if f.noAlerts[owner+"/"+name] {
+		var q pullRequestsQuery
+		if err := f.client.Query(ctx, &q, vars); err != nil {
+			return ghPRConnection{}, nil, domain.CoverageUnknown, err
+		}
+		// Not asked is not refused: alertsRefused stays as it was, and no coverage is claimed.
+		return q.Repository.PullRequests, nil, domain.CoverageUnknown, nil
+	}
 	if !f.alertsRefused.Load() {
 		var q pullRequestsFirstPageQuery
 		if err := f.client.Query(ctx, &q, vars); err == nil {

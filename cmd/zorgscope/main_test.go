@@ -43,6 +43,18 @@ func TestGitHubConfigDerivesTheGraphQLEndpoint(t *testing.T) {
 	}
 }
 
+// Spec 2026-09-29 §5: a site that says `alerts: false` reaches the fetcher as a repository never
+// asked for its Dependabot alerts.
+func TestGitHubConfigPassesTheReposWithoutAlerts(t *testing.T) {
+	cfg := config.Config{GitHub: config.GitHub{
+		Repos: []string{"arc42/a", "isaqb-org/b"},
+		Sites: []config.Site{{Name: "a", Repo: "arc42/a"}, {Name: "b", Repo: "isaqb-org/b", NoAlerts: true}},
+	}}
+	if got := githubConfig(cfg).NoAlerts; len(got) != 1 || got[0] != "isaqb-org/b" {
+		t.Errorf("NoAlerts = %v, want [isaqb-org/b]", got)
+	}
+}
+
 // A failed fetch is logged once, at Warn, scrubbed of every configured secret (QS-4.3), and a
 // clean fetch is not logged at all; either way the source's result passes through untouched.
 func TestLoggingSourceLogsFailuresRedacted(t *testing.T) {

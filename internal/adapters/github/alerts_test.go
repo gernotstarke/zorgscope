@@ -72,6 +72,48 @@ func (c *countingFake) fetcher(repos ...string) *github.IssueFetcher {
 	}, c.srv.Client())
 }
 
+// fetcherWithout is fetcher with noAlerts never asked for their Dependabot alerts.
+func (c *countingFake) fetcherWithout(noAlerts []string, repos ...string) *github.IssueFetcher {
+	return github.NewIssueFetcher(github.Config{
+		Token: "x", BaseURL: c.srv.URL + "/graphql", RESTBaseURL: c.srv.URL, Repos: repos, NoAlerts: noAlerts,
+	}, c.srv.Client())
+}
+
+// Spec 2026-09-29 §5: a repository whose site says `alerts: false` is fetched in two requests,
+// neither asking for alerts, with no REST probe and no coverage entry — and its plain query does not
+// switch alerts off for the repositories that do ask.
+func TestAlertsOffRepositoryAsksNothingAboutAlerts(t *testing.T) {
+	c := newCountingFake(t)
+	f := c.fetcherWithout([]string{"org/alerts-clean"}, "org/alerts-clean", "org/alerts")
+	got, err := f.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	req, alertReq := c.counts()
+	if req != 4 {
+		t.Errorf("%d GraphQL requests, want 4 (two per repository)", req)
+	}
+	if alertReq != 1 {
+		t.Errorf("%d requests asked for alerts, want 1 (org/alerts only)", alertReq)
+	}
+	if probes := c.probeCount(); probes != 0 {
+		t.Errorf("%d REST probes, want 0", probes)
+	}
+	if cov, ok := got.Coverage["org/alerts-clean"]; ok {
+		t.Errorf("org/alerts-clean has coverage %v, want no entry", cov)
+	}
+	if got.Coverage["org/alerts"] != domain.CoverageOn {
+		t.Errorf("org/alerts coverage = %v, want on", got.Coverage["org/alerts"])
+	}
+	// The next fetch still asks org/alerts: nothing was mistaken for a refusal.
+	if _, err := f.Fetch(context.Background()); err != nil {
+		t.Fatalf("second Fetch: %v", err)
+	}
+	if _, alertReq := c.counts(); alertReq != 1 {
+		t.Errorf("second fetch: %d requests asked for alerts, want 1", alertReq)
+	}
+}
+
 // FR-1.16 AC1: an alert arrives as an item of kind Alert, every field mapped, after the repository's
 // pull requests.
 func TestAlertsAreFetchedAsItems(t *testing.T) {
