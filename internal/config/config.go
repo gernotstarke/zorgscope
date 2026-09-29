@@ -23,6 +23,16 @@ import (
 // defaultCacheTTL is used when github.cache_ttl names none.
 const defaultCacheTTL = 5 * time.Minute
 
+// DefaultGroup is the group of a site that names none (spec 2026-09-29 §3).
+const DefaultGroup = "arc42"
+
+// MaxRepos is QS-3.5's ceiling on github.repos: two GraphQL requests per repository, so at most 30
+// per fetch.
+const MaxRepos = 15
+
+// groupPattern is a group's display name: short enough for a button on the radar.
+var groupPattern = regexp.MustCompile(`^[A-Za-z0-9.-]{1,12}$`)
+
 // maxTagLen is the longest tag a site may carry. A tag sits beside the site's name in its tile's
 // heading, where anything longer than a language code stops being a tag and starts being a name.
 const maxTagLen = 3
@@ -33,11 +43,26 @@ const maxTagLen = 3
 // so a hex value in the YAML would have nowhere to go.
 var HueKeys = []string{"navy", "blue", "plum", "teal", "umber", "rose", "slate"}
 
-// Site is one arc42 web property drawn as a tile on the Sites view (FR-1.8): its name, its address,
-// the one watched repository behind it, its colour key, and an optional short tag that tells apart
-// two sites sharing a colour.
+// Site is one web property or repository drawn as a tile on the Sites view (FR-1.8): its name, its
+// address, the one watched repository behind it, its colour key, an optional short tag that tells
+// apart two sites sharing a colour, the group whose radar draws it as a sector of its own
+// (FR-1.15), and whether its repository is asked for Dependabot alerts (FR-1.16).
 type Site struct {
 	Name, URL, Repo, Hue, Tag string
+	// Group is set by Load, DefaultGroup when the file names none. A Site built in code may leave it
+	// empty; GroupName reads it.
+	Group string
+	// NoAlerts is `alerts: false`: the repository is fetched without its Dependabot alerts. It is a
+	// negative so that the zero value asks for alerts, as the file's default does.
+	NoAlerts bool
+}
+
+// GroupName is the site's group, DefaultGroup when none is set.
+func (s Site) GroupName() string {
+	if s.Group == "" {
+		return DefaultGroup
+	}
+	return s.Group
 }
 
 // Config is the fully validated, ready-to-use application configuration.
@@ -59,7 +84,8 @@ type GitHub struct {
 	// Needs-you band then holds only the marked items.
 	Owner string
 	Repos []string
-	// Sites are the tiles of the Sites view, in the order they are drawn (FR-1.8). Each names one
+	// Sites are the tiles of the Sites view, in the order they are drawn (FR-1.8), each in a group
+	// whose radar gives it a sector of its own (FR-1.15). Each names one
 	// repository of Repos; the repositories no site names share a tile of their own. Empty is valid:
 	// the Sites view then shows that one shared tile.
 	Sites []Site
@@ -71,6 +97,29 @@ type GitHub struct {
 	// github.com. It is separate from BaseURL because those two endpoints are not on the API host
 	// even at the real GitHub: the API answers at api.github.com and sign-in at github.com.
 	OAuthBaseURL string // "" means github.com; set via GITHUB_OAUTH_BASE_URL.
+}
+
+// Groups are the sites' groups in order of first appearance, nil without sites. The radar draws one
+// switch button per group (FR-1.15).
+func (g GitHub) Groups() []string {
+	var out []string
+	for _, s := range g.Sites {
+		if name := s.GroupName(); !slices.Contains(out, name) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// ReposWithoutAlerts are the repositories whose site says `alerts: false`, in site order.
+func (g GitHub) ReposWithoutAlerts() []string {
+	var out []string
+	for _, s := range g.Sites {
+		if s.NoAlerts {
+			out = append(out, s.Repo)
+		}
+	}
+	return out
 }
 
 // Secrets holds every value read from the environment. None of these is ever logged or included
@@ -105,6 +154,9 @@ type fileSite struct {
 	Repo string `yaml:"repo"`
 	Hue  string `yaml:"hue"`
 	Tag  string `yaml:"tag"`
+	// Group is the site's group, DefaultGroup when absent; Alerts is nil when absent, which means true.
+	Group  string `yaml:"group"`
+	Alerts *bool  `yaml:"alerts"`
 }
 
 // loginPattern matches a GitHub login: letters, digits and single hyphens, at most 39 characters.
@@ -136,6 +188,9 @@ func Load(path string, env func(string) string) (Config, error) {
 
 	if len(fc.GitHub.Repos) == 0 {
 		return Config{}, errors.New("github.repos: at least one repository is required")
+	}
+	if len(fc.GitHub.Repos) > MaxRepos {
+		return Config{}, fmt.Errorf("github.repos: %d repositories, at most %d (QS-3.5)", len(fc.GitHub.Repos), MaxRepos)
 	}
 	for i, repo := range fc.GitHub.Repos {
 		if !repoPattern.MatchString(repo) {
@@ -218,6 +273,7 @@ func loadSites(in []fileSite, repos []string) ([]Site, error) {
 	}
 	names := make(map[string]bool, len(in))
 	claimed := make(map[string]bool, len(in))
+	groups := make(map[string]string) // lower-cased -> the spelling first seen
 	out := make([]Site, 0, len(in))
 	for i, s := range in {
 		field := func(name string) string { return fmt.Sprintf("github.sites[%d].%s", i, name) }
@@ -247,7 +303,22 @@ func loadSites(in []fileSite, repos []string) ([]Site, error) {
 		if utf8.RuneCountInString(s.Tag) > maxTagLen {
 			return nil, fmt.Errorf("%s: %q is longer than %d characters", field("tag"), s.Tag, maxTagLen)
 		}
-		out = append(out, Site(s))
+		group := s.Group
+		if group == "" {
+			group = DefaultGroup
+		}
+		if !groupPattern.MatchString(group) {
+			return nil, fmt.Errorf("%s: %q must be 1 to 12 letters, digits, dots or hyphens", field("group"), group)
+		}
+		// Two spellings of one group would draw two buttons and split the group between them.
+		if first, ok := groups[strings.ToLower(group)]; ok && first != group {
+			return nil, fmt.Errorf("%s: %q is spelled %q on an earlier site", field("group"), group, first)
+		}
+		groups[strings.ToLower(group)] = group
+		out = append(out, Site{
+			Name: s.Name, URL: s.URL, Repo: s.Repo, Hue: s.Hue, Tag: s.Tag,
+			Group: group, NoAlerts: s.Alerts != nil && !*s.Alerts,
+		})
 	}
 	return out, nil
 }

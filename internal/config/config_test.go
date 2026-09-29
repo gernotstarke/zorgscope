@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -251,8 +252,8 @@ func TestLoadSites(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	want := []config.Site{
-		{Name: "one.example", URL: "https://one.example", Repo: "org/one", Hue: "navy"},
-		{Name: "two.example", URL: "https://two.example", Repo: "org/two", Hue: "rose", Tag: "DE"},
+		{Name: "one.example", URL: "https://one.example", Repo: "org/one", Hue: "navy", Group: "arc42"},
+		{Name: "two.example", URL: "https://two.example", Repo: "org/two", Hue: "rose", Tag: "DE", Group: "arc42"},
 	}
 	if !slices.Equal(cfg.GitHub.Sites, want) {
 		t.Errorf("sites = %+v, want %+v", cfg.GitHub.Sites, want)
@@ -309,6 +310,16 @@ func TestLoadRejectsBadSites(t *testing.T) {
 		{"tag too long",
 			`    - {name: one.example, url: "https://one.example", repo: org/one, hue: navy, tag: DEUT}`,
 			"github.sites[0].tag"},
+		{"group too long",
+			`    - {name: one.example, url: "https://one.example", repo: org/one, hue: navy, group: abcdefghijklm}`,
+			"github.sites[0].group"},
+		{"group with a space",
+			`    - {name: one.example, url: "https://one.example", repo: org/one, hue: navy, group: "i SAQB"}`,
+			"github.sites[0].group"},
+		{"group spelled two ways",
+			`    - {name: one.example, url: "https://one.example", repo: org/one, hue: navy, group: iSAQB}` + "\n" +
+				`    - {name: two.example, url: "https://two.example", repo: org/two, hue: rose, group: isaqb}`,
+			"github.sites[1].group"},
 		{"unknown field",
 			`    - {name: one.example, url: "https://one.example", repo: org/one, hue: navy, colour: navy}`,
 			"colour"},
@@ -384,5 +395,59 @@ func TestLoadOwner(t *testing.T) {
 	}
 	if _, err := config.Load("testdata/bad-owner.yaml", env(fullEnv())); err == nil || !strings.Contains(err.Error(), "github.owner") {
 		t.Errorf("a malformed github.owner must be refused naming the field, got %v", err)
+	}
+}
+
+// Spec 2026-09-29 §3: group defaults to arc42, alerts to true; the groups are listed in order of
+// first appearance.
+func TestLoadGroups(t *testing.T) {
+	cfg, err := config.Load("testdata/groups.yaml", env(fullEnv()))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	var groups []string
+	for _, s := range cfg.GitHub.Sites {
+		groups = append(groups, s.Group)
+	}
+	if want := []string{"arc42", "iSAQB", "iSAQB"}; !slices.Equal(groups, want) {
+		t.Errorf("site groups = %v, want %v", groups, want)
+	}
+	if got, want := cfg.GitHub.Groups(), []string{"arc42", "iSAQB"}; !slices.Equal(got, want) {
+		t.Errorf("Groups() = %v, want %v", got, want)
+	}
+	if got, want := cfg.GitHub.ReposWithoutAlerts(), []string{"isaqb-org/two"}; !slices.Equal(got, want) {
+		t.Errorf("ReposWithoutAlerts() = %v, want %v", got, want)
+	}
+}
+
+// A Site built in code, with no Group, is in the default group: the zero value never names a group.
+func TestSiteWithoutGroupIsInTheDefaultGroup(t *testing.T) {
+	if got := (config.Site{}).GroupName(); got != config.DefaultGroup {
+		t.Errorf("GroupName() = %q, want %q", got, config.DefaultGroup)
+	}
+	gh := config.GitHub{Sites: []config.Site{{Name: "a", Repo: "o/a"}, {Name: "b", Repo: "o/b", Group: "arc42"}}}
+	if got := gh.Groups(); !slices.Equal(got, []string{"arc42"}) {
+		t.Errorf("Groups() = %v, want [arc42]", got)
+	}
+	if got := (config.GitHub{}).Groups(); got != nil {
+		t.Errorf("Groups() without sites = %v, want nil", got)
+	}
+}
+
+// QS-3.5: sixteen repositories are one too many.
+func TestLoadRejectsMoreThanFifteenRepos(t *testing.T) {
+	repos := make([]string, 16)
+	for i := range repos {
+		repos[i] = fmt.Sprintf("org/r%d", i)
+	}
+	yaml := "timezone: Europe/Berlin\ngithub:\n  auth_repo: gernotstarke/zorgscope\n  repos: [" +
+		strings.Join(repos, ", ") + "]\n"
+	path := filepath.Join(t.TempDir(), "zorgscope.yaml")
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := config.Load(path, env(fullEnv()))
+	if err == nil || !strings.Contains(err.Error(), "github.repos") || !strings.Contains(err.Error(), "15") {
+		t.Fatalf("err = %v, want one naming github.repos and the cap of 15", err)
 	}
 }

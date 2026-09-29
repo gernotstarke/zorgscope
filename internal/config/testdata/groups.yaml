@@ -1,0 +1,20 @@
+timezone: Europe/Berlin
+github:
+  auth_repo: gernotstarke/zorgscope
+  repos: [org/one, isaqb-org/two, isaqb-org/three]
+  sites:
+    - name: one.example
+      url: https://one.example
+      repo: org/one
+      hue: navy
+    - name: two
+      url: https://github.com/isaqb-org/two
+      repo: isaqb-org/two
+      hue: rose
+      group: iSAQB
+      alerts: false
+    - name: three
+      url: https://github.com/isaqb-org/three
+      repo: isaqb-org/three
+      hue: plum
+      group: iSAQB
