@@ -38,10 +38,12 @@ var groupPattern = regexp.MustCompile(`^[A-Za-z0-9.-]{1,12}$`)
 const maxTagLen = 3
 
 // HueKeys are the site colours the stylesheet defines, each as a `hue-<key>` class over
-// `--hue-<key>` tokens taken from the arc42 brand registry (per-site tiles design §6). A colour can
-// reach the page only as one of these classes: the Content-Security-Policy forbids inline styles,
-// so a hex value in the YAML would have nowhere to go.
-var HueKeys = []string{"navy", "blue", "plum", "teal", "umber", "rose", "slate"}
+// `--hue-<key>` tokens. The first seven are taken from the arc42 brand registry (per-site tiles
+// design §6); the five oranges are the iSAQB group's (spec 2026-09-29 §6). A colour can reach the
+// page only as one of these classes: the Content-Security-Policy forbids inline styles, so a hex
+// value in the YAML would have nowhere to go.
+var HueKeys = []string{"navy", "blue", "plum", "teal", "umber", "rose", "slate",
+	"apricot", "orange", "tangerine", "rust", "copper"}
 
 // Site is one web property or repository drawn as a tile on the Sites view (FR-1.8): its name, its
 // address, the one watched repository behind it, its colour key, an optional short tag that tells

@@ -615,7 +615,8 @@ button:hover,
    would vanish into the page. They are plain values rather than light-dark() pairs, because a
    site's colour is its identity and stays the same in both appearances; examples owns no hue in
    the registry, only a ground, so its ground serves as both. The palette keys match
-   config.HueKeys, and TestTileColoursKeepTextReadable holds every one of them to 4.5:1. */
+   config.HueKeys, and TestTileColoursKeepTextReadable holds every one of them to 4.5:1. The five
+   oranges after slate are not from the arc42 registry: they are the iSAQB group's. */
 :root {
   --hue-navy: #2b3a57;
   --hue-navy-sig: #374769;
@@ -631,6 +632,18 @@ button:hover,
   --hue-rose-sig: #a04c5e;
   --hue-slate: #414a56;
   --hue-slate-sig: #6f777d;
+  /* The iSAQB group (spec 2026-09-29 §6): five oranges, deep enough for white on the band and
+     leaning red rather than yellow, so that none reads as the amber Dependency tape (--warn). */
+  --hue-apricot: #a8531a;
+  --hue-apricot-sig: #f0a35c;
+  --hue-orange: #b34700;
+  --hue-orange-sig: #f7862b;
+  --hue-tangerine: #a33c0b;
+  --hue-tangerine-sig: #ec6a2e;
+  --hue-rust: #8e3413;
+  --hue-rust-sig: #d0582c;
+  --hue-copper: #7d4524;
+  --hue-copper-sig: #c27a4a;
 
   /* How much of a site's colour washes over its tile. Lower one when the contrast test fails;
      raise one when a wash is too faint to see, as long as the test still passes. */
@@ -645,6 +658,11 @@ button:hover,
 .hue-umber { --tile-hue: var(--hue-umber); --tile-sig: var(--hue-umber-sig); }
 .hue-rose { --tile-hue: var(--hue-rose); --tile-sig: var(--hue-rose-sig); }
 .hue-slate { --tile-hue: var(--hue-slate); --tile-sig: var(--hue-slate-sig); }
+.hue-apricot { --tile-hue: var(--hue-apricot); --tile-sig: var(--hue-apricot-sig); }
+.hue-orange { --tile-hue: var(--hue-orange); --tile-sig: var(--hue-orange-sig); }
+.hue-tangerine { --tile-hue: var(--hue-tangerine); --tile-sig: var(--hue-tangerine-sig); }
+.hue-rust { --tile-hue: var(--hue-rust); --tile-sig: var(--hue-rust-sig); }
+.hue-copper { --tile-hue: var(--hue-copper); --tile-sig: var(--hue-copper-sig); }
 
 /* One column on a phone, two or three on a desktop. */
 .tiles {

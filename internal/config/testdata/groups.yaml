@@ -10,11 +10,11 @@ github:
     - name: two
       url: https://github.com/isaqb-org/two
       repo: isaqb-org/two
-      hue: rose
+      hue: orange
       group: iSAQB
       alerts: false
     - name: three
       url: https://github.com/isaqb-org/three
       repo: isaqb-org/three
-      hue: plum
+      hue: apricot
       group: iSAQB
