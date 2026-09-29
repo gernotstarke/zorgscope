@@ -150,3 +150,18 @@ Five new hue keys, so up to five iSAQB sites are told apart without tags: `apric
 
 Groups on the List, Sites or Contributors views; Dependabot alerts for iSAQB; batching queries;
 per-group owners or auth repositories; req4arc/improve/adoc themselves (config lines when wanted).
+
+## 10. Amendment, 2026-09-29 (after the first build, still 2.2.0)
+
+Gernot, looking at the result: "from the standard radar, remove the isaqb summary again, it's too
+crowded. On the other hand, add adoc, req4arc and improve to the isaqb radar (where you keep one
+arc42 slice)."
+
+* **D6 is reversed for the first group.** The arc42 radar draws its own sites and Other only; the
+  iSAQB items are left off it (not moved into Other), and its legend counts what it draws. The iSAQB
+  radar keeps one condensed arc42 sector. The rule is by position, not by name: the first group's
+  radar condenses nothing, any other group's radar condenses the rest.
+* **Three more iSAQB repositories:** `isaqb-org/curriculum-req4arc`, `curriculum-improve`,
+  `curriculum-adoc`, all `alerts: false`. The configuration now holds 15, QS‑3.5's ceiling.
+* **Hues:** orange, apricot, rust, copper, tangerine in that order, so tangerine — closest to orange
+  and rust — borders neither.

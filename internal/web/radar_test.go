@@ -352,39 +352,37 @@ func sectorNames(v radarView) []string {
 	return out
 }
 
-// FR-1.15 AC8: the arc42 view draws its own sites, the iSAQB group as one sector, then Other; every
-// item is drawn, and a condensed blip keeps its own site's colour.
-func TestRadarArc42ViewCondensesISAQB(t *testing.T) {
+// FR-1.15 AC8 (amended 2026-09-29): the first group's view — arc42 — draws its own sites and Other
+// only; the iSAQB items are left off it, not crowded into a slice, and not pushed into Other.
+func TestRadarArc42ViewLeavesISAQBOut(t *testing.T) {
 	v := buildRadar(radarGroupItems(), radarGroups, "arc42", testNow)
-	if got, want := sectorNames(v), []string{"arc42.org", "quality", "iSAQB", otherTileName}; !slices.Equal(got, want) {
+	if got, want := sectorNames(v), []string{"arc42.org", "quality", otherTileName}; !slices.Equal(got, want) {
 		t.Fatalf("sectors = %v, want %v", got, want)
 	}
-	if v.Sectors[2].Hue != "orange" {
-		t.Errorf("iSAQB sector hue = %q, want orange (its first site's)", v.Sectors[2].Hue)
-	}
-	for url, hue := range map[string]string{"i1": "hue-orange", "i2": "hue-apricot", "a1": "hue-navy"} {
-		if b := blipFor(t, v, url); b.Hue != hue {
-			t.Errorf("%s: hue %q, want %q", url, b.Hue, hue)
+	for _, b := range v.Blips {
+		if b.URL == "i1" || b.URL == "i2" {
+			t.Errorf("iSAQB item %s is drawn on the arc42 radar", b.URL)
 		}
 	}
-	for _, url := range []string{"i1", "i2"} {
-		if b := bearingOf(blipFor(t, v, url)); b < 180 || b > 270 {
-			t.Errorf("%s: bearing %.1f outside the iSAQB sector [180, 270]", url, b)
-		}
-	}
-	if v.Total != 5 {
-		t.Errorf("Total = %d, want 5: nothing the list shows is missing (QG-1)", v.Total)
+	if v.Total != 3 || v.Issues != 3 || v.PRs != 0 {
+		t.Errorf("Total/Issues/PRs = %d/%d/%d, want 3/3/0: the legend counts what is drawn", v.Total, v.Issues, v.PRs)
 	}
 }
 
-// FR-1.15 AC8: the iSAQB view mirrors it.
+// FR-1.15 AC8: any other group's view draws its own sites, the first group as one sector, then
+// Other; a condensed blip keeps its own site's colour.
 func TestRadarISAQBViewCondensesArc42(t *testing.T) {
 	v := buildRadar(radarGroupItems(), radarGroups, "iSAQB", testNow)
 	if got, want := sectorNames(v), []string{"curriculum-foundation", "glossary", "arc42", otherTileName}; !slices.Equal(got, want) {
 		t.Fatalf("sectors = %v, want %v", got, want)
 	}
-	if b := blipFor(t, v, "a2"); b.Hue != "hue-plum" {
-		t.Errorf("a2 hue = %q, want hue-plum", b.Hue)
+	for url, hue := range map[string]string{"a2": "hue-plum", "i1": "hue-orange", "i2": "hue-apricot"} {
+		if b := blipFor(t, v, url); b.Hue != hue {
+			t.Errorf("%s: hue %q, want %q", url, b.Hue, hue)
+		}
+	}
+	if v.Sectors[2].Hue != "navy" {
+		t.Errorf("arc42 sector hue = %q, want navy (its first site's)", v.Sectors[2].Hue)
 	}
 	if b := bearingOf(blipFor(t, v, "a1")); b < 180 || b > 270 {
 		t.Errorf("a1: bearing %.1f outside the arc42 sector [180, 270]", b)

@@ -43,10 +43,14 @@ derived from the group: "only arc42 gets alerts" would be a rule nobody could se
 
 ### Consequences
 
-* Good: the radar stays readable — the arc42 view has 10 + 1 sectors, the iSAQB view 2 + 1 — and
-  nothing the list shows is missing from either view (QG‑1); a condensed blip keeps its own site's
-  colour.
-* Good: adding req4arc, improve or adoc is one `repos` line and one `sites` entry each.
+* Good: the radar stays readable — the arc42 view has its 10 sectors, the iSAQB view 5 + 1 — and a
+  condensed blip keeps its own site's colour.
+* Bad: the arc42 radar no longer shows every open item (QG‑1): the iSAQB items are drawn only on the
+  iSAQB radar. A first build condensed iSAQB into an 11th arc42 sector; Gernot found it too crowded
+  and asked on 2026‑09‑29 for it to go (amendment below).
+* Bad: the five iSAQB repositories (curriculum-foundation, glossary, curriculum-req4arc,
+  curriculum-improve, curriculum-adoc) bring the configuration to 15, QS‑3.5's ceiling: a sixteenth
+  repository needs a budget decision first.
 * Bad: QS‑3.5 rises from 20 to 30 requests per fetch. Its old reason — "so that a 15‑minute interval
   stays under 2 % of GitHub's hourly limit" — dates from the external cron of ADR‑0003; since
   ADR‑0011 a fetch happens only on a stale page view, at most every 5 minutes, so the worst case is
@@ -55,3 +59,9 @@ derived from the group: "only arc42 gets alerts" would be a rule nobody could se
   shape) without marking alerts refused, and claims no coverage, so the Security tile says nothing
   about it.
 * Neutral: five orange hue keys join the palette; they are not from the arc42 brand registry.
+
+### Amendment, 2026-09-29 (still 2.2.0): the first group's radar condenses nothing
+
+The arc42 radar with an iSAQB sector was too crowded. The first group's radar now draws its own sites
+and Other only, and leaves the other groups' items off; any other group's radar still condenses the
+rest into one sector each. The iSAQB group grew to five sites the same day.

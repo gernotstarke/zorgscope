@@ -341,10 +341,10 @@ func TestLoadRejectsBadSites(t *testing.T) {
 	}
 }
 
-// FR-1.8 AC1: the committed configuration names the ten arc42 and zorgscope sites and the two iSAQB
-// ones, in the order their tiles are drawn; the iSAQB two are a group of their own and are not asked
-// for Dependabot alerts (FR-1.15 AC8, FR-1.16).
-func TestTheRealConfigNamesTheTwelveSitesInOrder(t *testing.T) {
+// FR-1.8 AC1: the committed configuration names the ten arc42 and zorgscope sites and the five iSAQB
+// ones, in the order their tiles are drawn; the iSAQB five are a group of their own and are not asked
+// for Dependabot alerts (FR-1.15 AC8, FR-1.16). Fifteen is QS-3.5's ceiling.
+func TestTheRealConfigNamesTheFifteenSitesInOrder(t *testing.T) {
 	cfg, err := config.Load("../../config/zorgscope.yaml", env(fullEnv()))
 	if err != nil {
 		t.Fatalf("Load(config/zorgscope.yaml): %v", err)
@@ -356,7 +356,7 @@ func TestTheRealConfigNamesTheTwelveSitesInOrder(t *testing.T) {
 	want := []string{
 		"arc42-template", "arc42.org", "arc42.de", "quality.arc42.org", "docs.arc42.org",
 		"faq.arc42.org", "examples.arc42.org", "trainings.arc42.org", "arc42-generator", "zorgscope",
-		"curriculum-foundation", "glossary",
+		"curriculum-foundation", "glossary", "curriculum-req4arc", "curriculum-improve", "curriculum-adoc",
 	}
 	if !slices.Equal(names, want) {
 		t.Errorf("sites = %v, want %v", names, want)
@@ -364,7 +364,10 @@ func TestTheRealConfigNamesTheTwelveSitesInOrder(t *testing.T) {
 	if got := cfg.GitHub.Groups(); !slices.Equal(got, []string{"arc42", "iSAQB"}) {
 		t.Errorf("groups = %v, want [arc42 iSAQB]", got)
 	}
-	want = []string{"isaqb-org/curriculum-foundation", "isaqb-org/glossary"}
+	want = []string{
+		"isaqb-org/curriculum-foundation", "isaqb-org/glossary", "isaqb-org/curriculum-req4arc",
+		"isaqb-org/curriculum-improve", "isaqb-org/curriculum-adoc",
+	}
 	if got := cfg.GitHub.ReposWithoutAlerts(); !slices.Equal(got, want) {
 		t.Errorf("repos without alerts = %v, want %v", got, want)
 	}

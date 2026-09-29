@@ -22,7 +22,7 @@ github:
   repos:
     - arc42/arc42-template
     - arc42/arc42.org-site
-    # … twelve in total, at most fifteen (QS-3.5)
+    # … fifteen in total, the ceiling (QS-3.5)
   sites:                              # the Sites view: one tile per entry, in this order
     - name: arc42-template
       url: https://github.com/arc42/arc42-template
@@ -98,8 +98,9 @@ a colour, as arc42.de does beside arc42.org.
 
 `group` (default `arc42`; 1 to 12 letters, digits, dots or hyphens) decides the Radar view a site gets
 a sector of its own in (FR‑1.15 AC8, ADR‑0016). With more than one group the radar carries one link
-per group, in order of first appearance; each view draws its own group's sites one sector each and
-every other group as one sector named after it. The List, the tiles and the header are not split:
+per group, in order of first appearance. The first group's view draws its own sites only, one sector
+each, and leaves the other groups' items off; any other group's view draws its own sites and each
+other group as one sector named after it. The List, the tiles and the header are not split:
 every watched repository is on them whatever its group. `alerts: false` fetches a site's repository
 for issues and pull requests only: it is never asked for Dependabot alerts, and the Security tile says
 nothing about it (FR‑1.16 AC8). `github.repos` holds at most fifteen entries, two GraphQL requests each

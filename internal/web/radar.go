@@ -5,6 +5,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -203,11 +204,16 @@ func radarGroup(gh config.GitHub, asked string) string {
 }
 
 // radarSpecs are the radar's sectors for group: one per site of the group, in configuration order,
-// then one per other group holding all its sites' repositories, coloured by its first site, then
-// Other for the repositories no site claims (FR-1.15 AC8). With one group they are siteSpecs'. It
-// walks gh.Sites rather than siteSpecs, which does not carry the group.
-func radarSpecs(gh config.GitHub, group string) []domain.SiteSpec {
-	var specs, others []domain.SiteSpec
+// then Other for the repositories no site claims (FR-1.15 AC8). The first group's radar stops there
+// and names the other groups' repositories in hidden: its items are not drawn, because arc42's
+// radar crowded by an iSAQB sector was too much. Any other group's radar puts one sector per other
+// group before Other, holding all its sites' repositories and coloured by its first site. With one
+// group the sectors are siteSpecs'. It walks gh.Sites rather than siteSpecs, which does not carry
+// the group.
+func radarSpecs(gh config.GitHub, group string) (specs []domain.SiteSpec, hidden map[string]bool) {
+	first := len(gh.Sites) > 0 && gh.Sites[0].GroupName() == group
+	hidden = make(map[string]bool)
+	var others []domain.SiteSpec
 	idx := make(map[string]int) // another group -> its index in others
 	claimed := make(map[string]bool, len(gh.Sites))
 	for _, site := range gh.Sites {
@@ -218,6 +224,10 @@ func radarSpecs(gh config.GitHub, group string) []domain.SiteSpec {
 				Name: site.Name, URL: site.URL, Hue: tileHue(site.Hue), Tag: site.Tag,
 				Repos: []string{site.Repo},
 			})
+			continue
+		}
+		if first {
+			hidden[site.Repo] = true
 			continue
 		}
 		i, ok := idx[g]
@@ -238,14 +248,17 @@ func radarSpecs(gh config.GitHub, group string) []domain.SiteSpec {
 	if len(unclaimed) > 0 {
 		specs = append(specs, domain.SiteSpec{Name: otherTileName, Hue: unclaimedHue, Repos: unclaimed})
 	}
-	return specs
+	return specs, hidden
 }
 
 // buildRadar places every item on the scope, the sectors those of group — resolved by radarGroup,
 // so "" or an unknown name shows the first group. It is a pure function of its arguments.
 func buildRadar(items []domain.Item, gh config.GitHub, group string, now time.Time) radarView {
 	group = radarGroup(gh, group)
-	specs := radarSpecs(gh, group)
+	specs, hidden := radarSpecs(gh, group)
+	// Another group's items are left off the first group's radar (FR-1.15 AC8): dropped here, before
+	// they could be counted, placed, or pushed into Other.
+	items = slices.DeleteFunc(slices.Clone(items), func(it domain.Item) bool { return hidden[it.Repo] })
 	sectorOf := make(map[string]int)
 	other := -1
 	for i, spec := range specs {
