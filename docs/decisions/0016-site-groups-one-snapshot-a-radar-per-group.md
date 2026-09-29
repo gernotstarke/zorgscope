@@ -60,7 +60,7 @@ derived from the group: "only arc42 gets alerts" would be a rule nobody could se
   about it.
 * Neutral: five orange hue keys join the palette; they are not from the arc42 brand registry.
 
-### Amendment, 2026-09-29 (still 2.2.0): the first group's radar condenses nothing
+### Amendment, 2026-09-29 (2.2.1): the first group's radar condenses nothing
 
 The arc42 radar with an iSAQB sector was too crowded. The first group's radar now draws its own sites
 and Other only, and leaves the other groups' items off; any other group's radar still condenses the

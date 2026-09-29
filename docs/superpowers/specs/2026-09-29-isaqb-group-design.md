@@ -151,7 +151,7 @@ Five new hue keys, so up to five iSAQB sites are told apart without tags: `apric
 Groups on the List, Sites or Contributors views; Dependabot alerts for iSAQB; batching queries;
 per-group owners or auth repositories; req4arc/improve/adoc themselves (config lines when wanted).
 
-## 10. Amendment, 2026-09-29 (after the first build, still 2.2.0)
+## 10. Amendment, 2026-09-29 (after the first build; 2.2.1)
 
 Gernot, looking at the result: "from the standard radar, remove the isaqb summary again, it's too
 crowded. On the other hand, add adoc, req4arc and improve to the isaqb radar (where you keep one

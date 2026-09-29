@@ -89,7 +89,8 @@ code; `make check` passes.
 
 | Version | Date | Change |
 |---------|------|--------|
-| 2.2.0 | 2026-09-29 | Five iSAQB repositories (curriculum-foundation, glossary, curriculum-req4arc, curriculum-improve, curriculum-adoc) on the list, the tiles and the header, in five orange tones; the Radar switches between arc42 (its own sites only) and iSAQB (its sites plus arc42 as one sector); at most 15 repositories, 30 requests per fetch (ADR-0016) |
+| 2.2.1 | 2026-09-29 | The arc42 Radar shows the arc42 sites only; curriculum-req4arc, curriculum-improve and curriculum-adoc join the iSAQB Radar, which keeps arc42 as one sector — 15 repositories, the ceiling |
+| 2.2.0 | 2026-09-29 | iSAQB repositories (curriculum-foundation, glossary) on the list, the tiles and the header, in five orange tones; the Radar switches between the arc42 and iSAQB groups, the other group condensed into one sector; at most 15 repositories, 30 requests per fetch (ADR-0016) |
 | 2.1.1 | 2026-09-28 | Radar: blips no longer cover each other — one that would is moved sideways within its sector, outward only when the sector is full. A token that may not read Dependabot alerts no longer reads as "no alerts": an empty list is checked once against the REST endpoint |
 | 2.1.0 | 2026-09-28 | Dependabot alerts on the list, the Needs-you band, the Security tile and the Radar, in a colour and pattern of their own; High and Critical need you (FR-1.16, ADR-0015) |
 | 2.0.0 | 2026-09-25 | Radar view and the new Needs-you rule make a new major version; the footer names the stack (Go, htmx) and the host (Fly.io) |
