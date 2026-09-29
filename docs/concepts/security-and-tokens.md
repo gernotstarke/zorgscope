@@ -48,6 +48,17 @@ answers with an empty list, which would read as "no vulnerabilities". zorgscope 
 empty list once per repository against the REST alerts endpoint, which does refuse such a token,
 and shows the repository as "unavailable to this token" rather than as clean.
 
+**An organisation can refuse a token outright, even for its public repositories.** Since 2.2.0 the
+token also reads five `isaqb-org` repositories (ADR‑0016). That organisation forbids fine-grained
+tokens whose lifetime is longer than 366 days, and GitHub enforces the policy on every request —
+reading public issues included. A token without an expiry date, or with one further out than a year,
+gets every `isaqb-org` query refused. The arc42 and zorgscope repositories still arrive, but the
+page reports "GitHub unreachable" with GitHub's message once per refused request. This happened on
+the first deploy of 2.2.1 (2026‑09‑29). A token that must read `isaqb-org` therefore expires within
+366 days. Put a reminder for its expiry date next to where you rotate it: when it expires,
+every repository stops fetching, not only the iSAQB ones. The organisation owners can change the
+policy, so the limit may move; the error message names it and links the token's settings page.
+
 This makes the token more sensitive than it was. Leaked, it tells its holder which of the
 repositories have unpatched vulnerabilities, and in which dependency. Rotating it works as before —
 a new token in `.env` and as a Fly secret, the old one revoked on GitHub — and a token that loses the
@@ -234,6 +245,11 @@ list keeps working:
 ```sh
 flyctl secrets set GITHUB_TOKEN=<new-value> -a zorgscope
 ```
+
+A fine-grained replacement gets an expiry of at most 366 days, or `isaqb-org` refuses it (see
+[What `GITHUB_TOKEN` may read](#what-github_token-may-read)). *Regenerate token* on the token's
+settings page keeps its permissions and asks for the new expiry, so a regenerated token needs only
+the Fly secret set again.
 
 `flyctl secrets list` shows secret *names* and their deployment status only, never values, so a
 rotation can be verified without ever displaying what was set; `flyctl secrets import` reads
