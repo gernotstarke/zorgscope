@@ -6,6 +6,7 @@
 {{template "header" .}}
 <section class="radar" aria-labelledby="radar-title">
 <h1 class="visually-hidden" id="radar-title">Radar</h1>
+{{with .Groups}}<nav class="view-switch radar-groups" aria-label="Radar group">{{range .}}<a href="{{.URL}}"{{if .Current}} aria-current="page"{{end}}>{{.Name}}</a>{{end}}</nav>{{end}}
 <svg class="radar-svg" viewBox="0 0 {{.Width}} {{.Height}}" role="group" aria-labelledby="radar-title">
 <defs>
   <pattern id="radar-tape-security" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect class="tape-a" width="4" height="8"/><rect class="tape-b" x="4" width="4" height="8"/></pattern>

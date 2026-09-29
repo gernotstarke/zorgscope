@@ -141,7 +141,7 @@ func TestTheRadarDrawsAlerts(t *testing.T) {
 	low := webAlert(64, domain.SeverityLow, 0)
 	low.Repo = gh.Repos[0]
 	low.UpdatedAt = testNow.AddDate(-1, 0, 0)
-	v := buildRadar([]domain.Item{high, low}, gh, testNow)
+	v := buildRadar([]domain.Item{high, low}, gh, "", testNow)
 	if v.Alerts != 2 || v.Serious != 1 || v.Issues != 0 || v.PRs != 0 {
 		t.Errorf("Alerts, Serious, Issues, PRs = %d, %d, %d, %d; want 2, 1, 0, 0", v.Alerts, v.Serious, v.Issues, v.PRs)
 	}

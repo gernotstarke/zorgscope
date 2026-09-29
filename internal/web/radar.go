@@ -4,6 +4,7 @@ import (
 	"hash/crc32"
 	"math"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -67,7 +68,9 @@ type radarView struct {
 	CardKeys []radarLine
 	ValueX   int
 	Sectors  []radarSector
-	Rings    []radarRing
+	// Groups is the group switch, one link per configured group; empty with one group (FR-1.15).
+	Groups []radarGroupLink
+	Rings  []radarRing
 	// Sweep is the beam's far end and Glow the afterglow wedge behind it, both drawn pointing
 	// north; app.css turns the group they are in.
 	Sweep radarPoint
@@ -79,6 +82,12 @@ type radarView struct {
 	// Alerts is how many Dependabot alerts are drawn, and Serious how many of them are High or
 	// Critical (FR-1.16).
 	Alerts, Serious int
+}
+
+// radarGroupLink is one link of the radar's group switch.
+type radarGroupLink struct {
+	Name, URL string
+	Current   bool
 }
 
 type radarPoint struct{ X, Y float64 }
@@ -168,7 +177,7 @@ func (s *Server) handleRadar(w http.ResponseWriter, r *http.Request) {
 	if waiting {
 		return
 	}
-	view := buildRadar(snap.Items, s.cfg.GitHub, s.clock.Now())
+	view := buildRadar(snap.Items, s.cfg.GitHub, r.URL.Query().Get("group"), s.clock.Now())
 	view.headerView = s.headerView(snap)
 	s.execute(w, r, http.StatusOK, "radar.html", pageData{
 		Title:  "Radar",
@@ -177,9 +186,66 @@ func (s *Server) handleRadar(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// buildRadar places every item on the scope. It is a pure function of its arguments.
-func buildRadar(items []domain.Item, gh config.GitHub, now time.Time) radarView {
-	specs := siteSpecs(gh)
+// radarGroup is the configured group asked names, ignoring case, else the first group, else "" when
+// no site is configured. The asked text itself never reaches the page: only a configured name comes
+// back.
+func radarGroup(gh config.GitHub, asked string) string {
+	groups := gh.Groups()
+	for _, g := range groups {
+		if strings.EqualFold(g, asked) {
+			return g
+		}
+	}
+	if len(groups) == 0 {
+		return ""
+	}
+	return groups[0]
+}
+
+// radarSpecs are the radar's sectors for group: one per site of the group, in configuration order,
+// then one per other group holding all its sites' repositories, coloured by its first site, then
+// Other for the repositories no site claims (FR-1.15 AC8). With one group they are siteSpecs'. It
+// walks gh.Sites rather than siteSpecs, which does not carry the group.
+func radarSpecs(gh config.GitHub, group string) []domain.SiteSpec {
+	var specs, others []domain.SiteSpec
+	idx := make(map[string]int) // another group -> its index in others
+	claimed := make(map[string]bool, len(gh.Sites))
+	for _, site := range gh.Sites {
+		claimed[site.Repo] = true
+		g := site.GroupName()
+		if g == group {
+			specs = append(specs, domain.SiteSpec{
+				Name: site.Name, URL: site.URL, Hue: tileHue(site.Hue), Tag: site.Tag,
+				Repos: []string{site.Repo},
+			})
+			continue
+		}
+		i, ok := idx[g]
+		if !ok {
+			i = len(others)
+			idx[g] = i
+			others = append(others, domain.SiteSpec{Name: g, Hue: tileHue(site.Hue)})
+		}
+		others[i].Repos = append(others[i].Repos, site.Repo)
+	}
+	specs = append(specs, others...)
+	var unclaimed []string
+	for _, repo := range gh.Repos {
+		if !claimed[repo] {
+			unclaimed = append(unclaimed, repo)
+		}
+	}
+	if len(unclaimed) > 0 {
+		specs = append(specs, domain.SiteSpec{Name: otherTileName, Hue: unclaimedHue, Repos: unclaimed})
+	}
+	return specs
+}
+
+// buildRadar places every item on the scope, the sectors those of group — resolved by radarGroup,
+// so "" or an unknown name shows the first group. It is a pure function of its arguments.
+func buildRadar(items []domain.Item, gh config.GitHub, group string, now time.Time) radarView {
+	group = radarGroup(gh, group)
+	specs := radarSpecs(gh, group)
 	sectorOf := make(map[string]int)
 	other := -1
 	for i, spec := range specs {
@@ -215,6 +281,13 @@ func buildRadar(items []domain.Item, gh config.GitHub, now time.Time) radarView 
 	for i, spec := range specs {
 		v.Sectors = append(v.Sectors, newRadarSector(spec, float64(i)*width, float64(i+1)*width))
 	}
+	if groups := gh.Groups(); len(groups) > 1 {
+		for _, g := range groups {
+			v.Groups = append(v.Groups, radarGroupLink{
+				Name: g, URL: "/radar?group=" + url.QueryEscape(g), Current: g == group,
+			})
+		}
+	}
 	for _, ring := range radarRingDays {
 		r := round1(radarRadius(ring.days))
 		v.Rings = append(v.Rings, radarRing{R: r, LabelY: round1(radarCY - r - 4), Label: ring.label})
@@ -225,7 +298,12 @@ func buildRadar(items []domain.Item, gh config.GitHub, now time.Time) radarView 
 		if !ok {
 			sector = other
 		}
-		b := newRadarBlip(it, gh, now, float64(sector)*width, width, specs[sector].Hue)
+		// Inside a condensed sector a blip keeps its own site's colour (FR-1.15 AC8).
+		hue := specs[sector].Hue
+		if h := hueForRepo(gh, it.Repo); h != unclaimedHue {
+			hue = h
+		}
+		b := newRadarBlip(it, gh, now, float64(sector)*width, width, hue)
 		switch b.Mark {
 		case "security":
 			v.Security++

@@ -1375,6 +1375,8 @@ mark { background: #fde68a; color: #1f2937; border-radius: 2px; padding: 0 0.1em
    (1230, 60) are radar.go's radarCX/radarCY and radarPanelX/radarPanelY; the sweep turns about the
    first and the panel's contents are placed from the second. */
 .radar { margin-top: 0.5rem; }
+/* The radar's group switch (FR-1.15 AC8): the top bar's view switch, one row above the scope. */
+.radar-groups { margin-bottom: 0.5rem; }
 .radar-svg {
   --radar-ground: light-dark(#f8fbf9, #0f1a16);
   --radar-ring: light-dark(#b7cbbf, #1f4434);
