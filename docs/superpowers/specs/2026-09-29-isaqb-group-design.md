@@ -1,6 +1,6 @@
 # iSAQB repositories: a second group on the list, the tiles and the radar — design
 
-Date: 2026-09-29. Status: approved in conversation, not yet built. Target version **2.2.0**.
+Date: 2026-09-29. Status: implemented in 2.2.0.
 Builds on the per-site tiles (`2026-09-15-per-site-tiles-design.md`), the radar
 (`2026-09-25-radar-design.md`) and the Dependabot alerts (`2026-09-28-dependabot-alerts-design.md`).
 No database, no ticker, no inline script or style.
@@ -9,7 +9,7 @@ No database, no ticker, no inline script or style.
 
 > I need to add isaqb repos to the radar, two or three more. A button could dynamically add the
 > iSAQB repos or switch to the isaqb view and add a single slice condensing all arc42 stuff
-> (https://github.com/isaqb-org/curriculum-foundation, https://github.com/isaqb-org/glossary and
+> (<https://github.com/isaqb-org/curriculum-foundation>, <https://github.com/isaqb-org/glossary> and
 > likely some more later, esp req4arc, improve, adoc)
 
 ## 2. Decisions taken in conversation (2026-09-29)

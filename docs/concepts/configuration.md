@@ -22,13 +22,19 @@ github:
   repos:
     - arc42/arc42-template
     - arc42/arc42.org-site
-    # … ten in total
+    # … twelve in total, at most fifteen (QS-3.5)
   sites:                              # the Sites view: one tile per entry, in this order
     - name: arc42-template
       url: https://github.com/arc42/arc42-template
       repo: arc42/arc42-template
       hue: slate
-    # … ten in total
+    # … ten arc42 and zorgscope sites, then the iSAQB ones:
+    - name: glossary
+      url: https://github.com/isaqb-org/glossary
+      repo: isaqb-org/glossary
+      hue: apricot
+      group: iSAQB                    # the radar view it gets a sector of its own in
+      alerts: false                   # issues and pull requests only, no Dependabot alerts
 ```
 
 `github.auth_repo` is the one field that is not about what is watched: it names the repository whose
@@ -81,17 +87,27 @@ repository group is striped in the hue of the site that claims it, slate when no
 label palette is not configured; it is fixed in the stylesheet.
 
 `hue` is not a colour but a key into a fixed palette: `navy`, `blue`, `plum`, `teal`, `umber`, `rose`,
-`slate`. The colours behind the keys live in `internal/web/static/app.css` as `--hue-<key>` custom
-properties, taken from the arc42 brand registry (`arc42/meta.arc42.org`, `wiki/concepts/brand.md`),
+`slate`, and for the iSAQB group the five oranges `apricot`, `orange`, `tangerine`, `rust`, `copper`.
+The colours behind the keys live in `internal/web/static/app.css` as `--hue-<key>` custom
+properties, the first seven taken from the arc42 brand registry (`arc42/meta.arc42.org`, `wiki/concepts/brand.md`),
 because the Content-Security-Policy forbids inline styles and a colour can therefore reach the page
 only as a class the stylesheet defines. Choosing among the keys is a YAML edit; adding a colour means a
 new token and a new key in `config.HueKeys`, and `TestTileColoursKeepTextReadable` holds every key to a
 contrast of 4.5:1 in both appearances. `tag` (at most three characters) tells apart two sites that share
 a colour, as arc42.de does beside arc42.org.
 
+`group` (default `arc42`; 1 to 12 letters, digits, dots or hyphens) decides the Radar view a site gets
+a sector of its own in (FR‑1.15 AC8, ADR‑0016). With more than one group the radar carries one link
+per group, in order of first appearance; each view draws its own group's sites one sector each and
+every other group as one sector named after it. The List, the tiles and the header are not split:
+every watched repository is on them whatever its group. `alerts: false` fetches a site's repository
+for issues and pull requests only: it is never asked for Dependabot alerts, and the Security tile says
+nothing about it (FR‑1.16 AC8). `github.repos` holds at most fifteen entries, two GraphQL requests each
+(QS‑3.5).
+
 `Load` refuses a site with an empty or duplicate name, an address that is not an absolute `https` URL,
-a repository not in `owner/name` form, not watched or claimed twice, an unknown `hue`, or a longer
-`tag`, and names the field — `github.sites[2].hue` — as it does for every other setting.
+a repository not in `owner/name` form, not watched or claimed twice, an unknown `hue`, a longer
+`tag`, a malformed `group` or one spelled two ways (`iSAQB` and `isaqb`), and names the field — `github.sites[2].hue` — as it does for every other setting.
 
 ## `.env` for local development
 

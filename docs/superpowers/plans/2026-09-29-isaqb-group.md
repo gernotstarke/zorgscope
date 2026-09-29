@@ -55,11 +55,13 @@ palette.
 ### Task 1: Config — `group`, `alerts`, the 15-repository cap
 
 **Files:**
+
 - Modify: `internal/config/config.go` (Site, fileSite, Load, loadSites, new helpers)
 - Modify: `internal/config/config_test.go`
 - Create: `internal/config/testdata/groups.yaml`
 
 **Interfaces:**
+
 - Produces:
   - `const config.DefaultGroup = "arc42"`, `const config.MaxRepos = 15`
   - `config.Site{Name, URL, Repo, Hue, Tag, Group string; NoAlerts bool}` — `Group` is set by
@@ -304,11 +306,13 @@ git commit -m "feat(config): sites carry a group and may switch alerts off; at m
 ### Task 2: Five orange hues
 
 **Files:**
+
 - Modify: `internal/config/config.go` (`HueKeys`)
 - Modify: `internal/web/static/app.css` (hue tokens and classes, the palette comment)
 - Test: `internal/web/contrast_test.go` (unchanged — it iterates `config.HueKeys`)
 
 **Interfaces:**
+
 - Produces: hue keys `apricot`, `orange`, `tangerine`, `rust`, `copper`; classes `.hue-<key>`.
 
 - [ ] **Step 1: Add the keys (the failing test is the existing contrast suite)**
@@ -378,12 +382,14 @@ git commit -m "feat(web): five orange hues for the iSAQB group (FR-1.8)"
 ### Task 3: Fetcher — no alerts where a site says so; the budget at 15
 
 **Files:**
+
 - Modify: `internal/adapters/github/issues.go` (`Config`, `IssueFetcher`, `NewIssueFetcher`,
   `firstPullRequestPage`, the `Fetch` doc comment's "ten repositories … twenty requests")
 - Modify: `internal/adapters/github/alerts_test.go`, `internal/adapters/github/cost_test.go`
 - Modify: `cmd/zorgscope/main.go` (`githubConfig`), `cmd/zorgscope/main_test.go`
 
 **Interfaces:**
+
 - Consumes: `config.GitHub.ReposWithoutAlerts()` (Task 1).
 - Produces: `github.Config.NoAlerts []string` ("owner/name").
 
@@ -532,6 +538,7 @@ git commit -m "feat(github): a repository whose site says alerts: false is not a
 ### Task 4: Radar — one group's sites, the others condensed, the switch
 
 **Files:**
+
 - Modify: `internal/web/radar.go` (`radarView`, `handleRadar`, `buildRadar`, new `radarSpecs`,
   `radarGroup`)
 - Modify: `internal/web/templates/radar.html`
@@ -539,6 +546,7 @@ git commit -m "feat(github): a repository whose site says alerts: false is not a
 - Modify: `internal/web/radar_test.go`
 
 **Interfaces:**
+
 - Consumes: `config.Site.GroupName()`, `config.GitHub.Groups()` (Task 1); `hueForRepo`,
   `siteSpecs`, `tileHue`, `otherTileName`, `unclaimedHue` (existing, `sites.go`).
 - Produces:
@@ -766,6 +774,7 @@ func radarSpecs(gh config.GitHub, group string) []domain.SiteSpec {
 resolve to.)
 
 `buildRadar(items, gh, group, now)`:
+
 - first line: `group = radarGroup(gh, group)` then `specs := radarSpecs(gh, group)` instead of
   `siteSpecs(gh)`;
 - the blip hue: replace `specs[sector].Hue` with a hue that prefers the item's own site:
@@ -825,6 +834,7 @@ git commit -m "feat(web): the radar switches between groups, each other group co
 ### Task 5: Shipped config, requirements, ADR, version 2.2.0, the full gate
 
 **Files:**
+
 - Modify: `config/zorgscope.yaml`
 - Modify: `internal/config/config_test.go` (`TestTheRealConfigNamesTheTenSitesInOrder` →
   twelve sites)

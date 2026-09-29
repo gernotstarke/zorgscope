@@ -17,9 +17,9 @@ github:
   # arc42/quality.arc42.org-site does. A name that is merely wrong fetches nothing and reports the
   # repository as failing rather than as missing.
   #
-  # QS-3.5 budgets 20 GraphQL queries per page view and the issue fetcher spends two per repository
-  # (issues and pull requests paginate independently), so this list may hold at most ten entries.
-  # It holds ten: the budget exactly.
+  # QS-3.5 allows two GraphQL queries per repository (issues and pull requests paginate
+  # independently) and at most fifteen repositories, so at most 30 per fetch; Load refuses a
+  # sixteenth. It holds twelve: three left for iSAQB's req4arc, improve and adoc.
   # The repositories are fetched side by side, so the list's length costs no time, only requests.
   repos:
     - arc42/arc42-template
@@ -32,12 +32,19 @@ github:
     - arc42/trainings.arc42.org-site
     - arc42/arc42-generator
     - gernotstarke/zorgscope
+    - isaqb-org/curriculum-foundation
+    - isaqb-org/glossary
   # The Sites view (FR-1.8): one tile per entry, in this order. Each site names exactly one of the
   # repositories above; a repository no site names would share an Other tile, which the shipped
   # list leaves empty. hue is a key of the palette app.css defines from the arc42 brand registry
   # (arc42/meta.arc42.org, wiki/concepts/brand.md): navy, blue, plum, teal, umber, rose or slate.
   # The three without a brand hue take slate. tag tells apart two sites that share a hue, at most
   # three characters.
+  #
+  # group (default arc42) is the Radar view a site gets a sector of its own in; on the other group's
+  # radar it shares one sector with the rest of its group (FR-1.15). The iSAQB sites wear the five
+  # oranges — apricot, orange, tangerine, rust, copper — and say alerts: false: they are fetched
+  # for issues and pull requests only, never for Dependabot alerts (FR-1.16).
   sites:
     - name: arc42-template
       url: https://github.com/arc42/arc42-template
@@ -80,3 +87,15 @@ github:
       url: https://github.com/gernotstarke/zorgscope
       repo: gernotstarke/zorgscope
       hue: slate
+    - name: curriculum-foundation
+      url: https://github.com/isaqb-org/curriculum-foundation
+      repo: isaqb-org/curriculum-foundation
+      hue: orange
+      group: iSAQB
+      alerts: false
+    - name: glossary
+      url: https://github.com/isaqb-org/glossary
+      repo: isaqb-org/glossary
+      hue: apricot
+      group: iSAQB
+      alerts: false
