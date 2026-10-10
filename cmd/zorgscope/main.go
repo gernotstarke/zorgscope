@@ -102,9 +102,10 @@ func loggingSource(src ports.Source, log *slog.Logger, secrets config.Secrets) p
 // "" would point production traffic at a relative path.
 func githubConfig(cfg config.Config) github.Config {
 	gh := github.Config{
-		Token:    cfg.Secrets.GitHubToken,
-		Repos:    cfg.GitHub.Repos,
-		NoAlerts: cfg.GitHub.ReposWithoutAlerts(),
+		Token:       cfg.Secrets.GitHubToken,
+		OwnerTokens: cfg.Secrets.OwnerTokens,
+		Repos:       cfg.GitHub.Repos,
+		NoAlerts:    cfg.GitHub.ReposWithoutAlerts(),
 	}
 	if cfg.GitHub.BaseURL != "" {
 		gh.BaseURL = cfg.GitHub.BaseURL + "/graphql"

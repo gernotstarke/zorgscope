@@ -21,9 +21,9 @@ func sitesHandler(t *testing.T, src ports.Source) http.Handler {
 	return newTestServerWith(t, func(o *Options) {
 		o.Config.GitHub.Repos = []string{"arc42/org", "arc42/de", "arc42/quality", "arc42/template", "gernotstarke/zorgscope"}
 		o.Config.GitHub.Sites = []config.Site{
-			{Name: "arc42.org", URL: "https://arc42.org", Repo: "arc42/org", Hue: "navy"},
-			{Name: "arc42.de", URL: "https://arc42.de", Repo: "arc42/de", Hue: "navy", Tag: "DE"},
-			{Name: "quality.arc42.org", URL: "https://quality.arc42.org", Repo: "arc42/quality", Hue: "plum"},
+			{Name: "arc42.org", URL: "https://arc42.org", Repos: []string{"arc42/org"}, Hue: "navy"},
+			{Name: "arc42.de", URL: "https://arc42.de", Repos: []string{"arc42/de"}, Hue: "navy", Tag: "DE"},
+			{Name: "quality.arc42.org", URL: "https://quality.arc42.org", Repos: []string{"arc42/quality"}, Hue: "plum"},
 		}
 		o.Cache = snapshot.New(src, time.Hour, o.Clock)
 	}).Handler()
@@ -144,7 +144,7 @@ func TestOtherTileWithOneRepoStillNamesItInItsLink(t *testing.T) {
 	h := newTestServerWith(t, func(o *Options) {
 		o.Config.GitHub.Repos = []string{"arc42/org", "arc42/extra"}
 		o.Config.GitHub.Sites = []config.Site{
-			{Name: "arc42.org", URL: "https://arc42.org", Repo: "arc42/org", Hue: "navy"},
+			{Name: "arc42.org", URL: "https://arc42.org", Repos: []string{"arc42/org"}, Hue: "navy"},
 		}
 		o.Cache = snapshot.New(&fakeSource{items: items}, time.Hour, o.Clock)
 	}).Handler()
@@ -226,8 +226,8 @@ func TestSitesOmitsOtherWhenEveryRepositoryIsClaimed(t *testing.T) {
 	h := newTestServerWith(t, func(o *Options) {
 		o.Config.GitHub.Repos = []string{"arc42/org", "arc42/quality"}
 		o.Config.GitHub.Sites = []config.Site{
-			{Name: "arc42.org", URL: "https://arc42.org", Repo: "arc42/org", Hue: "navy"},
-			{Name: "quality.arc42.org", URL: "https://quality.arc42.org", Repo: "arc42/quality", Hue: "plum"},
+			{Name: "arc42.org", URL: "https://arc42.org", Repos: []string{"arc42/org"}, Hue: "navy"},
+			{Name: "quality.arc42.org", URL: "https://quality.arc42.org", Repos: []string{"arc42/quality"}, Hue: "plum"},
 		}
 		o.Cache = snapshot.New(&fakeSource{}, time.Hour, o.Clock)
 	}).Handler()
@@ -294,7 +294,7 @@ func TestSitesPageStaysInsideItsBudget(t *testing.T) {
 			n := strconv.Itoa(i)
 			o.Config.GitHub.Sites = append(o.Config.GitHub.Sites, config.Site{
 				Name: "site-" + n + ".example", URL: "https://site-" + n + ".example",
-				Repo: repo, Hue: config.HueKeys[i%len(config.HueKeys)],
+				Repos: []string{repo}, Hue: config.HueKeys[i%len(config.HueKeys)],
 			})
 		}
 		o.Cache = snapshot.New(src, time.Hour, o.Clock)
@@ -308,5 +308,45 @@ func TestSitesPageStaysInsideItsBudget(t *testing.T) {
 		t.Errorf("Sites view is %d bytes, budget is 150 kB (QS-2.3)", n)
 	} else {
 		t.Logf("Sites view is %d bytes of the 150 kB budget (QS-2.3)", n)
+	}
+}
+
+// FR-1.8: a site naming several repositories is one tile holding all of them, in its own colour,
+// and once it cuts, its "all →" links name the repository each leads to — the heading names the
+// site, not which of its repositories a link means.
+func TestASiteWithSeveralReposIsOneTile(t *testing.T) {
+	var items []domain.Item
+	for i := range 5 {
+		items = append(items, siteItem("family-org/a", domain.KindIssue, 600+i, testNow.Add(-48*time.Hour)))
+	}
+	items = append(items, siteItem("family-org/b", domain.KindPR, 700, testNow.Add(-time.Hour)))
+	h := newTestServerWith(t, func(o *Options) {
+		o.Config.GitHub.Repos = []string{"arc42/org", "family-org/a", "family-org/b"}
+		o.Config.GitHub.Sites = []config.Site{
+			{Name: "arc42.org", URL: "https://arc42.org", Repos: []string{"arc42/org"}, Hue: "navy"},
+			{Name: "family", URL: "https://family.example", Repos: []string{"family-org/a", "family-org/b"}, Hue: "green"},
+		}
+		o.Cache = snapshot.New(&fakeSource{items: items}, time.Hour, o.Clock)
+	}).Handler()
+	body := getAuthed(t, h, "/sites").Body.String()
+
+	if n := strings.Count(body, `class="tile hue-`); n != 2 {
+		t.Errorf("tiles = %d, want 2: the family's repositories share one, and no Other tile", n)
+	}
+	if !strings.Contains(body, `class="tile hue-green" aria-labelledby="tile-2-title"`) {
+		t.Error("the family tile is not drawn in its own green")
+	}
+	family := tileSection(t, body, 2)
+	for _, want := range []string{
+		"1 PR · 5 issues", "Item 700",
+		`href="/?repo=family-org%2Fa"`, "family-org/a: all 0 PRs · 5 issues →",
+		`href="/?repo=family-org%2Fb"`, "family-org/b: all 1 PR · 0 issues →",
+	} {
+		if !strings.Contains(family, want) {
+			t.Errorf("the family tile lacks %q:\n%s", want, family)
+		}
+	}
+	if got := hueForRepo(config.GitHub{Sites: []config.Site{{Repos: []string{"family-org/a", "family-org/b"}, Hue: "green"}}}, "family-org/b"); got != "green" {
+		t.Errorf("hueForRepo(family-org/b) = %q, want the site's green", got)
 	}
 }

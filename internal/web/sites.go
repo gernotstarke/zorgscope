@@ -69,9 +69,11 @@ func siteSpecs(gh config.GitHub) []domain.SiteSpec {
 	for _, site := range gh.Sites {
 		specs = append(specs, domain.SiteSpec{
 			Name: site.Name, URL: site.URL, Hue: tileHue(site.Hue), Tag: site.Tag,
-			Repos: []string{site.Repo},
+			Repos: site.Repos,
 		})
-		claimed[site.Repo] = true
+		for _, repo := range site.Repos {
+			claimed[repo] = true
+		}
 	}
 	var other []string
 	for _, repo := range gh.Repos {
@@ -99,7 +101,7 @@ func tileHue(key string) string {
 // rule the Other tile follows, now shared with the list's groups (FR-1.10 AC2).
 func hueForRepo(gh config.GitHub, repo string) string {
 	for _, site := range gh.Sites {
-		if site.Repo == repo {
+		if slices.Contains(site.Repos, repo) {
 			return tileHue(site.Hue)
 		}
 	}
@@ -255,8 +257,8 @@ type tileLinkView struct {
 	Href string
 	// Label says what the list holds: "all 4 PRs · 11 issues".
 	Label string
-	// Repo names the repository on the Other tile; empty on a site's own tile, whose heading
-	// already names the site.
+	// Repo names the repository on the Other tile and on a site's tile of several repositories;
+	// empty on a site's tile of one, whose heading already names the site.
 	Repo string
 	// Site is the tile's name, added for screen readers, which read a link out of its tile.
 	Site string
@@ -294,7 +296,7 @@ func newTileView(n int, tile domain.SiteTile, now time.Time) tileView {
 			Label: "all " + kindsLine(count.PRs, count.Issues),
 			Site:  tile.Spec.Name,
 		}
-		if tile.Spec.Name == otherTileName {
+		if tile.Spec.Name == otherTileName || len(tile.Spec.Repos) > 1 {
 			link.Repo = count.Repo
 		}
 		v.Links = append(v.Links, link)

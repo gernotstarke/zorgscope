@@ -48,10 +48,22 @@ func TestGitHubConfigDerivesTheGraphQLEndpoint(t *testing.T) {
 func TestGitHubConfigPassesTheReposWithoutAlerts(t *testing.T) {
 	cfg := config.Config{GitHub: config.GitHub{
 		Repos: []string{"arc42/a", "isaqb-org/b"},
-		Sites: []config.Site{{Name: "a", Repo: "arc42/a"}, {Name: "b", Repo: "isaqb-org/b", NoAlerts: true}},
+		Sites: []config.Site{{Name: "a", Repos: []string{"arc42/a"}}, {Name: "b", Repos: []string{"isaqb-org/b"}, NoAlerts: true}},
 	}}
 	if got := githubConfig(cfg).NoAlerts; len(got) != 1 || got[0] != "isaqb-org/b" {
 		t.Errorf("NoAlerts = %v, want [isaqb-org/b]", got)
+	}
+}
+
+// ADR-0017: GITHUB_TOKEN_<OWNER> reaches the fetcher as that owner's token, beside GITHUB_TOKEN.
+func TestGitHubConfigPassesTheOwnerTokens(t *testing.T) {
+	cfg := config.Config{
+		GitHub:  config.GitHub{Repos: []string{"arc42/a", "systems42-org/b"}},
+		Secrets: config.Secrets{GitHubToken: "ghp_x", OwnerTokens: map[string]string{"systems42-org": "github_pat_y"}},
+	}
+	got := githubConfig(cfg)
+	if got.Token != "ghp_x" || len(got.OwnerTokens) != 1 || got.OwnerTokens["systems42-org"] != "github_pat_y" {
+		t.Errorf("Token = %q, OwnerTokens = %v, want ghp_x and systems42-org's own", got.Token, got.OwnerTokens)
 	}
 }
 

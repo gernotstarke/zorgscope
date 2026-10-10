@@ -21,8 +21,8 @@ var radarGitHub = config.GitHub{
 	Owner: "gernotstarke",
 	Repos: []string{"arc42/org", "arc42/quality", "arc42/stray"},
 	Sites: []config.Site{
-		{Name: "arc42.org", Repo: "arc42/org", Hue: "navy"},
-		{Name: "quality", Repo: "arc42/quality", Hue: "plum"},
+		{Name: "arc42.org", Repos: []string{"arc42/org"}, Hue: "navy"},
+		{Name: "quality", Repos: []string{"arc42/quality"}, Hue: "plum"},
 	},
 }
 
@@ -248,7 +248,7 @@ func tenSites() config.GitHub {
 		repo := "arc42/site-" + fmt.Sprint(i)
 		gh.Repos = append(gh.Repos, repo)
 		if i < 9 {
-			gh.Sites = append(gh.Sites, config.Site{Name: "site " + fmt.Sprint(i), Repo: repo, Hue: "navy"})
+			gh.Sites = append(gh.Sites, config.Site{Name: "site " + fmt.Sprint(i), Repos: []string{repo}, Hue: "navy"})
 		}
 	}
 	return gh
@@ -327,10 +327,10 @@ var radarGroups = config.GitHub{
 	Owner: "gernotstarke",
 	Repos: []string{"arc42/org", "arc42/quality", "isaqb-org/cf", "isaqb-org/glossary", "arc42/stray"},
 	Sites: []config.Site{
-		{Name: "arc42.org", Repo: "arc42/org", Hue: "navy"},
-		{Name: "quality", Repo: "arc42/quality", Hue: "plum"},
-		{Name: "curriculum-foundation", Repo: "isaqb-org/cf", Hue: "orange", Group: "iSAQB"},
-		{Name: "glossary", Repo: "isaqb-org/glossary", Hue: "apricot", Group: "iSAQB"},
+		{Name: "arc42.org", Repos: []string{"arc42/org"}, Hue: "navy"},
+		{Name: "quality", Repos: []string{"arc42/quality"}, Hue: "plum"},
+		{Name: "curriculum-foundation", Repos: []string{"isaqb-org/cf"}, Hue: "orange", Group: "iSAQB"},
+		{Name: "glossary", Repos: []string{"isaqb-org/glossary"}, Hue: "apricot", Group: "iSAQB"},
 	},
 }
 
@@ -466,6 +466,35 @@ func TestSitesViewDrawsTheISAQBTiles(t *testing.T) {
 	for _, want := range []string{`class="tile hue-orange"`, `class="tile hue-apricot"`, "curriculum-foundation", "glossary"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("sites page lacks %s", want)
+		}
+	}
+}
+
+// FR-1.15: a site naming several repositories is one sector, and every one of its repositories'
+// items stands in it in the site's colour.
+func TestRadarDrawsASiteWithSeveralReposAsOneSector(t *testing.T) {
+	gh := config.GitHub{
+		Repos: []string{"arc42/org", "family-org/a", "family-org/b"},
+		Sites: []config.Site{
+			{Name: "arc42.org", Repos: []string{"arc42/org"}, Hue: "navy"},
+			{Name: "family", Repos: []string{"family-org/a", "family-org/b"}, Hue: "green"},
+		},
+	}
+	v := buildRadar([]domain.Item{
+		{Kind: domain.KindIssue, Repo: "arc42/org", Number: 1, URL: "o1", UpdatedAt: testNow},
+		{Kind: domain.KindIssue, Repo: "family-org/a", Number: 2, URL: "f1", UpdatedAt: testNow},
+		{Kind: domain.KindPR, Repo: "family-org/b", Number: 3, URL: "f2", UpdatedAt: testNow},
+	}, gh, "", testNow)
+	if got, want := sectorNames(v), []string{"arc42.org", "family"}; !slices.Equal(got, want) {
+		t.Fatalf("sectors = %v, want %v", got, want)
+	}
+	for _, url := range []string{"f1", "f2"} {
+		b := blipFor(t, v, url)
+		if bearing := bearingOf(b); bearing < 180 || bearing > 360 {
+			t.Errorf("%s: bearing %.1f outside the family's sector [180, 360]", url, bearing)
+		}
+		if b.Hue != "hue-green" {
+			t.Errorf("%s: hue %q, want hue-green", url, b.Hue)
 		}
 	}
 }

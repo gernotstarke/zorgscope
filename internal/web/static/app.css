@@ -616,7 +616,8 @@ button:hover,
    site's colour is its identity and stays the same in both appearances; examples owns no hue in
    the registry, only a ground, so its ground serves as both. The palette keys match
    config.HueKeys, and TestTileColoursKeepTextReadable holds every one of them to 4.5:1. The five
-   oranges after slate are not from the arc42 registry: they are the iSAQB group's. */
+   oranges after slate are not from the arc42 registry: they are the iSAQB group's, and the green
+   after them is systems42's. */
 :root {
   --hue-navy: #2b3a57;
   --hue-navy-sig: #374769;
@@ -644,6 +645,11 @@ button:hover,
   --hue-rust-sig: #d0582c;
   --hue-copper: #7d4524;
   --hue-copper-sig: #c27a4a;
+  /* systems42: one green, louder than faq's teal on purpose — a whole organisation's tile and
+     sector, which should be found at a glance. It leans to lime, away from the teal and from --ok,
+     the bluer green that says "issue" and "all clear" in text. */
+  --hue-green: #3a7d0c;
+  --hue-green-sig: #7fd13b;
 
   /* How much of a site's colour washes over its tile. Lower one when the contrast test fails;
      raise one when a wash is too faint to see, as long as the test still passes. */
@@ -663,6 +669,7 @@ button:hover,
 .hue-tangerine { --tile-hue: var(--hue-tangerine); --tile-sig: var(--hue-tangerine-sig); }
 .hue-rust { --tile-hue: var(--hue-rust); --tile-sig: var(--hue-rust-sig); }
 .hue-copper { --tile-hue: var(--hue-copper); --tile-sig: var(--hue-copper-sig); }
+.hue-green { --tile-hue: var(--hue-green); --tile-sig: var(--hue-green-sig); }
 
 /* One column on a phone, two or three on a desktop. */
 .tiles {

@@ -18,9 +18,13 @@ github:
   # repository as failing rather than as missing.
   #
   # QS-3.5 allows two GraphQL queries per repository (issues and pull requests paginate
-  # independently) and at most fifteen repositories, so at most 30 per fetch; Load refuses a
-  # sixteenth. It holds fifteen: the ceiling exactly, so one more repository needs a budget decision
-  # first.
+  # independently) and at most seventeen repositories, so at most 34 per fetch; Load refuses an
+  # eighteenth. It holds seventeen: the ceiling exactly, so one more repository needs a budget
+  # decision first.
+  #
+  # systems42-org's meta and systems42 are private. GITHUB_TOKEN cannot read them; they are read
+  # with GITHUB_TOKEN_SYSTEMS42_ORG, a fine-grained token owned by systems42-org (ADR-0017). Without
+  # it their fetch fails and the page says so, while every other repository still arrives.
   # The repositories are fetched side by side, so the list's length costs no time, only requests.
   repos:
     - arc42/arc42-template
@@ -32,18 +36,21 @@ github:
     - arc42/examples.arc42.org-site
     - arc42/trainings.arc42.org-site
     - arc42/arc42-generator
-    - gernotstarke/zorgscope
+    - systems42-org/systems42.org-site
+    - systems42-org/systems42
+    - systems42-org/meta
     - isaqb-org/curriculum-foundation
     - isaqb-org/glossary
     - isaqb-org/curriculum-req4arc
     - isaqb-org/curriculum-improve
     - isaqb-org/curriculum-adoc
-  # The Sites view (FR-1.8): one tile per entry, in this order. Each site names exactly one of the
-  # repositories above; a repository no site names would share an Other tile, which the shipped
-  # list leaves empty. hue is a key of the palette app.css defines from the arc42 brand registry
-  # (arc42/meta.arc42.org, wiki/concepts/brand.md): navy, blue, plum, teal, umber, rose or slate.
-  # The three without a brand hue take slate. tag tells apart two sites that share a hue, at most
-  # three characters.
+  # The Sites view (FR-1.8): one tile per entry, in this order. Each site names one of the
+  # repositories above with repo, or several with repos — systems42 holds its organisation's three
+  # in one tile and one radar sector. A repository no site names would share an Other tile, which
+  # the shipped list leaves empty. hue is a key of the palette app.css defines from the arc42 brand
+  # registry (arc42/meta.arc42.org, wiki/concepts/brand.md): navy, blue, plum, teal, umber, rose or
+  # slate. The two without a brand hue take slate; systems42 wears green, a colour no other site
+  # uses. tag tells apart two sites that share a hue, at most three characters.
   #
   # group (default arc42) is the Radar view a site gets a sector of its own in (FR-1.15). The first
   # group's radar — arc42 — shows its own sites only; the iSAQB radar shows the iSAQB sites and all
@@ -88,10 +95,13 @@ github:
       url: https://github.com/arc42/arc42-generator
       repo: arc42/arc42-generator
       hue: slate
-    - name: zorgscope
-      url: https://github.com/gernotstarke/zorgscope
-      repo: gernotstarke/zorgscope
-      hue: slate
+    - name: systems42
+      url: https://systems42.org
+      repos:
+        - systems42-org/systems42.org-site
+        - systems42-org/systems42
+        - systems42-org/meta
+      hue: green
     - name: curriculum-foundation
       url: https://github.com/isaqb-org/curriculum-foundation
       repo: isaqb-org/curriculum-foundation

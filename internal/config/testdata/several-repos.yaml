@@ -1,0 +1,13 @@
+timezone: Europe/Berlin
+github:
+  auth_repo: gernotstarke/zorgscope
+  repos: [org/one, family-org/a, family-org/b]
+  sites:
+    - name: one.example
+      url: https://one.example
+      repo: org/one
+      hue: navy
+    - name: family
+      url: https://github.com/family-org
+      repos: [family-org/a, family-org/b]
+      hue: green

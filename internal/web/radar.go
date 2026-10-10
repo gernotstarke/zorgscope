@@ -217,17 +217,21 @@ func radarSpecs(gh config.GitHub, group string) (specs []domain.SiteSpec, hidden
 	idx := make(map[string]int) // another group -> its index in others
 	claimed := make(map[string]bool, len(gh.Sites))
 	for _, site := range gh.Sites {
-		claimed[site.Repo] = true
+		for _, repo := range site.Repos {
+			claimed[repo] = true
+		}
 		g := site.GroupName()
 		if g == group {
 			specs = append(specs, domain.SiteSpec{
 				Name: site.Name, URL: site.URL, Hue: tileHue(site.Hue), Tag: site.Tag,
-				Repos: []string{site.Repo},
+				Repos: site.Repos,
 			})
 			continue
 		}
 		if first {
-			hidden[site.Repo] = true
+			for _, repo := range site.Repos {
+				hidden[repo] = true
+			}
 			continue
 		}
 		i, ok := idx[g]
@@ -236,7 +240,7 @@ func radarSpecs(gh config.GitHub, group string) (specs []domain.SiteSpec, hidden
 			idx[g] = i
 			others = append(others, domain.SiteSpec{Name: g, Hue: tileHue(site.Hue)})
 		}
-		others[i].Repos = append(others[i].Repos, site.Repo)
+		others[i].Repos = append(others[i].Repos, site.Repos...)
 	}
 	specs = append(specs, others...)
 	var unclaimed []string

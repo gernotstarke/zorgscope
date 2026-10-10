@@ -744,13 +744,17 @@ func TestRedactCoversEveryFieldOfSecrets(t *testing.T) {
 
 	for i := range v.NumField() {
 		name := v.Type().Field(i).Name
-		if v.Field(i).Kind() != reflect.String {
-			t.Fatalf("config.Secrets.%s is not a string, so Redact cannot scrub it. Redaction "+
-				"is the last line of defence for QS-4.3: either make the field a string or "+
-				"teach Redact about its shape.", name)
-		}
 		value := "canary-value-of-" + name
-		v.Field(i).SetString(value)
+		switch f := v.Field(i); {
+		case f.Kind() == reflect.String:
+			f.SetString(value)
+		case f.Type() == reflect.TypeFor[map[string]string]():
+			f.Set(reflect.ValueOf(map[string]string{"some-owner": value}))
+		default:
+			t.Fatalf("config.Secrets.%s is neither a string nor a map of strings, so Redact cannot "+
+				"scrub it. Redaction is the last line of defence for QS-4.3: either give the field "+
+				"one of those shapes or teach Redact about its own.", name)
+		}
 		values[name] = value
 	}
 	if len(values) == 0 {

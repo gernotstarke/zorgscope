@@ -5,6 +5,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -252,10 +253,26 @@ func TestLoadSites(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	want := []config.Site{
-		{Name: "one.example", URL: "https://one.example", Repo: "org/one", Hue: "navy", Group: "arc42"},
-		{Name: "two.example", URL: "https://two.example", Repo: "org/two", Hue: "rose", Tag: "DE", Group: "arc42"},
+		{Name: "one.example", URL: "https://one.example", Repos: []string{"org/one"}, Hue: "navy", Group: "arc42"},
+		{Name: "two.example", URL: "https://two.example", Repos: []string{"org/two"}, Hue: "rose", Tag: "DE", Group: "arc42"},
 	}
-	if !slices.Equal(cfg.GitHub.Sites, want) {
+	if !reflect.DeepEqual(cfg.GitHub.Sites, want) {
+		t.Errorf("sites = %+v, want %+v", cfg.GitHub.Sites, want)
+	}
+}
+
+// FR-8.1 AC5: a site may name several repositories with repos instead of repo; its tile and its
+// radar sector then hold all of them (FR-1.8, FR-1.15).
+func TestLoadASiteWithSeveralRepos(t *testing.T) {
+	cfg, err := config.Load("testdata/several-repos.yaml", env(fullEnv()))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []config.Site{
+		{Name: "one.example", URL: "https://one.example", Repos: []string{"org/one"}, Hue: "navy", Group: "arc42"},
+		{Name: "family", URL: "https://github.com/family-org", Repos: []string{"family-org/a", "family-org/b"}, Hue: "green", Group: "arc42"},
+	}
+	if !reflect.DeepEqual(cfg.GitHub.Sites, want) {
 		t.Errorf("sites = %+v, want %+v", cfg.GitHub.Sites, want)
 	}
 }
@@ -304,6 +321,25 @@ func TestLoadRejectsBadSites(t *testing.T) {
 			`    - {name: one.example, url: "https://one.example", repo: org/one, hue: navy}` + "\n" +
 				`    - {name: two.example, url: "https://two.example", repo: org/one, hue: rose}`,
 			"github.sites[1].repo"},
+		{"neither repo nor repos",
+			`    - {name: one.example, url: "https://one.example", hue: navy}`,
+			"github.sites[0].repo"},
+		{"both repo and repos",
+			`    - {name: one.example, url: "https://one.example", repo: org/one, repos: [org/two], hue: navy}`,
+			"github.sites[0].repos"},
+		{"one of repos not in owner/name form",
+			`    - {name: one.example, url: "https://one.example", repos: [org/one, two], hue: navy}`,
+			"github.sites[0].repos[1]"},
+		{"one of repos not watched",
+			`    - {name: one.example, url: "https://one.example", repos: [org/one, org/three], hue: navy}`,
+			"github.sites[0].repos[1]"},
+		{"one of repos named twice",
+			`    - {name: one.example, url: "https://one.example", repos: [org/one, org/one], hue: navy}`,
+			"github.sites[0].repos[1]"},
+		{"one of repos claimed by another site",
+			`    - {name: one.example, url: "https://one.example", repo: org/one, hue: navy}` + "\n" +
+				`    - {name: two.example, url: "https://two.example", repos: [org/two, org/one], hue: rose}`,
+			"github.sites[1].repos[1]"},
 		{"unknown hue",
 			`    - {name: one.example, url: "https://one.example", repo: org/one, hue: lime}`,
 			"github.sites[0].hue"},
@@ -341,9 +377,10 @@ func TestLoadRejectsBadSites(t *testing.T) {
 	}
 }
 
-// FR-1.8 AC1: the committed configuration names the ten arc42 and zorgscope sites and the five iSAQB
+// FR-1.8 AC1: the committed configuration names the nine arc42 sites, systems42 and the five iSAQB
 // ones, in the order their tiles are drawn; the iSAQB five are a group of their own and are not asked
-// for Dependabot alerts (FR-1.15 AC8, FR-1.16). Fifteen is QS-3.5's ceiling.
+// for Dependabot alerts (FR-1.15 AC8, FR-1.16). systems42 is one site over the three systems42-org
+// repositories, which with the others make seventeen: QS-3.5's ceiling.
 func TestTheRealConfigNamesTheFifteenSitesInOrder(t *testing.T) {
 	cfg, err := config.Load("../../config/zorgscope.yaml", env(fullEnv()))
 	if err != nil {
@@ -355,7 +392,7 @@ func TestTheRealConfigNamesTheFifteenSitesInOrder(t *testing.T) {
 	}
 	want := []string{
 		"arc42-template", "arc42.org", "arc42.de", "quality.arc42.org", "docs.arc42.org",
-		"faq.arc42.org", "examples.arc42.org", "trainings.arc42.org", "arc42-generator", "zorgscope",
+		"faq.arc42.org", "examples.arc42.org", "trainings.arc42.org", "arc42-generator", "systems42",
 		"curriculum-foundation", "glossary", "curriculum-req4arc", "curriculum-improve", "curriculum-adoc",
 	}
 	if !slices.Equal(names, want) {
@@ -371,6 +408,13 @@ func TestTheRealConfigNamesTheFifteenSitesInOrder(t *testing.T) {
 	if got := cfg.GitHub.ReposWithoutAlerts(); !slices.Equal(got, want) {
 		t.Errorf("repos without alerts = %v, want %v", got, want)
 	}
+	if n := len(cfg.GitHub.Repos); n != config.MaxRepos {
+		t.Errorf("the configuration watches %d repositories, want QS-3.5's ceiling of %d", n, config.MaxRepos)
+	}
+	want = []string{"systems42-org/systems42.org-site", "systems42-org/systems42", "systems42-org/meta"}
+	if got := cfg.GitHub.Sites[9].Repos; !slices.Equal(got, want) {
+		t.Errorf("systems42 claims %v, want %v", got, want)
+	}
 }
 
 // FR-1.8 AC1: the shipped configuration claims every watched repository, so the Other tile it
@@ -383,7 +427,7 @@ func TestTheRealConfigSitesClaimEveryRepoInOrder(t *testing.T) {
 	}
 	var claimed []string
 	for _, s := range cfg.GitHub.Sites {
-		claimed = append(claimed, s.Repo)
+		claimed = append(claimed, s.Repos...)
 	}
 	if !slices.Equal(claimed, cfg.GitHub.Repos) {
 		t.Errorf("sites claim repos %v in order, want repos %v", claimed, cfg.GitHub.Repos)
@@ -437,7 +481,7 @@ func TestSiteWithoutGroupIsInTheDefaultGroup(t *testing.T) {
 	if got := (config.Site{}).GroupName(); got != config.DefaultGroup {
 		t.Errorf("GroupName() = %q, want %q", got, config.DefaultGroup)
 	}
-	gh := config.GitHub{Sites: []config.Site{{Name: "a", Repo: "o/a"}, {Name: "b", Repo: "o/b", Group: "arc42"}}}
+	gh := config.GitHub{Sites: []config.Site{{Name: "a", Repos: []string{"o/a"}}, {Name: "b", Repos: []string{"o/b"}, Group: "arc42"}}}
 	if got := gh.Groups(); !slices.Equal(got, []string{"arc42"}) {
 		t.Errorf("Groups() = %v, want [arc42]", got)
 	}
@@ -446,9 +490,9 @@ func TestSiteWithoutGroupIsInTheDefaultGroup(t *testing.T) {
 	}
 }
 
-// QS-3.5: sixteen repositories are one too many.
-func TestLoadRejectsMoreThanFifteenRepos(t *testing.T) {
-	repos := make([]string, 16)
+// QS-3.5: eighteen repositories are one too many.
+func TestLoadRejectsMoreThanSeventeenRepos(t *testing.T) {
+	repos := make([]string, 18)
 	for i := range repos {
 		repos[i] = fmt.Sprintf("org/r%d", i)
 	}
@@ -459,7 +503,28 @@ func TestLoadRejectsMoreThanFifteenRepos(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := config.Load(path, env(fullEnv()))
-	if err == nil || !strings.Contains(err.Error(), "github.repos") || !strings.Contains(err.Error(), "15") {
-		t.Fatalf("err = %v, want one naming github.repos and the cap of 15", err)
+	if err == nil || !strings.Contains(err.Error(), "github.repos") || !strings.Contains(err.Error(), "17") {
+		t.Fatalf("err = %v, want one naming github.repos and the cap of 17", err)
+	}
+}
+
+// ADR-0017: GITHUB_TOKEN_<OWNER> is a token of its own for one owner's repositories, the owner
+// upper-cased with every character but letters and digits made an underscore. An owner without one
+// is read with GITHUB_TOKEN, and an owner nothing watches is never looked up.
+func TestLoadReadsATokenPerOwner(t *testing.T) {
+	e := fullEnv()
+	e["GITHUB_TOKEN_FAMILY_ORG"] = "github_pat_family"
+	e["GITHUB_TOKEN_UNWATCHED"] = "github_pat_unwatched"
+	cfg, err := config.Load("testdata/several-repos.yaml", env(e))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := map[string]string{"family-org": "github_pat_family"}
+	if !maps.Equal(cfg.Secrets.OwnerTokens, want) {
+		t.Errorf("owner tokens = %v, want %v", cfg.Secrets.OwnerTokens, want)
+	}
+	cfg, err = config.Load("testdata/several-repos.yaml", env(fullEnv()))
+	if err != nil || len(cfg.Secrets.OwnerTokens) != 0 {
+		t.Errorf("owner tokens without GITHUB_TOKEN_FAMILY_ORG = %v (err %v), want none", cfg.Secrets.OwnerTokens, err)
 	}
 }

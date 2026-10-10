@@ -59,6 +59,32 @@ the first deploy of 2.2.1 (2026‑09‑29). A token that must read `isaqb-org` t
 every repository stops fetching, not only the iSAQB ones. The organisation owners can change the
 policy, so the limit may move; the error message names it and links the token's settings page.
 
+**A second token reads the private systems42 repositories.** Since 2.3.0 zorgscope watches the three
+`systems42-org` repositories, two of them private (ADR‑0017). `GITHUB_TOKEN` cannot read those
+without the classic `repo` scope, which would grant write access to every private repository its owner
+can reach, and a fine‑grained token has a single resource owner. So each owner may have a token of
+its own, `GITHUB_TOKEN_<OWNER>` — for this organisation `GITHUB_TOKEN_SYSTEMS42_ORG` — and that
+owner's repositories are read with it, everything else still with `GITHUB_TOKEN`. To create it, on
+GitHub → Settings → Developer settings → Fine‑grained tokens → *Generate new token*:
+
+* **Resource owner** `systems42-org` (if the organisation is not offered, it does not allow
+  fine‑grained tokens yet: Organisation settings → Personal access tokens → allow them);
+* **Expiration** within a year — the same policy that bit `isaqb-org` may apply here;
+* **Repository access** *Only select repositories*: `systems42.org-site`, `systems42`, `meta`;
+* **Repository permissions**, all *Read‑only*: *Issues*, *Pull requests*, *Dependabot alerts*
+  (*Metadata* is added by GitHub on its own). Nothing else.
+
+Put it in `.env` and as a Fly secret (`fly secrets set GITHUB_TOKEN_SYSTEMS42_ORG=… -a zorgscope`).
+Unset, the two private repositories fail with GitHub's "could not resolve to a Repository" and every
+other repository still arrives. `GITHUB_TOKEN` itself needs no change. Like every secret it is
+scrubbed from logs and responses: `Redact` covers each value of a map of tokens.
+
+**The dashboard now shows private titles.** Everyone it admits — anyone with push access to
+`github.auth_repo` — reads the titles, authors and summaries of `systems42-org`'s private issues and
+pull requests, and with the browser cache on (ADR‑0013) the rendered list stays in that browser's
+`localStorage` for up to seven days. Granting someone push access to `gernotstarke/zorgscope` is
+therefore also granting them that read.
+
 This makes the token more sensitive than it was. Leaked, it tells its holder which of the
 repositories have unpatched vulnerabilities, and in which dependency. Rotating it works as before —
 a new token in `.env` and as a Fly secret, the old one revoked on GitHub — and a token that loses the

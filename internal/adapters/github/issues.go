@@ -39,8 +39,13 @@ const maxPages = 100
 
 // Config configures access to GitHub for IssueFetcher.
 type Config struct {
-	Token   string
-	BaseURL string // "" -> https://api.github.com/graphql (GraphQL endpoint)
+	Token string
+	// OwnerTokens are tokens of their own for the repositories of some owners, keyed by owner and
+	// compared ignoring case, as GitHub compares logins (ADR-0017). Every other repository is read
+	// with Token. A fine-grained token reads one owner's private repositories and alerts only, so
+	// an organisation whose private repositories are watched needs one here.
+	OwnerTokens map[string]string
+	BaseURL     string // "" -> https://api.github.com/graphql (GraphQL endpoint)
 	// RESTBaseURL is the REST root, "" -> https://api.github.com. It is asked one thing only: whether
 	// an empty list of Dependabot alerts may be believed (alertsReadable).
 	RESTBaseURL string
@@ -53,20 +58,37 @@ type Config struct {
 // IssueFetcher fetches open issues and open pull requests for the repositories in Config, over
 // the GitHub GraphQL API (FR-1.1).
 type IssueFetcher struct {
-	client *githubv4.Client
-	repos  []string
+	repos []string
 	// noAlerts are the repositories of Config.NoAlerts.
 	noAlerts map[string]bool
-	// rest and hc are the REST root and the token-carrying client alertsReadable asks with, and
-	// readable its answers, per repository, for the life of the process.
+	// lane is Config.Token's, and owners the lanes of Config.OwnerTokens, keyed by lower-cased owner.
+	lane   *lane
+	owners map[string]*lane
+	// rest is the REST root alertsReadable asks, and readable its answers, per repository, for the
+	// life of the process.
 	rest     string
-	hc       *http.Client
 	readable sync.Map // "owner/name" -> bool
+}
+
+// lane is one token's way to GitHub: the GraphQL client, the token-carrying HTTP client the REST
+// probe asks with, and what GitHub has said about that token's alerts. Each token has its own,
+// because one token's refusal says nothing about another's (ADR-0017).
+type lane struct {
+	client *githubv4.Client
+	hc     *http.Client
 	// alertsRefused is set once GitHub has refused the alert fields while answering the same page
-	// without them (ADR-0015). From then on this process stops asking: a refused token costs one
+	// without them (ADR-0015). From then on this lane stops asking: a refused token costs one
 	// extra request per repository once, not on every fetch. A restart — on this machine every
 	// wake from zero — asks again.
 	alertsRefused atomic.Bool
+}
+
+// laneFor is the lane owner's repositories are read on.
+func (f *IssueFetcher) laneFor(owner string) *lane {
+	if l, ok := f.owners[strings.ToLower(owner)]; ok {
+		return l
+	}
+	return f.lane
 }
 
 // NewIssueFetcher builds an IssueFetcher from cfg. hc supplies the transport and any test-only
@@ -76,15 +98,28 @@ type IssueFetcher struct {
 // to that URL (used to point at a fake or an Enterprise instance); otherwise they go to GitHub's
 // public GraphQL endpoint.
 func NewIssueFetcher(cfg Config, hc *http.Client) *IssueFetcher {
-	authed := *hc
-	authed.Transport = &oauth2.Transport{
-		Source: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: cfg.Token}),
-		Base:   hc.Transport,
-	}
-
 	url := cfg.BaseURL
 	if url == "" {
 		url = defaultGraphQLURL
+	}
+	newLane := func(token string) *lane {
+		authed := *hc
+		authed.Transport = &oauth2.Transport{
+			Source: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}),
+			Base:   hc.Transport,
+		}
+		return &lane{client: githubv4.NewEnterpriseClient(url, &authed), hc: &authed}
+	}
+
+	// Two owners given the same token share its lane, so that a refusal is remembered for the
+	// token, which is what GitHub refused.
+	byToken := map[string]*lane{cfg.Token: newLane(cfg.Token)}
+	owners := make(map[string]*lane, len(cfg.OwnerTokens))
+	for owner, token := range cfg.OwnerTokens {
+		if byToken[token] == nil {
+			byToken[token] = newLane(token)
+		}
+		owners[strings.ToLower(owner)] = byToken[token]
 	}
 
 	rest := strings.TrimRight(cfg.RESTBaseURL, "/")
@@ -98,11 +133,11 @@ func NewIssueFetcher(cfg Config, hc *http.Client) *IssueFetcher {
 	}
 
 	return &IssueFetcher{
-		client:   githubv4.NewEnterpriseClient(url, &authed),
 		repos:    cfg.Repos,
 		noAlerts: noAlerts,
+		lane:     byToken[cfg.Token],
+		owners:   owners,
 		rest:     rest,
-		hc:       &authed,
 	}
 }
 
@@ -114,7 +149,7 @@ func NewIssueFetcher(cfg Config, hc *http.Client) *IssueFetcher {
 //
 // The repositories are fetched side by side (QS-2.7): one goroutine per repository and
 // connection, all started at once. There is no separate concurrency limit, because QS-3.5 caps the
-// configuration at fifteen repositories and therefore at thirty requests in flight. Each goroutine
+// configuration at seventeen repositories and therefore at 34 requests in flight. Each goroutine
 // writes into its own slot, and the slots are read out in order once every goroutine has finished,
 // so the result is the one the sequential loop produced — repositories in configuration order, a
 // repository's issues before its pull requests — whatever order the upstream answered in.
@@ -134,17 +169,18 @@ func (f *IssueFetcher) Fetch(ctx context.Context) (domain.Fetched, error) {
 			slots[2*i].err = fmt.Errorf("github: %q is not owner/name", repo)
 			continue
 		}
+		l := f.laneFor(owner)
 		wg.Add(2)
 		go func(s *slot) {
 			defer wg.Done()
-			s.items, s.err = f.fetchIssues(ctx, owner, name)
+			s.items, s.err = f.fetchIssues(ctx, l, owner, name)
 			if s.err != nil {
 				s.err = fmt.Errorf("github: fetching issues for %s: %w", repo, s.err)
 			}
 		}(&slots[2*i])
 		go func(s *slot) {
 			defer wg.Done()
-			s.items, s.coverage, s.err = f.fetchPullRequests(ctx, owner, name)
+			s.items, s.coverage, s.err = f.fetchPullRequests(ctx, l, owner, name)
 			if s.err != nil {
 				s.err = fmt.Errorf("github: fetching pull requests for %s: %w", repo, s.err)
 			}
@@ -327,7 +363,7 @@ type ghLabelConnection struct {
 
 // fetchIssues fetches every open issue for owner/name, following pageInfo.hasNextPage with the
 // after cursor until exhausted, bounded by nextAfter's forward-progress check and maxPages.
-func (f *IssueFetcher) fetchIssues(ctx context.Context, owner, name string) ([]domain.Item, error) {
+func (f *IssueFetcher) fetchIssues(ctx context.Context, l *lane, owner, name string) ([]domain.Item, error) {
 	var items []domain.Item
 	var after *githubv4.String
 	repo := owner + "/" + name
@@ -343,7 +379,7 @@ func (f *IssueFetcher) fetchIssues(ctx context.Context, owner, name string) ([]d
 			"name":  githubv4.String(name),
 			"after": after,
 		}
-		if err := f.client.Query(ctx, &q, vars); err != nil {
+		if err := l.client.Query(ctx, &q, vars); err != nil {
 			return items, err
 		}
 
@@ -366,9 +402,9 @@ func (f *IssueFetcher) fetchIssues(ctx context.Context, owner, name string) ([]d
 // pageInfo.hasNextPage with the after cursor until exhausted, bounded by nextAfter's
 // forward-progress check and maxPages. Its first page also brings the repository's Dependabot
 // alerts, which follow the pull requests in the result, and what could be said about them.
-func (f *IssueFetcher) fetchPullRequests(ctx context.Context, owner, name string) ([]domain.Item, domain.Coverage, error) {
+func (f *IssueFetcher) fetchPullRequests(ctx context.Context, l *lane, owner, name string) ([]domain.Item, domain.Coverage, error) {
 	repo := owner + "/" + name
-	conn, alerts, coverage, err := f.firstPullRequestPage(ctx, owner, name)
+	conn, alerts, coverage, err := f.firstPullRequestPage(ctx, l, owner, name)
 	if err != nil {
 		return nil, domain.CoverageUnknown, err
 	}
@@ -394,7 +430,7 @@ func (f *IssueFetcher) fetchPullRequests(ctx context.Context, owner, name string
 		after = next
 
 		var q pullRequestsQuery
-		if err := f.client.Query(ctx, &q, prVars(owner, name, after)); err != nil {
+		if err := l.client.Query(ctx, &q, prVars(owner, name, after)); err != nil {
 			return append(items, alerts...), coverage, err
 		}
 		conn = q.Repository.PullRequests
@@ -409,27 +445,27 @@ func (f *IssueFetcher) fetchPullRequests(ctx context.Context, owner, name string
 // fields when its owner may not see them — and shurcooL/graphql hands back only the messages, whose
 // wording is GitHub's to change. So neither shape is recognised by its text: any error on the
 // page that asks for alerts is followed by the same page without them. If that one is answered,
-// the alerts were what GitHub refused, and the process stops asking (alertsRefused). If it fails
+// the alerts were what GitHub refused, and the token stops asking (alertsRefused). If it fails
 // too, it is the ordinary failure of the repository it would have been without alerts.
-func (f *IssueFetcher) firstPullRequestPage(ctx context.Context, owner, name string) (ghPRConnection, []domain.Item, domain.Coverage, error) {
+func (f *IssueFetcher) firstPullRequestPage(ctx context.Context, l *lane, owner, name string) (ghPRConnection, []domain.Item, domain.Coverage, error) {
 	vars := prVars(owner, name, nil)
 	if f.noAlerts[owner+"/"+name] {
 		var q pullRequestsQuery
-		if err := f.client.Query(ctx, &q, vars); err != nil {
+		if err := l.client.Query(ctx, &q, vars); err != nil {
 			return ghPRConnection{}, nil, domain.CoverageUnknown, err
 		}
 		// Not asked is not refused: alertsRefused stays as it was, and no coverage is claimed.
 		return q.Repository.PullRequests, nil, domain.CoverageUnknown, nil
 	}
-	if !f.alertsRefused.Load() {
+	if !l.alertsRefused.Load() {
 		var q pullRequestsFirstPageQuery
-		if err := f.client.Query(ctx, &q, vars); err == nil {
+		if err := l.client.Query(ctx, &q, vars); err == nil {
 			r := q.Repository
 			if !bool(r.HasVulnerabilityAlertsEnabled) {
 				return r.PullRequests, nil, domain.CoverageOff, nil
 			}
 			if len(r.VulnerabilityAlerts.Nodes) == 0 {
-				if !f.alertsReadable(ctx, owner, name) {
+				if !f.alertsReadable(ctx, l, owner, name) {
 					return r.PullRequests, nil, domain.CoverageUnavailable, nil
 				}
 				return r.PullRequests, nil, domain.CoverageOn, nil
@@ -443,10 +479,10 @@ func (f *IssueFetcher) firstPullRequestPage(ctx context.Context, owner, name str
 	}
 
 	var q pullRequestsQuery
-	if err := f.client.Query(ctx, &q, vars); err != nil {
+	if err := l.client.Query(ctx, &q, vars); err != nil {
 		return ghPRConnection{}, nil, domain.CoverageUnknown, err
 	}
-	f.alertsRefused.Store(true)
+	l.alertsRefused.Store(true)
 	return q.Repository.PullRequests, nil, domain.CoverageUnavailable, nil
 }
 
@@ -460,7 +496,7 @@ func (f *IssueFetcher) firstPullRequestPage(ctx context.Context, owner, name str
 // empty needs no check, since it could not have been read otherwise. Only a 200 is believed. Any
 // other answer — a refusal, an outage, a timeout — means the repository is not reported clean, and
 // only a refusal is remembered, so that a passing outage does not stick.
-func (f *IssueFetcher) alertsReadable(ctx context.Context, owner, name string) bool {
+func (f *IssueFetcher) alertsReadable(ctx context.Context, l *lane, owner, name string) bool {
 	repo := owner + "/" + name
 	if v, ok := f.readable.Load(repo); ok {
 		return v.(bool)
@@ -472,7 +508,7 @@ func (f *IssueFetcher) alertsReadable(ctx context.Context, owner, name string) b
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	resp, err := f.hc.Do(req)
+	resp, err := l.hc.Do(req)
 	if err != nil {
 		return false
 	}

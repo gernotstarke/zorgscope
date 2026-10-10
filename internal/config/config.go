@@ -26,9 +26,9 @@ const defaultCacheTTL = 5 * time.Minute
 // DefaultGroup is the group of a site that names none (spec 2026-09-29 §3).
 const DefaultGroup = "arc42"
 
-// MaxRepos is QS-3.5's ceiling on github.repos: two GraphQL requests per repository, so at most 30
+// MaxRepos is QS-3.5's ceiling on github.repos: two GraphQL requests per repository, so at most 34
 // per fetch.
-const MaxRepos = 15
+const MaxRepos = 17
 
 // groupPattern is a group's display name: short enough for a button on the radar.
 var groupPattern = regexp.MustCompile(`^[A-Za-z0-9.-]{1,12}$`)
@@ -39,22 +39,25 @@ const maxTagLen = 3
 
 // HueKeys are the site colours the stylesheet defines, each as a `hue-<key>` class over
 // `--hue-<key>` tokens. The first seven are taken from the arc42 brand registry (per-site tiles
-// design §6); the five oranges are the iSAQB group's (spec 2026-09-29 §6). A colour can reach the
-// page only as one of these classes: the Content-Security-Policy forbids inline styles, so a hex
-// value in the YAML would have nowhere to go.
+// design §6); the five oranges are the iSAQB group's (spec 2026-09-29 §6), and green is systems42's.
+// A colour can reach the page only as one of these classes: the Content-Security-Policy forbids
+// inline styles, so a hex value in the YAML would have nowhere to go.
 var HueKeys = []string{"navy", "blue", "plum", "teal", "umber", "rose", "slate",
-	"apricot", "orange", "tangerine", "rust", "copper"}
+	"apricot", "orange", "tangerine", "rust", "copper", "green"}
 
-// Site is one web property or repository drawn as a tile on the Sites view (FR-1.8): its name, its
-// address, the one watched repository behind it, its colour key, an optional short tag that tells
-// apart two sites sharing a colour, the group whose radar draws it as a sector of its own
-// (FR-1.15), and whether its repository is asked for Dependabot alerts (FR-1.16).
+// Site is one web property or family of repositories drawn as a tile on the Sites view (FR-1.8): its
+// name, its address, the watched repositories behind it, its colour key, an optional short tag that
+// tells apart two sites sharing a colour, the group whose radar draws it as a sector of its own
+// (FR-1.15), and whether its repositories are asked for Dependabot alerts (FR-1.16).
 type Site struct {
-	Name, URL, Repo, Hue, Tag string
+	Name, URL, Hue, Tag string
+	// Repos are one repository for most sites; a site such as systems42 holds an organisation's
+	// several repositories in one tile and one radar sector. Load never yields an empty list.
+	Repos []string
 	// Group is set by Load, DefaultGroup when the file names none. A Site built in code may leave it
 	// empty; GroupName reads it.
 	Group string
-	// NoAlerts is `alerts: false`: the repository is fetched without its Dependabot alerts. It is a
+	// NoAlerts is `alerts: false`: the repositories are fetched without their Dependabot alerts. It is a
 	// negative so that the zero value asks for alerts, as the file's default does.
 	NoAlerts bool
 }
@@ -87,8 +90,8 @@ type GitHub struct {
 	Owner string
 	Repos []string
 	// Sites are the tiles of the Sites view, in the order they are drawn (FR-1.8), each in a group
-	// whose radar gives it a sector of its own (FR-1.15). Each names one
-	// repository of Repos; the repositories no site names share a tile of their own. Empty is valid:
+	// whose radar gives it a sector of its own (FR-1.15). Each names one or more
+	// repositories of Repos; the repositories no site names share a tile of their own. Empty is valid:
 	// the Sites view then shows that one shared tile.
 	Sites []Site
 	// CacheTTL is how old the fetched item list may be before a page view refetches it. It
@@ -118,7 +121,7 @@ func (g GitHub) ReposWithoutAlerts() []string {
 	var out []string
 	for _, s := range g.Sites {
 		if s.NoAlerts {
-			out = append(out, s.Repo)
+			out = append(out, s.Repos...)
 		}
 	}
 	return out
@@ -134,6 +137,27 @@ type Secrets struct {
 	// is read from the environment beside its secret and redacted with it, because a value that is
 	// only sometimes worth hiding is a value someone eventually forgets to hide.
 	OAuthClientID, OAuthClientSecret string
+	// OwnerTokens are GITHUB_TOKEN_<OWNER>, keyed by the owner as github.repos spells it: a token of
+	// its own for the repositories of one owner, which every other repository's GitHubToken cannot
+	// read — an organisation's private repositories, read with a fine-grained token that organisation
+	// owns (ADR-0017). Only owners of watched repositories are looked up; nil when none has one.
+	OwnerTokens map[string]string
+}
+
+// OwnerTokenVar is the environment variable holding owner's token of its own (ADR-0017):
+// GITHUB_TOKEN_ followed by owner upper-cased, every character but a letter or a digit made an
+// underscore, as GITHUB_TOKEN_SYSTEMS42_ORG for systems42-org.
+func OwnerTokenVar(owner string) string {
+	var b strings.Builder
+	b.WriteString("GITHUB_TOKEN_")
+	for _, r := range strings.ToUpper(owner) {
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
 }
 
 // fileConfig mirrors the shape of the YAML file. CacheTTL is a string here so that a malformed
@@ -153,9 +177,11 @@ type fileConfig struct {
 type fileSite struct {
 	Name string `yaml:"name"`
 	URL  string `yaml:"url"`
-	Repo string `yaml:"repo"`
-	Hue  string `yaml:"hue"`
-	Tag  string `yaml:"tag"`
+	// Repo names the site's one repository, Repos its several: exactly one of the two is given.
+	Repo  string   `yaml:"repo"`
+	Repos []string `yaml:"repos"`
+	Hue   string   `yaml:"hue"`
+	Tag   string   `yaml:"tag"`
 	// Group is the site's group, DefaultGroup when absent; Alerts is nil when absent, which means true.
 	Group  string `yaml:"group"`
 	Alerts *bool  `yaml:"alerts"`
@@ -236,6 +262,7 @@ func Load(path string, env func(string) string) (Config, error) {
 			GitHubToken:       env("GITHUB_TOKEN"),
 			OAuthClientID:     env("GITHUB_OAUTH_CLIENT_ID"),
 			OAuthClientSecret: env("GITHUB_OAUTH_CLIENT_SECRET"),
+			OwnerTokens:       ownerTokens(fc.GitHub.Repos, env),
 		},
 	}
 
@@ -289,16 +316,31 @@ func loadSites(in []fileSite, repos []string) ([]Site, error) {
 		if u, err := url.Parse(s.URL); err != nil || u.Scheme != "https" || u.Host == "" {
 			return nil, errors.New(field("url") + ": must be an absolute https URL")
 		}
-		if !repoPattern.MatchString(s.Repo) {
-			return nil, fmt.Errorf("%s: %q is not in owner/name form", field("repo"), s.Repo)
+		repos, fields := []string{s.Repo}, []string{field("repo")}
+		switch {
+		case s.Repo != "" && s.Repos != nil:
+			return nil, errors.New(field("repos") + ": a site names either repo or repos, not both")
+		case s.Repos != nil:
+			repos, fields = s.Repos, make([]string, len(s.Repos))
+			for j := range s.Repos {
+				fields[j] = fmt.Sprintf("%s[%d]", field("repos"), j)
+			}
+			if len(repos) == 0 {
+				return nil, errors.New(field("repos") + ": names no repository")
+			}
 		}
-		if !watched[s.Repo] {
-			return nil, fmt.Errorf("%s: %q is not listed in github.repos", field("repo"), s.Repo)
+		for j, repo := range repos {
+			if !repoPattern.MatchString(repo) {
+				return nil, fmt.Errorf("%s: %q is not in owner/name form", fields[j], repo)
+			}
+			if !watched[repo] {
+				return nil, fmt.Errorf("%s: %q is not listed in github.repos", fields[j], repo)
+			}
+			if claimed[repo] {
+				return nil, fmt.Errorf("%s: %q is already claimed by a site", fields[j], repo)
+			}
+			claimed[repo] = true
 		}
-		if claimed[s.Repo] {
-			return nil, fmt.Errorf("%s: %q is already claimed by another site", field("repo"), s.Repo)
-		}
-		claimed[s.Repo] = true
 		if !slices.Contains(HueKeys, s.Hue) {
 			return nil, fmt.Errorf("%s: %q is not one of %s", field("hue"), s.Hue, strings.Join(HueKeys, ", "))
 		}
@@ -318,11 +360,26 @@ func loadSites(in []fileSite, repos []string) ([]Site, error) {
 		}
 		groups[strings.ToLower(group)] = group
 		out = append(out, Site{
-			Name: s.Name, URL: s.URL, Repo: s.Repo, Hue: s.Hue, Tag: s.Tag,
+			Name: s.Name, URL: s.URL, Repos: repos, Hue: s.Hue, Tag: s.Tag,
 			Group: group, NoAlerts: s.Alerts != nil && !*s.Alerts,
 		})
 	}
 	return out, nil
+}
+
+// ownerTokens reads OwnerTokenVar for every owner of repos, and keeps the ones that are set.
+func ownerTokens(repos []string, env func(string) string) map[string]string {
+	var out map[string]string
+	for _, repo := range repos {
+		owner, _, _ := strings.Cut(repo, "/")
+		if token := env(OwnerTokenVar(owner)); token != "" {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[owner] = token
+		}
+	}
+	return out
 }
 
 // checkBaseURL validates GITHUB_BASE_URL or GITHUB_OAUTH_BASE_URL, named by name, both of which

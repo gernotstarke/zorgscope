@@ -1051,7 +1051,7 @@ func TestGroupsCarryTheirSitesHue(t *testing.T) {
 	src := &fakeSource{items: []domain.Item{claimed, unclaimed}}
 	h := newTestServerWith(t, func(o *Options) {
 		o.Config.GitHub.Repos = []string{"org/claimed", "org/unclaimed"}
-		o.Config.GitHub.Sites = []config.Site{{Name: "claimed.example", URL: "https://claimed.example", Repo: "org/claimed", Hue: "plum"}}
+		o.Config.GitHub.Sites = []config.Site{{Name: "claimed.example", URL: "https://claimed.example", Repos: []string{"org/claimed"}, Hue: "plum"}}
 		o.Cache = snapshot.New(src, time.Hour, o.Clock)
 	}).Handler()
 	body := getAuthed(t, h, "/").Body.String()

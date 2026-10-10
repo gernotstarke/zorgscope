@@ -30,6 +30,7 @@ import (
 	"path"
 	"reflect"
 	"runtime/debug"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -846,15 +847,24 @@ func Redact(secrets config.Secrets, text string) string {
 	// is a second place to remember: a ninth field on config.Secrets would be silently
 	// unredacted, and nothing would fail. Reflection makes "every string field of Secrets" the
 	// definition, so a new secret is covered the moment it is declared.
+	// A map of strings, such as the per-owner tokens, is a field holding several secrets, all of its
+	// values redacted; its keys are owners, which are not secret.
 	v := reflect.ValueOf(secrets)
 	values := make([]string, 0, v.NumField())
 	for i := range v.NumField() {
-		f := v.Field(i)
-		if f.Kind() != reflect.String || f.String() == "" {
-			continue
+		switch f := v.Field(i); f.Kind() {
+		case reflect.String:
+			values = append(values, f.String())
+		case reflect.Map:
+			for it := f.MapRange(); it.Next(); {
+				if it.Value().Kind() == reflect.String {
+					values = append(values, it.Value().String())
+				}
+			}
+		default:
 		}
-		values = append(values, f.String())
 	}
+	values = slices.DeleteFunc(values, func(s string) bool { return s == "" })
 	sort.Slice(values, func(i, j int) bool { return len(values[i]) > len(values[j]) })
 	for _, v := range values {
 		text = strings.ReplaceAll(text, v, "[redacted]")

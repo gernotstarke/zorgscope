@@ -22,13 +22,21 @@ github:
   repos:
     - arc42/arc42-template
     - arc42/arc42.org-site
-    # … fifteen in total, the ceiling (QS-3.5)
+    # … seventeen in total, the ceiling (QS-3.5)
   sites:                              # the Sites view: one tile per entry, in this order
     - name: arc42-template
       url: https://github.com/arc42/arc42-template
       repo: arc42/arc42-template
       hue: slate
-    # … ten arc42 and zorgscope sites, then the iSAQB ones:
+    # … nine arc42 sites, then systems42, one site over three repositories:
+    - name: systems42
+      url: https://systems42.org
+      repos:                          # several repositories, one tile, one radar sector
+        - systems42-org/systems42.org-site
+        - systems42-org/systems42
+        - systems42-org/meta
+      hue: green
+    # … then the iSAQB ones:
     - name: glossary
       url: https://github.com/isaqb-org/glossary
       repo: isaqb-org/glossary
@@ -79,7 +87,9 @@ one would be a redirect to somebody else's host wearing a debugging switch's clo
 ## Sites and their colours
 
 `github.sites` is what the Sites view draws (FR‑1.8): one tile per entry, in the order written. Each
-site names exactly one repository that `github.repos` watches; a repository no site names would share
+site names one repository that `github.repos` watches with `repo`, or several with `repos` — systems42
+gathers its organisation's three into one tile and one radar sector, and its "all →" links name the
+repository each leads to; a repository no site names would share
 a last tile called Other, so the Sites view never hides an item of a watched repository. The shipped
 configuration claims every repository it watches, so that Other tile is empty in production. The list
 is optional — without it the Sites view is the one Other tile. The list borrows the same colours: each
@@ -87,7 +97,8 @@ repository group is striped in the hue of the site that claims it, slate when no
 label palette is not configured; it is fixed in the stylesheet.
 
 `hue` is not a colour but a key into a fixed palette: `navy`, `blue`, `plum`, `teal`, `umber`, `rose`,
-`slate`, and for the iSAQB group the five oranges `apricot`, `orange`, `tangerine`, `rust`, `copper`.
+`slate`, for the iSAQB group the five oranges `apricot`, `orange`, `tangerine`, `rust`, `copper`, and
+`green` for systems42.
 The colours behind the keys live in `internal/web/static/app.css` as `--hue-<key>` custom
 properties, the first seven taken from the arc42 brand registry (`arc42/meta.arc42.org`, `wiki/concepts/brand.md`),
 because the Content-Security-Policy forbids inline styles and a colour can therefore reach the page
@@ -103,12 +114,14 @@ each, and leaves the other groups' items off; any other group's view draws its o
 other group as one sector named after it. The List, the tiles and the header are not split:
 every watched repository is on them whatever its group. `alerts: false` fetches a site's repository
 for issues and pull requests only: it is never asked for Dependabot alerts, and the Security tile says
-nothing about it (FR‑1.16 AC8). `github.repos` holds at most fifteen entries, two GraphQL requests each
-(QS‑3.5).
+nothing about it (FR‑1.16 AC8). `github.repos` holds at most seventeen entries, two GraphQL requests
+each (QS‑3.5).
 
 `Load` refuses a site with an empty or duplicate name, an address that is not an absolute `https` URL,
-a repository not in `owner/name` form, not watched or claimed twice, an unknown `hue`, a longer
-`tag`, a malformed `group` or one spelled two ways (`iSAQB` and `isaqb`), and names the field — `github.sites[2].hue` — as it does for every other setting.
+a repository not in `owner/name` form, not watched or claimed twice, both `repo` and `repos`, an
+unknown `hue`, a longer `tag`, a malformed `group` or one spelled two ways (`iSAQB` and `isaqb`), and
+names the field — `github.sites[2].hue`, `github.sites[9].repos[1]` — as it does for every other
+setting.
 
 ## `.env` for local development
 
@@ -121,6 +134,9 @@ GITHUB_OAUTH_CLIENT_SECRET=
 GITHUB_TOKEN=
 
 # --- optional ---------------------------------------------------------------
+# A token of its own for one owner's repositories (ADR-0017), here systems42-org's private ones.
+GITHUB_TOKEN_SYSTEMS42_ORG=
+
 # Point the adapter, and the OAuth App's authorize/token endpoints, at the fake GitHub instead of the
 # real services. Empty means the real GitHub.
 # GITHUB_BASE_URL=http://host.docker.internal:9090
