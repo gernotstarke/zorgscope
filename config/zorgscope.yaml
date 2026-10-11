@@ -18,8 +18,8 @@ github:
   # repository as failing rather than as missing.
   #
   # QS-3.5 allows two GraphQL queries per repository (issues and pull requests paginate
-  # independently) and at most seventeen repositories, so at most 34 per fetch; Load refuses an
-  # eighteenth. It holds seventeen: the ceiling exactly, so one more repository needs a budget
+  # independently) and at most nineteen repositories, so at most 38 per fetch; Load refuses a
+  # twentieth. It holds nineteen: the ceiling exactly, so one more repository needs a budget
   # decision first.
   #
   # systems42-org's meta and systems42 are private. GITHUB_TOKEN cannot read them; they are read
@@ -44,19 +44,23 @@ github:
     - isaqb-org/curriculum-req4arc
     - isaqb-org/curriculum-improve
     - isaqb-org/curriculum-adoc
+    - aim42/aim42
+    - aim42/aim42.org-site
   # The Sites view (FR-1.8): one tile per entry, in this order. Each site names one of the
   # repositories above with repo, or several with repos — systems42 holds its organisation's three
   # in one tile and one radar sector. A repository no site names would share an Other tile, which
   # the shipped list leaves empty. hue is a key of the palette app.css defines from the arc42 brand
   # registry (arc42/meta.arc42.org, wiki/concepts/brand.md): navy, blue, plum, teal, umber, rose or
   # slate. The two without a brand hue take slate; systems42 wears green, a colour no other site
-  # uses. tag tells apart two sites that share a hue, at most three characters.
+  # uses; the two aim42 sites wear aim42, the red, blue and green of its three phases side by side.
+  # tag tells apart two sites that share a hue, at most three characters.
   #
-  # group (default arc42) is the Radar view a site gets a sector of its own in (FR-1.15). The first
-  # group's radar — arc42 — shows its own sites only; the iSAQB radar shows the iSAQB sites and all
-  # of arc42 as one sector. The iSAQB sites wear the five oranges, ordered so that tangerine borders
-  # neither orange nor rust, and say alerts: false: they are fetched for issues and pull requests
-  # only, never for Dependabot alerts (FR-1.16).
+  # group (default arc42) is the site's family on the radars (FR-1.15, ADR-0018). Which radars there
+  # are is fixed in the code for now: arc42 draws the arc42 sites and systems42, a sector each; iSAQB
+  # draws its own sites and every other family as one sector; all draws one sector per family —
+  # arc42, iSAQB, systems42, aim42 and private, which holds no site yet. The iSAQB sites wear the
+  # five oranges, ordered so that tangerine borders neither orange nor rust, and say alerts: false:
+  # they are fetched for issues and pull requests only, never for Dependabot alerts (FR-1.16).
   sites:
     - name: arc42-template
       url: https://github.com/arc42/arc42-template
@@ -102,6 +106,7 @@ github:
         - systems42-org/systems42
         - systems42-org/meta
       hue: green
+      group: systems42
     - name: curriculum-foundation
       url: https://github.com/isaqb-org/curriculum-foundation
       repo: isaqb-org/curriculum-foundation
@@ -132,3 +137,14 @@ github:
       hue: tangerine
       group: iSAQB
       alerts: false
+    - name: aim42
+      url: https://github.com/aim42/aim42
+      repo: aim42/aim42
+      hue: aim42
+      group: aim42
+    - name: aim42.org
+      url: https://aim42.org
+      repo: aim42/aim42.org-site
+      hue: aim42
+      tag: WEB
+      group: aim42

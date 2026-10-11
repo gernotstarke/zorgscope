@@ -377,11 +377,12 @@ func TestLoadRejectsBadSites(t *testing.T) {
 	}
 }
 
-// FR-1.8 AC1: the committed configuration names the nine arc42 sites, systems42 and the five iSAQB
-// ones, in the order their tiles are drawn; the iSAQB five are a group of their own and are not asked
-// for Dependabot alerts (FR-1.15 AC8, FR-1.16). systems42 is one site over the three systems42-org
-// repositories, which with the others make seventeen: QS-3.5's ceiling.
-func TestTheRealConfigNamesTheFifteenSitesInOrder(t *testing.T) {
+// FR-1.8 AC1: the committed configuration names the nine arc42 sites, systems42, the five iSAQB
+// ones and the two aim42 ones, in the order their tiles are drawn. A site's group is its family on
+// the radars (FR-1.15 AC8): systems42 and aim42 are families of their own. The iSAQB five are not
+// asked for Dependabot alerts (FR-1.16); aim42 is. systems42 is one site over the three
+// systems42-org repositories, which with the others make nineteen: QS-3.5's ceiling.
+func TestTheRealConfigNamesTheSeventeenSitesInOrder(t *testing.T) {
 	cfg, err := config.Load("../../config/zorgscope.yaml", env(fullEnv()))
 	if err != nil {
 		t.Fatalf("Load(config/zorgscope.yaml): %v", err)
@@ -394,12 +395,18 @@ func TestTheRealConfigNamesTheFifteenSitesInOrder(t *testing.T) {
 		"arc42-template", "arc42.org", "arc42.de", "quality.arc42.org", "docs.arc42.org",
 		"faq.arc42.org", "examples.arc42.org", "trainings.arc42.org", "arc42-generator", "systems42",
 		"curriculum-foundation", "glossary", "curriculum-req4arc", "curriculum-improve", "curriculum-adoc",
+		"aim42", "aim42.org",
 	}
 	if !slices.Equal(names, want) {
 		t.Errorf("sites = %v, want %v", names, want)
 	}
-	if got := cfg.GitHub.Groups(); !slices.Equal(got, []string{"arc42", "iSAQB"}) {
-		t.Errorf("groups = %v, want [arc42 iSAQB]", got)
+	if got, want := cfg.GitHub.Groups(), []string{"arc42", "systems42", "iSAQB", "aim42"}; !slices.Equal(got, want) {
+		t.Errorf("groups = %v, want %v", got, want)
+	}
+	for _, s := range cfg.GitHub.Sites[15:] {
+		if s.Hue != "aim42" || s.NoAlerts {
+			t.Errorf("%s: hue %q, alerts off %v; want hue aim42 with alerts", s.Name, s.Hue, s.NoAlerts)
+		}
 	}
 	want = []string{
 		"isaqb-org/curriculum-foundation", "isaqb-org/glossary", "isaqb-org/curriculum-req4arc",
@@ -490,9 +497,9 @@ func TestSiteWithoutGroupIsInTheDefaultGroup(t *testing.T) {
 	}
 }
 
-// QS-3.5: eighteen repositories are one too many.
-func TestLoadRejectsMoreThanSeventeenRepos(t *testing.T) {
-	repos := make([]string, 18)
+// QS-3.5: twenty repositories are one too many.
+func TestLoadRejectsMoreThanNineteenRepos(t *testing.T) {
+	repos := make([]string, 20)
 	for i := range repos {
 		repos[i] = fmt.Sprintf("org/r%d", i)
 	}
@@ -503,8 +510,8 @@ func TestLoadRejectsMoreThanSeventeenRepos(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := config.Load(path, env(fullEnv()))
-	if err == nil || !strings.Contains(err.Error(), "github.repos") || !strings.Contains(err.Error(), "17") {
-		t.Fatalf("err = %v, want one naming github.repos and the cap of 17", err)
+	if err == nil || !strings.Contains(err.Error(), "github.repos") || !strings.Contains(err.Error(), "19") {
+		t.Fatalf("err = %v, want one naming github.repos and the cap of 19", err)
 	}
 }
 

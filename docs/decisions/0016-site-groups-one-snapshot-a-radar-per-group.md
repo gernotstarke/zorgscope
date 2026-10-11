@@ -3,6 +3,8 @@
 * Status: accepted (implemented in 2.2.0)
 * Date: 2026-09-29
 * Requirements: FR‑1.8, FR‑1.15, FR‑1.16, QS‑3.5
+* Amended by: [ADR‑0018](0018-fixed-radars-over-families.md) — a group is now a site's family, and
+  the radars (arc42, iSAQB, all) are fixed in the code
 
 ## Context and problem statement
 

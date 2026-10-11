@@ -13,10 +13,10 @@ import (
 	"github.com/gernotstarke/zorgscope/internal/fakesources"
 )
 
-// graphQLBudget is QS-3.5's ceiling: at most 2 requests per repository and at most 17 repositories,
-// so at most 34 per fetch. A fetch happens only on a stale page view (ADR-0011), at most every 5
-// minutes: 12 × 34 = 408 of GitHub's 5,000 an hour, about 8 %, and 34 requests in flight at once.
-const graphQLBudget = 34
+// graphQLBudget is QS-3.5's ceiling: at most 2 requests per repository and at most 19 repositories,
+// so at most 38 per fetch. A fetch happens only on a stale page view (ADR-0011), at most every 5
+// minutes: 12 × 38 = 456 of GitHub's 5,000 an hour, about 9 %, and 38 requests in flight at once.
+const graphQLBudget = 38
 
 // representativeRepos is the repository half of the representative configuration QS-2.3 and
 // QS-2.5 both name: 10 repositories.
@@ -34,7 +34,7 @@ func reposN(n int) []string {
 	return repos
 }
 
-// TestGraphQLRequestBudget is QS-3.5, whose measure is "≤ 34 GraphQL point-equivalents per run,
+// TestGraphQLRequestBudget is QS-3.5, whose measure is "≤ 38 GraphQL point-equivalents per run,
 // asserted by counting requests against the fake server", at the representative configuration.
 //
 // The metric is stated in point-equivalents but asserted in requests: this counts each GraphQL
@@ -50,7 +50,7 @@ func TestGraphQLRequestBudget(t *testing.T) {
 	assertBudget(t, representativeRepos())
 }
 
-// QS-3.5 at the largest configuration config.Load admits: 17 repositories, 34 requests, no headroom.
+// QS-3.5 at the largest configuration config.Load admits: 19 repositories, 38 requests, no headroom.
 func TestGraphQLRequestBudgetAtTheCeiling(t *testing.T) {
 	assertBudget(t, reposN(config.MaxRepos))
 }

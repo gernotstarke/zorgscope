@@ -26,11 +26,11 @@ const defaultCacheTTL = 5 * time.Minute
 // DefaultGroup is the group of a site that names none (spec 2026-09-29 §3).
 const DefaultGroup = "arc42"
 
-// MaxRepos is QS-3.5's ceiling on github.repos: two GraphQL requests per repository, so at most 34
+// MaxRepos is QS-3.5's ceiling on github.repos: two GraphQL requests per repository, so at most 38
 // per fetch.
-const MaxRepos = 17
+const MaxRepos = 19
 
-// groupPattern is a group's display name: short enough for a button on the radar.
+// groupPattern is a group's display name: short enough for a sector's name on the radar.
 var groupPattern = regexp.MustCompile(`^[A-Za-z0-9.-]{1,12}$`)
 
 // maxTagLen is the longest tag a site may carry. A tag sits beside the site's name in its tile's
@@ -39,16 +39,17 @@ const maxTagLen = 3
 
 // HueKeys are the site colours the stylesheet defines, each as a `hue-<key>` class over
 // `--hue-<key>` tokens. The first seven are taken from the arc42 brand registry (per-site tiles
-// design §6); the five oranges are the iSAQB group's (spec 2026-09-29 §6), and green is systems42's.
+// design §6); the five oranges are the iSAQB group's (spec 2026-09-29 §6), green is systems42's, and
+// aim42 is the one striped key: its three phase colours side by side (ADR-0018).
 // A colour can reach the page only as one of these classes: the Content-Security-Policy forbids
 // inline styles, so a hex value in the YAML would have nowhere to go.
 var HueKeys = []string{"navy", "blue", "plum", "teal", "umber", "rose", "slate",
-	"apricot", "orange", "tangerine", "rust", "copper", "green"}
+	"apricot", "orange", "tangerine", "rust", "copper", "green", "aim42"}
 
 // Site is one web property or family of repositories drawn as a tile on the Sites view (FR-1.8): its
 // name, its address, the watched repositories behind it, its colour key, an optional short tag that
-// tells apart two sites sharing a colour, the group whose radar draws it as a sector of its own
-// (FR-1.15), and whether its repositories are asked for Dependabot alerts (FR-1.16).
+// tells apart two sites sharing a colour, its group — its family on the radars (FR-1.15, ADR-0018) —
+// and whether its repositories are asked for Dependabot alerts (FR-1.16).
 type Site struct {
 	Name, URL, Hue, Tag string
 	// Repos are one repository for most sites; a site such as systems42 holds an organisation's
@@ -89,8 +90,8 @@ type GitHub struct {
 	// Needs-you band then holds only the marked items.
 	Owner string
 	Repos []string
-	// Sites are the tiles of the Sites view, in the order they are drawn (FR-1.8), each in a group
-	// whose radar gives it a sector of its own (FR-1.15). Each names one or more
+	// Sites are the tiles of the Sites view, in the order they are drawn (FR-1.8), each in a group:
+	// its family on the radars (FR-1.15, ADR-0018). Each names one or more
 	// repositories of Repos; the repositories no site names share a tile of their own. Empty is valid:
 	// the Sites view then shows that one shared tile.
 	Sites []Site
@@ -104,8 +105,8 @@ type GitHub struct {
 	OAuthBaseURL string // "" means github.com; set via GITHUB_OAUTH_BASE_URL.
 }
 
-// Groups are the sites' groups in order of first appearance, nil without sites. The radar draws one
-// switch button per group (FR-1.15).
+// Groups are the sites' groups — their families on the radars — in order of first appearance, nil
+// without sites (FR-1.15, ADR-0018).
 func (g GitHub) Groups() []string {
 	var out []string
 	for _, s := range g.Sites {

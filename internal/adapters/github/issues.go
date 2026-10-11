@@ -149,7 +149,7 @@ func NewIssueFetcher(cfg Config, hc *http.Client) *IssueFetcher {
 //
 // The repositories are fetched side by side (QS-2.7): one goroutine per repository and
 // connection, all started at once. There is no separate concurrency limit, because QS-3.5 caps the
-// configuration at seventeen repositories and therefore at 34 requests in flight. Each goroutine
+// configuration at nineteen repositories and therefore at 38 requests in flight. Each goroutine
 // writes into its own slot, and the slots are read out in order once every goroutine has finished,
 // so the result is the one the sequential loop produced — repositories in configuration order, a
 // repository's issues before its pull requests — whatever order the upstream answered in.

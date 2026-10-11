@@ -69,7 +69,7 @@ type radarView struct {
 	CardKeys []radarLine
 	ValueX   int
 	Sectors  []radarSector
-	// Groups is the group switch, one link per configured group; empty with one group (FR-1.15).
+	// Groups is the radar switch, one link per offered radar; empty with one (FR-1.15, ADR-0018).
 	Groups []radarGroupLink
 	Rings  []radarRing
 	// Sweep is the beam's far end and Glow the afterglow wedge behind it, both drawn pointing
@@ -85,7 +85,7 @@ type radarView struct {
 	Alerts, Serious int
 }
 
-// radarGroupLink is one link of the radar's group switch.
+// radarGroupLink is one link of the radar switch.
 type radarGroupLink struct {
 	Name, URL string
 	Current   bool
@@ -101,7 +101,10 @@ type radarSector struct {
 	Name, Hue    string
 	EdgeA, EdgeB [2]radarPoint
 	Rim          string
-	Label        radarPoint
+	// Stripes are the rim cut into three arcs, one per aim42 phase colour, for a sector in the
+	// aim42 hue; nil for every other sector, which draws Rim (ADR-0018).
+	Stripes []string
+	Label   radarPoint
 	// Anchor is the label's text-anchor, so a name on the left of the scope ends at the rim
 	// instead of starting there.
 	Anchor string
@@ -187,63 +190,115 @@ func (s *Server) handleRadar(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// radarGroup is the configured group asked names, ignoring case, else the first group, else "" when
-// no site is configured. The asked text itself never reaches the page: only a configured name comes
-// back.
-func radarGroup(gh config.GitHub, asked string) string {
-	groups := gh.Groups()
-	for _, g := range groups {
-		if strings.EqualFold(g, asked) {
-			return g
-		}
-	}
-	if len(groups) == 0 {
-		return ""
-	}
-	return groups[0]
+// radarDef is one radar of the switch. A site's group is its family; a radar draws the families in
+// Sites one sector per site, in configuration order, and the families in Condense one sector per
+// family, in Condense's order. Rest condenses every other family that has a site, in order of first
+// appearance. A radar with Sites and without Rest leaves the other families' items off.
+type radarDef struct {
+	Name     string
+	Sites    []string
+	Condense []string
+	Rest     bool
 }
 
-// radarSpecs are the radar's sectors for group: one per site of the group, in configuration order,
-// then Other for the repositories no site claims (FR-1.15 AC8). The first group's radar stops there
-// and names the other groups' repositories in hidden: its items are not drawn, because arc42's
-// radar crowded by an iSAQB sector was too much. Any other group's radar puts one sector per other
-// group before Other, holding all its sites' repositories and coloured by its first site. With one
-// group the sectors are siteSpecs'. It walks gh.Sites rather than siteSpecs, which does not carry
-// the group.
+// radars are the radars of the switch, fixed in the code until the configuration can say which there
+// are (ADR-0018). arc42 is first, so it is the radar /radar shows by default.
+var radars = []radarDef{
+	{Name: "arc42", Sites: []string{config.DefaultGroup, "systems42"}},
+	{Name: "iSAQB", Sites: []string{"iSAQB"}, Rest: true},
+	{Name: "all", Condense: []string{config.DefaultGroup, "iSAQB", "systems42", "aim42", "private"}},
+}
+
+// offeredRadars are the radars worth drawing for gh: one with Sites when a site is in one of them, a
+// Condense-only one when two of its families have a site — one family alone is no overview.
+func offeredRadars(gh config.GitHub) []radarDef {
+	families := gh.Groups()
+	var out []radarDef
+	for _, def := range radars {
+		n := 0
+		for _, f := range def.Condense {
+			if slices.Contains(families, f) {
+				n++
+			}
+		}
+		if slices.ContainsFunc(def.Sites, func(f string) bool { return slices.Contains(families, f) }) || n >= 2 {
+			out = append(out, def)
+		}
+	}
+	return out
+}
+
+// radarGroup is the offered radar asked names, ignoring case, else the first offered radar, else ""
+// when none is. The asked text itself never reaches the page: only a radar's own name comes back.
+func radarGroup(gh config.GitHub, asked string) string {
+	offered := offeredRadars(gh)
+	for _, def := range offered {
+		if strings.EqualFold(def.Name, asked) {
+			return def.Name
+		}
+	}
+	if len(offered) == 0 {
+		return ""
+	}
+	return offered[0].Name
+}
+
+// radarSpecs are the sectors of the radar named group (FR-1.15 AC8, ADR-0018), then Other for the
+// repositories no sector holds. A repository of a family the radar leaves off is named in hidden: its
+// items are not drawn, because arc42's radar crowded by an iSAQB sector was too much. A condensed
+// sector holds all its family's repositories and is coloured by its first site, or the unclaimed
+// slate when the family has no site yet. Without an offered radar every site is a sector. It walks
+// gh.Sites rather than siteSpecs, which does not carry the group.
 func radarSpecs(gh config.GitHub, group string) (specs []domain.SiteSpec, hidden map[string]bool) {
-	first := len(gh.Sites) > 0 && gh.Sites[0].GroupName() == group
+	def := radarDef{Sites: gh.Groups()}
+	for _, d := range radars {
+		if d.Name == group {
+			def = d
+		}
+	}
 	hidden = make(map[string]bool)
-	var others []domain.SiteSpec
-	idx := make(map[string]int) // another group -> its index in others
+	condensed := make(map[string]int) // family -> its index in families
+	var families []domain.SiteSpec
+	for _, f := range def.Condense {
+		condensed[f] = len(families)
+		families = append(families, domain.SiteSpec{Name: f, Hue: unclaimedHue})
+	}
+	var leftOver []string // repositories of a family this radar neither draws nor leaves off
 	claimed := make(map[string]bool, len(gh.Sites))
 	for _, site := range gh.Sites {
 		for _, repo := range site.Repos {
 			claimed[repo] = true
 		}
-		g := site.GroupName()
-		if g == group {
+		f := site.GroupName()
+		if slices.Contains(def.Sites, f) {
 			specs = append(specs, domain.SiteSpec{
 				Name: site.Name, URL: site.URL, Hue: tileHue(site.Hue), Tag: site.Tag,
 				Repos: site.Repos,
 			})
 			continue
 		}
-		if first {
+		i, ok := condensed[f]
+		switch {
+		case !ok && def.Rest:
+			i = len(families)
+			condensed[f] = i
+			families = append(families, domain.SiteSpec{Name: f, Hue: unclaimedHue})
+		case !ok && len(def.Condense) > 0:
+			leftOver = append(leftOver, site.Repos...)
+			continue
+		case !ok:
 			for _, repo := range site.Repos {
 				hidden[repo] = true
 			}
 			continue
 		}
-		i, ok := idx[g]
-		if !ok {
-			i = len(others)
-			idx[g] = i
-			others = append(others, domain.SiteSpec{Name: g, Hue: tileHue(site.Hue)})
+		if len(families[i].Repos) == 0 {
+			families[i].Hue = tileHue(site.Hue)
 		}
-		others[i].Repos = append(others[i].Repos, site.Repos...)
+		families[i].Repos = append(families[i].Repos, site.Repos...)
 	}
-	specs = append(specs, others...)
-	var unclaimed []string
+	specs = append(specs, families...)
+	unclaimed := leftOver
 	for _, repo := range gh.Repos {
 		if !claimed[repo] {
 			unclaimed = append(unclaimed, repo)
@@ -255,13 +310,13 @@ func radarSpecs(gh config.GitHub, group string) (specs []domain.SiteSpec, hidden
 	return specs, hidden
 }
 
-// buildRadar places every item on the scope, the sectors those of group — resolved by radarGroup,
-// so "" or an unknown name shows the first group. It is a pure function of its arguments.
+// buildRadar places every item on the scope, the sectors those of the radar named group — resolved by
+// radarGroup, so "" or an unknown name shows the first radar. It is a pure function of its arguments.
 func buildRadar(items []domain.Item, gh config.GitHub, group string, now time.Time) radarView {
 	group = radarGroup(gh, group)
 	specs, hidden := radarSpecs(gh, group)
-	// Another group's items are left off the first group's radar (FR-1.15 AC8): dropped here, before
-	// they could be counted, placed, or pushed into Other.
+	// The items of a family the radar leaves off — iSAQB and aim42 on arc42's (FR-1.15 AC8) — are
+	// dropped here, before they could be counted, placed, or pushed into Other.
 	items = slices.DeleteFunc(slices.Clone(items), func(it domain.Item) bool { return hidden[it.Repo] })
 	sectorOf := make(map[string]int)
 	other := -1
@@ -298,10 +353,10 @@ func buildRadar(items []domain.Item, gh config.GitHub, group string, now time.Ti
 	for i, spec := range specs {
 		v.Sectors = append(v.Sectors, newRadarSector(spec, float64(i)*width, float64(i+1)*width))
 	}
-	if groups := gh.Groups(); len(groups) > 1 {
-		for _, g := range groups {
+	if offered := offeredRadars(gh); len(offered) > 1 {
+		for _, def := range offered {
 			v.Groups = append(v.Groups, radarGroupLink{
-				Name: g, URL: "/radar?group=" + url.QueryEscape(g), Current: g == group,
+				Name: def.Name, URL: "/radar?group=" + url.QueryEscape(def.Name), Current: def.Name == group,
 			})
 		}
 	}
@@ -362,13 +417,14 @@ func newRadarSector(spec domain.SiteSpec, a0, a1 float64) radarSector {
 			s.EdgeB = edge
 		}
 	}
-	from, to := polar(radarR+6, a0+1.2), polar(radarR+6, a1-1.2)
-	large := "0"
-	if a1-a0 > 180 {
-		large = "1"
+	s.Rim = rimArc(a0+1.2, a1-1.2)
+	if spec.Hue == stripedHue {
+		third := (a1 - a0 - 2.4) / 3
+		for i := range 3 {
+			from := a0 + 1.2 + float64(i)*third
+			s.Stripes = append(s.Stripes, rimArc(from, from+third))
+		}
 	}
-	s.Rim = "M" + coord(from.X, from.Y) + " A" + strconv.Itoa(radarR+6) + "," + strconv.Itoa(radarR+6) +
-		" 0 " + large + " 1 " + coord(to.X, to.Y)
 
 	mid := (a0 + a1) / 2
 	s.Label = polar(radarR+30, mid)
@@ -382,6 +438,21 @@ func newRadarSector(spec domain.SiteSpec, a0, a1 float64) radarSector {
 		s.Anchor = "end"
 	}
 	return s
+}
+
+// stripedHue is the one hue drawn as three stripes rather than one colour: aim42's phase colours
+// (ADR-0018). app.css paints its bands, edges and blips; the radar's rim is cut into arcs here.
+const stripedHue = "aim42"
+
+// rimArc is the path of the rim's band from bearing a0 to bearing a1, just outside the scope.
+func rimArc(a0, a1 float64) string {
+	from, to := polar(radarR+6, a0), polar(radarR+6, a1)
+	large := "0"
+	if a1-a0 > 180 {
+		large = "1"
+	}
+	return "M" + coord(from.X, from.Y) + " A" + strconv.Itoa(radarR+6) + "," + strconv.Itoa(radarR+6) +
+		" 0 " + large + " 1 " + coord(to.X, to.Y)
 }
 
 func newRadarBlip(it domain.Item, gh config.GitHub, now time.Time, a0, width float64, hue string) radarBlip {

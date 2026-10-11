@@ -538,3 +538,54 @@ func TestTheOutlinedAlertChipKeepsItsContrast(t *testing.T) {
 		}
 	}
 }
+
+// ADR-0018 with FR-1.8 AC5: aim42 wears its three phase colours side by side — red, blue and
+// green. Each stripe carries white heading text on a tile's band (4.5:1),
+// and each is a coloured signal on the page and on the radar's scope (3:1): the band colour in the
+// light appearance, the -sig colour in the dark one. The heading band draws all three.
+func TestTheAim42StripesKeepTheirContrast(t *testing.T) {
+	raw, err := fs.ReadFile(embedded, "static/app.css")
+	if err != nil {
+		t.Fatalf("reading the embedded app.css: %v", err)
+	}
+	css := string(raw)
+	bg, ok := lightDarkToken(t, css, "bg")
+	if !ok {
+		t.Fatal("no --bg token")
+	}
+	ground, ok := lightDarkToken(t, css, "radar-ground")
+	if !ok {
+		t.Fatal("no --radar-ground token")
+	}
+	white := rgb{255, 255, 255}
+	for _, phase := range []string{"red", "blue", "green"} {
+		band, ok := hexToken(t, css, "aim42-"+phase)
+		if !ok {
+			continue
+		}
+		sig, ok := hexToken(t, css, "aim42-"+phase+"-sig")
+		if !ok {
+			continue
+		}
+		if r := contrastRatio(white, band); r < 4.5 {
+			t.Errorf("white on the aim42 %s stripe = %.2f:1, want at least 4.5:1", phase, r)
+		}
+		for name, pair := range map[string][2]rgb{"page": bg, "radar scope": ground} {
+			if r := contrastRatio(band, pair[0]); r < 3 {
+				t.Errorf("the aim42 %s stripe on the light %s = %.2f:1, want at least 3:1", phase, name, r)
+			}
+			if r := contrastRatio(sig, pair[1]); r < 3 {
+				t.Errorf("the aim42 %s stripe on the dark %s = %.2f:1, want at least 3:1", phase, name, r)
+			}
+		}
+	}
+	m := regexp.MustCompile(`\.hue-aim42 \.tile-title\s*\{([^}]*)\}`).FindStringSubmatch(css)
+	if m == nil {
+		t.Fatal("app.css draws no .hue-aim42 .tile-title band")
+	}
+	for _, phase := range []string{"red", "blue", "green"} {
+		if !strings.Contains(m[1], "var(--aim42-"+phase+")") {
+			t.Errorf("the aim42 heading band lacks the %s stripe: %q", phase, m[1])
+		}
+	}
+}

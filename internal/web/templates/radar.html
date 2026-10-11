@@ -12,6 +12,7 @@
   <pattern id="radar-tape-security" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect class="tape-a" width="4" height="8"/><rect class="tape-b" x="4" width="4" height="8"/></pattern>
   <pattern id="radar-tape-dependency" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect class="tape-a" width="4" height="8"/><rect class="tape-b" x="4" width="4" height="8"/></pattern>
   <pattern id="radar-hatch-alert" width="6" height="6" patternUnits="userSpaceOnUse"><rect class="tape-b" width="6" height="6"/><path class="tape-a" d="M0,0L6,6M6,0L0,6" stroke-width="2"/></pattern>
+  <linearGradient id="radar-aim42"><stop class="aim42-stop-a" offset="0"/><stop class="aim42-stop-a" offset="0.3334"/><stop class="aim42-stop-b" offset="0.3334"/><stop class="aim42-stop-b" offset="0.6667"/><stop class="aim42-stop-c" offset="0.6667"/><stop class="aim42-stop-c" offset="1"/></linearGradient>
   <linearGradient id="radar-glow" x1="1" y1="0" x2="0" y2="0.45"><stop class="glow-head" offset="0"/><stop class="glow-tail" offset="1"/></linearGradient>
 </defs>
 <circle class="radar-scope" cx="{{.CX}}" cy="{{.CY}}" r="{{.R}}"/>
@@ -19,7 +20,7 @@
 <g class="radar-sector {{.Hue | printf "hue-%s"}}">
   <line class="radar-edge" x1="{{printf "%g" (index .EdgeA 0).X}}" y1="{{printf "%g" (index .EdgeA 0).Y}}" x2="{{printf "%g" (index .EdgeA 1).X}}" y2="{{printf "%g" (index .EdgeA 1).Y}}"/>
   <line class="radar-edge" x1="{{printf "%g" (index .EdgeB 0).X}}" y1="{{printf "%g" (index .EdgeB 0).Y}}" x2="{{printf "%g" (index .EdgeB 1).X}}" y2="{{printf "%g" (index .EdgeB 1).Y}}"/>
-  <path class="radar-rim" d="{{.Rim}}"/>
+  {{if .Stripes}}{{range $i, $d := .Stripes}}<path class="radar-rim stripe-{{$i}}" d="{{$d}}"/>{{end}}{{else}}<path class="radar-rim" d="{{.Rim}}"/>{{end}}
   <text class="radar-site" x="{{printf "%g" .Label.X}}" y="{{printf "%g" .Label.Y}}" text-anchor="{{.Anchor}}">{{.Name}}</text>
 </g>
 {{end}}

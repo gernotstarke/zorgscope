@@ -650,6 +650,24 @@ button:hover,
      the bluer green that says "issue" and "all clear" in text. */
   --hue-green: #3a7d0c;
   --hue-green-sig: #7fd13b;
+  /* aim42 (ADR-0018): the three phase colours of aim42.org — analyze red, evaluate blue, improve
+     green — drawn side by side wherever a site's colour is a band, a stripe or a blip. Each band
+     colour is the phase colour darkened just far enough for white text (4.5:1); each -sig is the
+     phase colour itself, for the dark appearance. Where only one colour fits — the wash, the
+     sector's dotted edges — aim42 is its evaluate blue. */
+  --aim42-red: #d33a5a;
+  --aim42-red-sig: #d4405f;
+  --aim42-blue: #257ca2;
+  --aim42-blue-sig: #2f9fd0;
+  --aim42-green: #2f834b;
+  --aim42-green-sig: #3fae63;
+  --hue-aim42: #257ca2;
+  --hue-aim42-sig: #2f9fd0;
+  /* The three stripes as drawn: the band colours, and in the dark appearance the -sig colours
+     where the browser can pick by appearance (the @supports rule below). */
+  --aim42-a: var(--aim42-red);
+  --aim42-b: var(--aim42-blue);
+  --aim42-c: var(--aim42-green);
 
   /* How much of a site's colour washes over its tile. Lower one when the contrast test fails;
      raise one when a wash is too faint to see, as long as the test still passes. */
@@ -670,6 +688,30 @@ button:hover,
 .hue-rust { --tile-hue: var(--hue-rust); --tile-sig: var(--hue-rust-sig); }
 .hue-copper { --tile-hue: var(--hue-copper); --tile-sig: var(--hue-copper-sig); }
 .hue-green { --tile-hue: var(--hue-green); --tile-sig: var(--hue-green-sig); }
+.hue-aim42 { --tile-hue: var(--hue-aim42); --tile-sig: var(--hue-aim42-sig); }
+
+@supports (color: light-dark(#000000, #ffffff)) {
+  :root {
+    --aim42-a: light-dark(var(--aim42-red), var(--aim42-red-sig));
+    --aim42-b: light-dark(var(--aim42-blue), var(--aim42-blue-sig));
+    --aim42-c: light-dark(var(--aim42-green), var(--aim42-green-sig));
+  }
+}
+
+/* aim42's stripes, one rule per place a site's colour is drawn: the band, the edge stripe of a list
+   group or a search hit, and the swatch beside a repository's name. The band keeps the band
+   colours in both appearances, like every other band, because it carries white text. */
+.hue-aim42 .tile-title {
+  background: linear-gradient(90deg, var(--aim42-red) 0 33.34%, var(--aim42-blue) 33.34% 66.67%, var(--aim42-green) 66.67%);
+}
+/* The edge stripe repeats every 4.5rem, so a long group shows all three colours wherever it is
+   scrolled to, not one colour per third of its height. */
+.repo-group.hue-aim42, .hit.hue-aim42 {
+  border-image: repeating-linear-gradient(var(--aim42-a) 0 1.5rem, var(--aim42-b) 1.5rem 3rem, var(--aim42-c) 3rem 4.5rem) 1;
+}
+.need-repo.hue-aim42::before {
+  background: linear-gradient(90deg, var(--aim42-a) 0 33.34%, var(--aim42-b) 33.34% 66.67%, var(--aim42-c) 66.67%);
+}
 
 /* One column on a phone, two or three on a desktop. */
 .tiles {
@@ -1419,6 +1461,13 @@ mark { background: #fde68a; color: #1f2937; border-radius: 2px; padding: 0 0.1em
    lightened in the dark one, where the deep brand hues would vanish into the scope. */
 .radar-sector, .radar-legend, .blip { --radar-hue: light-dark(var(--tile-hue, var(--hue-slate)), color-mix(in srgb, var(--tile-sig, var(--hue-slate-sig)) 70%, #ffffff)); }
 .radar-rim { fill: none; stroke: var(--radar-hue); stroke-width: 7; }
+/* aim42's rim is three arcs and its blips are filled with three stripes (ADR-0018). */
+.radar-rim.stripe-0 { stroke: var(--aim42-a); }
+.radar-rim.stripe-1 { stroke: var(--aim42-b); }
+.radar-rim.stripe-2 { stroke: var(--aim42-c); }
+.aim42-stop-a { stop-color: var(--aim42-a); }
+.aim42-stop-b { stop-color: var(--aim42-b); }
+.aim42-stop-c { stop-color: var(--aim42-c); }
 /* The sector's two edges: faint, dotted, in the site's colour, a little inside the wedge so two
    neighbours never draw over each other. */
 .radar-edge { stroke: var(--radar-hue); stroke-width: 1.2; stroke-dasharray: 1 6; stroke-linecap: round; opacity: 0.45; }
@@ -1448,6 +1497,7 @@ mark { background: #fde68a; color: #1f2937; border-radius: 2px; padding: 0 0.1em
    sight (FR-1.13 AC3). */
 .blip { cursor: pointer; }
 .blip .mark, .radar-legend .mark { fill: var(--radar-hue); stroke: var(--radar-ground); stroke-width: 1.5; animation: radar-flash 8s linear infinite; }
+.blip.hue-aim42 .mark { fill: url(#radar-aim42); }
 @keyframes radar-flash {
   0% { opacity: 1; }
   2% { opacity: 1; filter: brightness(1.6); }

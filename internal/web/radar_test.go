@@ -498,3 +498,169 @@ func TestRadarDrawsASiteWithSeveralReposAsOneSector(t *testing.T) {
 		}
 	}
 }
+
+// radarFamilies is the shipped configuration's shape in small: two arc42 sites, systems42, two
+// iSAQB sites and the two aim42 sites, each family in its own group (ADR-0018).
+var radarFamilies = config.GitHub{
+	Owner: "gernotstarke",
+	Repos: []string{
+		"arc42/template", "arc42/org", "systems42-org/site", "systems42-org/meta",
+		"isaqb-org/cf", "isaqb-org/glossary", "aim42/aim42", "aim42/site",
+	},
+	Sites: []config.Site{
+		{Name: "arc42-template", Repos: []string{"arc42/template"}, Hue: "slate"},
+		{Name: "arc42.org", Repos: []string{"arc42/org"}, Hue: "navy"},
+		{Name: "systems42", Repos: []string{"systems42-org/site", "systems42-org/meta"}, Hue: "green", Group: "systems42"},
+		{Name: "curriculum-foundation", Repos: []string{"isaqb-org/cf"}, Hue: "orange", Group: "iSAQB"},
+		{Name: "glossary", Repos: []string{"isaqb-org/glossary"}, Hue: "apricot", Group: "iSAQB"},
+		{Name: "aim42", Repos: []string{"aim42/aim42"}, Hue: "aim42", Group: "aim42"},
+		{Name: "aim42.org", Repos: []string{"aim42/site"}, Hue: "aim42", Tag: "WEB", Group: "aim42"},
+	},
+}
+
+// One item in every repository of radarFamilies, its URL the repository's name.
+func radarFamilyItems() []domain.Item {
+	var items []domain.Item
+	for i, repo := range radarFamilies.Repos {
+		items = append(items, domain.Item{Kind: domain.KindIssue, Repo: repo, Number: i + 1, URL: repo, UpdatedAt: testNow})
+	}
+	return items
+}
+
+func blipURLs(v radarView) []string {
+	var out []string
+	for _, b := range v.Blips {
+		out = append(out, b.URL)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// FR-1.15 AC8 / ADR-0018: the switch offers arc42, iSAQB and all, in that order — the families
+// systems42 and aim42 get no radar of their own.
+func TestRadarOffersArc42ISAQBAndAll(t *testing.T) {
+	v := buildRadar(radarFamilyItems(), radarFamilies, "", testNow)
+	var names []string
+	for _, g := range v.Groups {
+		names = append(names, g.Name)
+	}
+	if want := []string{"arc42", "iSAQB", "all"}; !slices.Equal(names, want) {
+		t.Fatalf("radar links = %v, want %v", names, want)
+	}
+	if !v.Groups[0].Current {
+		t.Error("without ?group= the arc42 radar should be the one shown")
+	}
+	if got := radarGroup(radarFamilies, "ALL"); got != "all" {
+		t.Errorf(`radarGroup("ALL") = %q, want "all"`, got)
+	}
+	for _, asked := range []string{"systems42", "aim42", "private"} {
+		if got := radarGroup(radarFamilies, asked); got != "arc42" {
+			t.Errorf("radarGroup(%q) = %q, want the first radar, arc42: a family is not a radar", asked, got)
+		}
+	}
+}
+
+// ADR-0018: the arc42 radar draws the arc42 sites and systems42 a sector each, and leaves iSAQB and
+// aim42 off.
+func TestRadarArc42ViewKeepsSystems42AndLeavesAim42Out(t *testing.T) {
+	v := buildRadar(radarFamilyItems(), radarFamilies, "arc42", testNow)
+	if got, want := sectorNames(v), []string{"arc42-template", "arc42.org", "systems42"}; !slices.Equal(got, want) {
+		t.Fatalf("sectors = %v, want %v", got, want)
+	}
+	want := []string{"arc42/org", "arc42/template", "systems42-org/meta", "systems42-org/site"}
+	if got := blipURLs(v); !slices.Equal(got, want) {
+		t.Errorf("drawn = %v, want %v", got, want)
+	}
+}
+
+// ADR-0018: the iSAQB radar draws its own sites, then every other family that has a site as one
+// sector each — private, which has none, is not among them.
+func TestRadarISAQBViewCondensesEveryOtherFamily(t *testing.T) {
+	v := buildRadar(radarFamilyItems(), radarFamilies, "iSAQB", testNow)
+	want := []string{"curriculum-foundation", "glossary", "arc42", "systems42", "aim42"}
+	if got := sectorNames(v); !slices.Equal(got, want) {
+		t.Fatalf("sectors = %v, want %v", got, want)
+	}
+	if v.Total != len(radarFamilies.Repos) {
+		t.Errorf("Total = %d, want every item, %d", v.Total, len(radarFamilies.Repos))
+	}
+}
+
+// ADR-0018: the all radar is one sector per family in a fixed order — arc42, iSAQB, systems42,
+// aim42, private — private drawn empty in the unclaimed slate; every item is drawn and keeps its
+// own site's colour.
+func TestRadarAllViewHasOneSectorPerFamily(t *testing.T) {
+	v := buildRadar(radarFamilyItems(), radarFamilies, "all", testNow)
+	want := []string{"arc42", "iSAQB", "systems42", "aim42", "private"}
+	if got := sectorNames(v); !slices.Equal(got, want) {
+		t.Fatalf("sectors = %v, want %v", got, want)
+	}
+	for i, hue := range []string{"slate", "orange", "green", "aim42", unclaimedHue} {
+		if v.Sectors[i].Hue != hue {
+			t.Errorf("sector %s: hue %q, want %q", v.Sectors[i].Name, v.Sectors[i].Hue, hue)
+		}
+	}
+	if v.Total != len(radarFamilies.Repos) {
+		t.Errorf("Total = %d, want every item, %d", v.Total, len(radarFamilies.Repos))
+	}
+	for url, hue := range map[string]string{"arc42/org": "hue-navy", "isaqb-org/glossary": "hue-apricot", "aim42/site": "hue-aim42"} {
+		if b := blipFor(t, v, url); b.Hue != hue {
+			t.Errorf("%s: hue %q, want %q", url, b.Hue, hue)
+		}
+	}
+	// Five equal sectors of 72°: aim42 is the fourth, [216, 288].
+	if b := bearingOf(blipFor(t, v, "aim42/aim42")); b < 216 || b > 288 {
+		t.Errorf("aim42/aim42: bearing %.1f outside the aim42 sector [216, 288]", b)
+	}
+}
+
+// ADR-0018: on the all radar a family the fixed list does not name is not lost: its items stand in
+// Other (QG-1).
+func TestRadarAllViewPutsAnUnlistedFamilyInOther(t *testing.T) {
+	gh := radarFamilies
+	gh.Repos = append(slices.Clone(gh.Repos), "x/y")
+	gh.Sites = append(slices.Clone(gh.Sites), config.Site{Name: "x", Repos: []string{"x/y"}, Hue: "teal", Group: "x"})
+	v := buildRadar(append(radarFamilyItems(), domain.Item{Kind: domain.KindIssue, Repo: "x/y", Number: 99, URL: "x/y", UpdatedAt: testNow}), gh, "all", testNow)
+	if got := sectorNames(v); got[len(got)-1] != otherTileName {
+		t.Fatalf("sectors = %v, want Other last", got)
+	}
+	if b := bearingOf(blipFor(t, v, "x/y")); b < 300 {
+		t.Errorf("x/y: bearing %.1f, want it in Other, the last sector", b)
+	}
+}
+
+// ADR-0018: aim42's rim is three arcs, one per phase colour, spanning what one rim would; any other
+// sector draws one.
+func TestRadarStripesTheAim42Rim(t *testing.T) {
+	v := buildRadar(radarFamilyItems(), radarFamilies, "all", testNow)
+	for _, s := range v.Sectors {
+		want := 0
+		if s.Hue == "aim42" {
+			want = 3
+		}
+		if len(s.Stripes) != want {
+			t.Errorf("sector %s: %d rim stripes, want %d", s.Name, len(s.Stripes), want)
+		}
+	}
+	h := radarFamiliesHandler(t)
+	body := getAuthed(t, h, "/radar?group=all").Body.String()
+	for _, want := range []string{
+		`<linearGradient id="radar-aim42"`, `class="radar-rim stripe-0"`, `class="radar-rim stripe-2"`,
+		`<a href="/radar?group=all" aria-current="page">all</a>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("radar page lacks %s", want)
+		}
+	}
+}
+
+func radarFamiliesHandler(t *testing.T) http.Handler {
+	t.Helper()
+	s, c := newColdServerWith(t, func(o *Options) {
+		o.Config.GitHub.Repos = radarFamilies.Repos
+		o.Config.GitHub.Sites = radarFamilies.Sites
+		o.Cache = snapshot.New(&fakeSource{items: radarFamilyItems()}, time.Hour, o.Clock)
+	})
+	warmCache(t, c)
+	return s.Handler()
+}
