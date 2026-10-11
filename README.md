@@ -89,6 +89,7 @@ code; `make check` passes.
 
 | Version | Date | Change |
 |---------|------|--------|
+| 2.4.1 | 2026-10-11 | QS-2.3's page budget raised to 300 kB over a 250-item fixture (was 150 kB over 150 items): 229 items are open across the 19 watched repositories |
 | 2.4.0 | 2026-10-11 | aim42 and aim42.org-site as two tiles in aim42's red, blue and green side by side, with Dependabot alerts; the Radar switch is arc42 \| iSAQB \| all — all draws one sector per family (arc42, iSAQB, systems42, aim42, an empty private); systems42 a family of its own, still a sector on the arc42 radar; at most 19 repositories, 38 requests per fetch (ADR-0018) |
 | 2.3.0 | 2026-10-07 | systems42 replaces zorgscope: the three systems42-org repositories as one green tile and one Radar sector; a site may name several repositories; a token of its own per repository owner (`GITHUB_TOKEN_SYSTEMS42_ORG`) reads the private ones; at most 17 repositories, 34 requests per fetch (ADR-0017) |
 | 2.2.1 | 2026-09-29 | The arc42 Radar shows the arc42 sites only; curriculum-req4arc, curriculum-improve and curriculum-adoc join the iSAQB Radar, which keeps arc42 as one sector — 15 repositories, the ceiling |
