@@ -304,10 +304,10 @@ func TestSitesPageStaysInsideItsBudget(t *testing.T) {
 	if n := strings.Count(body, `class="tile hue-`); n != 8 {
 		t.Fatalf("site tiles = %d, want 7 sites and Other: the budget would be measured on the wrong page", n)
 	}
-	if n := len(body); n > 150*1024 {
-		t.Errorf("Sites view is %d bytes, budget is 150 kB (QS-2.3)", n)
+	if n := len(body); n > pageBudget {
+		t.Errorf("Sites view is %d bytes, budget is 300 kB (QS-2.3)", n)
 	} else {
-		t.Logf("Sites view is %d bytes of the 150 kB budget (QS-2.3)", n)
+		t.Logf("Sites view is %d bytes of the 300 kB budget (QS-2.3)", n)
 	}
 }
 

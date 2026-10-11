@@ -335,23 +335,23 @@ func TestTheListShowsNumbersDescriptionsAndCounts(t *testing.T) {
 	if !strings.Contains(body, `class="item-summary"`) {
 		t.Error("the description is not set apart from the title")
 	}
-	// representativeItems holds 150 items across 10 repositories of 15.
-	if !strings.Contains(body, "150 open") {
+	// representativeItems holds 250 items across 10 repositories of 25.
+	if !strings.Contains(body, "250 open") {
 		t.Errorf("the list does not say how many items are open:\n%s",
 			firstLineContaining(body, "shown-count"))
 	}
-	if !strings.Contains(body, `<span class="repo-count">15</span>`) {
+	if !strings.Contains(body, `<span class="repo-count">25</span>`) {
 		t.Errorf("a repository heading does not state how many items it holds:\n%s",
 			firstLineContaining(body, "repo-count"))
 	}
-	// Narrowed, both counts name the total as well: "5 open" and "5 of 150 open" are different
+	// Narrowed, both counts name the total as well: "5 open" and "5 of 250 open" are different
 	// news, and only one of them is true.
 	narrowed := getAuthed(t, h, "/?kind=pr").Body.String()
-	if !strings.Contains(narrowed, "50 of 150 open") {
+	if !strings.Contains(narrowed, "90 of 250 open") {
 		t.Errorf("a filtered list does not state the unfiltered total:\n%s",
 			firstLineContaining(narrowed, "shown-count"))
 	}
-	if !strings.Contains(narrowed, `<span class="repo-count">5 of 15</span>`) {
+	if !strings.Contains(narrowed, `<span class="repo-count">9 of 25</span>`) {
 		t.Errorf("a filtered repository heading does not state its unfiltered total:\n%s",
 			firstLineContaining(narrowed, "repo-count"))
 	}

@@ -75,7 +75,8 @@ by phase because the linter's British spelling list rejects "analyze".
   radars are configured.
 * Bad: QS‑3.5 rises to 19 repositories and 38 requests per fetch, 12 × 38 = 456 of GitHub's 5,000 an
   hour (about 9 %), the ceiling met again.
-* Bad: about 95 more open items. QS‑2.3's representative fixture (~150 items) no longer bounds the
-  real list; the real page weight should be checked against its 150 kB.
+* Bad: about 95 more open items — 229 in all on 2026‑10‑11, past QS‑2.3's representative fixture of
+  150 items and its 150 kB. Amended in 2.4.1: the fixture holds 250 items and the budget is 300 kB
+  (the list renders it in about 240 kB, the radar in about 220 kB).
 * Neutral: `aim42` is the one hue key with special rules in app.css and radar.go (`stripedHue`); the
   contrast of its three stripes is held by `TestTheAim42StripesKeepTheirContrast`.

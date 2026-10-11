@@ -500,13 +500,17 @@ func TestNoRenderedHTMLNeedsUnsafeInline(t *testing.T) {
 	}
 }
 
+// pageBudget is QS-2.3's ceiling on a rendered view's uncompressed HTML over the representative
+// fixture: 300 kB for 250 items, about 1 kB an item on the list.
+const pageBudget = 300 * 1024
+
 // QS-2.3.
 func TestRenderedPageStaysInsideItsBudget(t *testing.T) {
 	body := getAuthed(t, dashHandler(t, &fakeSource{items: representativeItems()}), "/").Body.String()
-	if n := len(body); n > 150*1024 {
-		t.Errorf("dashboard is %d bytes, budget is 150 kB (QS-2.3)", n)
+	if n := len(body); n > pageBudget {
+		t.Errorf("dashboard is %d bytes, budget is 300 kB (QS-2.3)", n)
 	} else {
-		t.Logf("dashboard is %d bytes of the 150 kB budget (QS-2.3)", n)
+		t.Logf("dashboard is %d bytes of the 300 kB budget (QS-2.3)", n)
 	}
 }
 
@@ -870,14 +874,17 @@ func ghItem(number int, title string, at time.Time) domain.Item {
 	}
 }
 
-// representativeItems is QS-2.3's representative configuration: 10 repositories holding 150 open
-// items between them, of both kinds — which is the expensive case for the grouping and for every
+// representativePerRepo is how many items each of representativeItems' ten repositories holds.
+const representativePerRepo = 25
+
+// representativeItems is QS-2.3's representative configuration: 10 repositories holding 250 open
+// items between them (229 were open across the 19 watched repositories on 2026-10-11), of both kinds — which is the expensive case for the grouping and for every
 // filter that has to be counted around.
 func representativeItems() []domain.Item {
 	var items []domain.Item
 	for r := range 10 {
 		repo := "org/repository-number-" + strconv.Itoa(r)
-		for i := range 15 {
+		for i := range representativePerRepo {
 			n := r*100 + i
 			// Every third item is a pull request, so a kind filter has something to narrow to
 			// and something to leave out in every repository.

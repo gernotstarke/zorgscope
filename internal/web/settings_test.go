@@ -225,7 +225,7 @@ func TestLandingRedirectLeavesTheViewSwitchAlone(t *testing.T) {
 	if strings.Contains(body, "Nothing matches this filter") {
 		t.Error("?view=list was treated as narrowing the list, but view is a key parseFilter does not read")
 	}
-	if !strings.Contains(body, "150 open") {
+	if !strings.Contains(body, "250 open") {
 		t.Errorf("?view=list did not render the ordinary unfiltered list; body: %s", firstLineContaining(body, "open"))
 	}
 }

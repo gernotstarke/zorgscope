@@ -45,9 +45,9 @@ func TestContributorsPageWithNothingOpen(t *testing.T) {
 func TestContributorsPageStaysInsideItsBudget(t *testing.T) {
 	h := dashHandler(t, &fakeSource{items: representativeItems()})
 	body := getAuthed(t, h, "/contributors").Body.String()
-	if n := len(body); n > 150*1024 {
-		t.Errorf("Contributors view is %d bytes, budget is 150 kB (QS-2.3)", n)
+	if n := len(body); n > pageBudget {
+		t.Errorf("Contributors view is %d bytes, budget is 300 kB (QS-2.3)", n)
 	} else {
-		t.Logf("Contributors view is %d bytes of the 150 kB budget (QS-2.3)", n)
+		t.Logf("Contributors view is %d bytes of the 300 kB budget (QS-2.3)", n)
 	}
 }

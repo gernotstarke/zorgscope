@@ -225,10 +225,10 @@ func TestRadarPageHasNoStyleAttribute(t *testing.T) {
 // QS-2.3: the Radar page over the representative fixture stays inside its budget.
 func TestRadarPageStaysInsideItsBudget(t *testing.T) {
 	body := getAuthed(t, dashHandler(t, &fakeSource{items: representativeItems()}), "/radar").Body.String()
-	if n := len(body); n > 150*1024 {
-		t.Errorf("Radar view is %d bytes, budget is 150 kB (QS-2.3)", n)
+	if n := len(body); n > pageBudget {
+		t.Errorf("Radar view is %d bytes, budget is 300 kB (QS-2.3)", n)
 	} else {
-		t.Logf("Radar view is %d bytes of the 150 kB budget (QS-2.3)", n)
+		t.Logf("Radar view is %d bytes of the 300 kB budget (QS-2.3)", n)
 	}
 }
 
@@ -310,7 +310,7 @@ func TestRadarBlipsDoNotOverlap(t *testing.T) {
 	}
 }
 
-// The same holds over the representative fixture: 150 items over ten repositories.
+// The same holds over the representative fixture: 250 items over ten repositories.
 func TestRadarRepresentativeFixtureHasNoCollisions(t *testing.T) {
 	gh := tenSites()
 	items := representativeItems()
