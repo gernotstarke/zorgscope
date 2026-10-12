@@ -47,8 +47,11 @@ const (
 	signInWindow   = 15 * time.Minute
 )
 
-// sessionEncoding is URL-safe and unpadded, so a cookie value never needs quoting.
-var sessionEncoding = base64.RawURLEncoding
+// sessionEncoding is URL-safe and unpadded, so a cookie value never needs quoting. It is Strict:
+// the lenient decoder ignores the unused trailing bits of the last character, so two different
+// strings would open to one valid cookie. Strict refuses non-zero padding bits, leaving exactly one
+// string per cookie.
+var sessionEncoding = base64.RawURLEncoding.Strict()
 
 // role is what a session may see: the configured scope (owner) or a personal one (member).
 type role string
