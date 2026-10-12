@@ -40,8 +40,9 @@ their usage spends their rate limit and never the owner's.
 * Good: nothing new to operate — one app, one OAuth App, no scope, no secret, no database.
 * Good: the owner's pages run the same code on the same values as before; members cannot make
   them stale or failing.
-* Good: adding or removing a member is a GitHub setting; rotating the client secret still ends
-  every session at once; a member signing out revokes their token, and they can revoke zorgscope
+* Good: adding or removing a member is a GitHub setting. Removal takes effect at the member's next
+  sign-in, since a session already issued lasts up to 7 days; rotating the client secret ends
+  every session at once. A member signing out revokes their token, and they can revoke zorgscope
   under "Authorized OAuth Apps".
 * Bad: a stolen member cookie leaks a 7‑day session and an unscoped token that reads public data
   and identifies its owner — more than the expiry-only cookie of ADR‑0012 leaked. The cookie is
