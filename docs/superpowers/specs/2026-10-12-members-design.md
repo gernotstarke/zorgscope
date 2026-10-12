@@ -1,6 +1,6 @@
 # Members: a personal scope for invited iSAQB people — design
 
-Date: 2026-10-12. Status: proposed.
+Date: 2026-10-12. Status: proposed. Reconciled with 2.4.1 (ADR‑0017 per-owner tokens, ADR‑0018 fixed radars) the same day.
 Builds on the GitHub sign-in (ADR‑0009), the stateless reset (ADR‑0010), the per-site tiles
 (`2026-09-15-per-site-tiles-design.md`), the radar (`2026-09-25-radar-design.md`) and the iSAQB group
 (`2026-09-29-isaqb-group-design.md`). No database, no ticker, no inline script or style.
@@ -28,7 +28,7 @@ Builds on the GitHub sign-in (ADR‑0009), the stateless reset (ADR‑0010), the
 | D8 | Owner or member? | **Owner wins.** Push on `auth_repo` makes an owner session as today; otherwise push on the members repository makes a member session. Gernot must not add himself to the members repository; nothing about his own access changes. |
 | D9 | Stolen cookies | Cannot be detected statelessly. Mitigated: the token is unscoped; **sign-out revokes the token at GitHub**; member sessions last **7 days** rather than 30; rotating the client secret ends every session. |
 | D10 | Monitoring | **Log lines** — sign-in, page view, fetch and sign-out carry the login and role. A `/metrics` endpoint for Fly's Grafana is a follow-up, not part of this feature. |
-| D11 | Colour | Member tiles and sectors take the **12 existing hue keys** in selection order. 12 hues is why 12 is the cap. |
+| D11 | Colour | Member tiles and sectors take the **twelve plain hue keys** — the seven brand hues and the five oranges, `config.MemberHues` — in selection order. systems42's green and aim42's striped key are left out. Twelve plain hues is why 12 is the cap. |
 | D12 | Email | Not collected. GitHub's profile is enough. |
 
 ## 3. Admission: owner and member
@@ -86,7 +86,7 @@ The plaintext is compact JSON:
 
 Nothing in the cookie is readable by the browser or anyone holding the cookie without the key: the
 token is confidential, not merely tamper-proof. What a stolen member cookie leaks is stated plainly
-in ADR‑0017: a 7‑day session and an unscoped token that can read public data and identify its
+in ADR‑0019: a 7‑day session and an unscoped token that can read public data and identify its
 owner.
 
 ## 5. A scope per request
@@ -107,9 +107,11 @@ type scope struct {
   false. Nothing about the owner's pages changes — the same functions run on the same values.
 * **Member session:** `GH.Repos` is the selection, `GH.Owner` the member's login (so the needs-you
   band means them, FR‑1.14), and `GH.Sites` one site per repository: `Name` is the part after the
-  slash, `URL` is `https://github.com/<repo>`, `Hue` is `config.HueKeys[i]` for the i‑th repository
-  (D11), `NoAlerts` true, no tag, no group. One group means no group switch (FR‑1.15); every
-  repository is claimed, so no Other tile or sector. `Cache` is the member's own (§8).
+  slash, `URL` is `https://github.com/<repo>`, `Repos` is that one repository, `Hue` is
+  `config.MemberHues[i]` for the i‑th repository (D11), `NoAlerts` true, no tag, and `Group` is
+  `member` — a family none of the fixed radars of ADR‑0018 names, so no radar is offered, every
+  site is a sector and no switch is drawn (FR‑1.15); every repository is claimed, so no Other tile
+  or sector. `Cache` is the member's own (§8).
 
 `siteSpecs`, `radarSpecs`, `buildRadar`, `chromeFor`, `headerView`, the waiting page's repository
 count and `domain.BuildDashboard`'s `Repos` all take the scope's values instead of the config's.
@@ -128,7 +130,8 @@ redirects to `/repos` (303), and a session fragment (`GET /items`) answers 204 w
   in its hue; no Security tile (`sites.html` draws it only for the owner). FR‑1.8's "preceded by
   the Security tile" becomes "for the owner's scope".
 * **Radar**: one sector per chosen repository in selection order; no switch, no condensed sector,
-  no Other. Twelve sectors is the most a member's radar draws.
+  no Other. Twelve sectors is the most a member's radar draws. The fixed radars of ADR‑0018 do
+  not apply: the member family is in none of them.
 * **Settings panel**: a "Repositories" link to `/repos` for members, beside the existing controls.
 * **The wait page** counts the member's repositories.
 * Refresh invalidates only the member's cache.
@@ -157,7 +160,8 @@ redirects to `/repos` (303), and a session fragment (`GET /items`) answers 204 w
   notice (scrubbed, §10) and the member's current selection as checked boxes, so they can still
   save a smaller selection or leave. A `POST` that cannot get the list refuses with the same notice
   and saves nothing.
-* `MaxMemberRepos = 12` lives in `config` beside `MaxRepos`, with a comment naming D11.
+* `MaxMemberRepos = 12` and `MemberHues` (the twelve plain keys) live in `config` beside `MaxRepos`
+  and `HueKeys`, with a comment naming D11.
 
 Because checkboxes submit in document order and the list is alphabetical, the selection — and with
 it the hue assignment — is alphabetical. Adding a repository can shift the hues of those after it.
@@ -174,7 +178,9 @@ web layer holds them in a `memberCaches` map keyed by login:
   selection — replaces the entry. `Invalidate` on the old one is unnecessary: it is dropped.
 * The cache's source is built by `Options.MemberSource func(token string, repos []string)
   ports.Source`, which main implements as `github.NewIssueFetcher` with that token, those
-  repositories, all of them in `NoAlerts`, and the same base URLs the owner's fetcher uses. No alert
+  repositories, all of them in `NoAlerts`, **no per-owner tokens** (ADR‑0017's `OwnerTokens` stay
+  the owner's: a member's fetch must never carry a token that reads private repositories), and the
+  same base URLs the owner's fetcher uses. No alert
   query, no REST probe: a member fetch costs at most 12 × 2 = **24 requests**, on the member's own
   limit (QS‑3.5 gains that sentence).
 * The map is bounded at 64 entries; beyond that the least recently used entry is dropped, as the
@@ -278,19 +284,19 @@ What changes, said plainly:
   their repositories.
 * **FR‑1.11** — the settings panel carries a Repositories link for a member.
 * **QS‑3.5** — a sentence: a member's fetch is at most 24 requests on the member's own limit; the
-  owner's budget is unchanged.
+  owner's budget (19 repositories, 38 requests) is unchanged.
 * **QS‑4.3** — the canary set gains the member token.
 * **S‑4** (new stakeholder) — invited members: a handful of iSAQB people with a personal view; they
   decide nothing about scope and hold no credential of the deployment.
-* **ADR‑0017** — "Members: an allowlist by a second repository, a personal scope in an encrypted
+* **ADR‑0019** — "Members: an allowlist by a second repository, a personal scope in an encrypted
   cookie, fetches on the member's own token" — records D1–D11 with the rejected options and the
   stolen-cookie statement.
 * **docs/concepts/security-and-tokens.md** — the member token: where it lives, what it can do, how
   it ends. **docs/concepts/configuration.md** — the two keys.
 * **PRODUCT.md** — Users: Gernot, plus a handful of invited members with a personal scope; "you"
   means the signed-in person. Positioning and Capabilities mention the member view.
-* **README** — one paragraph on members and how to invite one; the changelog row **2.3.0**.
-* `internal/version/version.go` — **2.3.0**.
+* **README** — one paragraph on members and how to invite one; the changelog row **2.5.0**.
+* `internal/version/version.go` — **2.5.0**.
 
 ## 14. Testing
 
@@ -315,7 +321,7 @@ What changes, said plainly:
 * The fake GitHub (`internal/fakesources`) gains `GET /user`, `GET /orgs/{org}/repos`,
   `DELETE /applications/{client_id}/token`, and a control that sets the permission per repository
   and the login, so `make dev` against the fake can sign in as a member.
-* Contrast tests are untouched: the member hues are the existing twelve.
+* Contrast tests are untouched: the member hues are twelve of the existing keys.
 
 ## 15. Out of scope, named so nobody wonders
 
