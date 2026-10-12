@@ -22,8 +22,8 @@ func memberSess(login string, repos ...string) session {
 	return session{Role: roleMember, Login: login, Token: "tok-" + login, Repos: repos}
 }
 
-// Spec §8: one cache per login, reused while token and selection are unchanged, replaced when
-// either changes; two members never share one.
+// Spec §8: one cache per login, token and selection, reused while all three are unchanged; two
+// members never share one.
 func TestMemberCachesAreKeyedByLoginAndFingerprint(t *testing.T) {
 	sources := &stubMemberSources{}
 	m := testMemberCaches(sources)
@@ -34,13 +34,36 @@ func TestMemberCachesAreKeyedByLoginAndFingerprint(t *testing.T) {
 	if m.cacheFor(memberSess("b", "o/x")) == a || sources.built() != 2 {
 		t.Fatal("two members share a cache")
 	}
-	if m.cacheFor(memberSess("a", "o/x", "o/y")) == a || sources.built() != 3 {
-		t.Fatal("a changed selection kept the old cache")
+}
+
+// One member signed in on two devices holds two tokens. Each device keeps its own cache: were
+// the one replacing the other, both polling the wait page would throw away each other's fetch
+// on every poll and start another, and neither fetch would ever land in a cache still in use.
+func TestOneMemberOnTwoDevicesKeepsBothCaches(t *testing.T) {
+	sources := &stubMemberSources{}
+	m := testMemberCaches(sources)
+	phone, laptop := memberSess("a", "o/x"), memberSess("a", "o/x")
+	laptop.Token = "tok-a-laptop"
+	first := map[string]any{}
+	for range 10 {
+		for _, sess := range []session{phone, laptop} {
+			c := m.cacheFor(sess)
+			if prev, ok := first[sess.Token]; ok && prev != any(c) {
+				t.Fatalf("the cache of token %s was replaced", sess.Token)
+			}
+			first[sess.Token] = c
+		}
 	}
-	changedToken := memberSess("a", "o/x", "o/y")
-	changedToken.Token = "tok-a-new"
-	if m.cacheFor(changedToken) == a || sources.built() != 4 {
-		t.Fatal("a new token kept the old cache")
+	if sources.built() != 2 {
+		t.Fatalf("built %d sources for two devices, want 2", sources.built())
+	}
+	if m.cacheFor(phone) == m.cacheFor(laptop) {
+		t.Fatal("two tokens share a cache")
+	}
+	changed := phone
+	changed.Repos = []string{"o/x", "o/y"}
+	if c := m.cacheFor(changed); c == first[phone.Token] || sources.built() != 3 {
+		t.Fatalf("a changed selection: built %d, want 3 and a cache of its own", sources.built())
 	}
 }
 

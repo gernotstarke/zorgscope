@@ -22,7 +22,7 @@ import (
 const maxMemberCaches = 64
 
 // memberCaches holds one snapshot.Cache per signed-in member (spec 2026-10-12 §8), keyed by
-// login. The cache package is not changed: each member gets the owner's semantics — fetch on a
+// login and fingerprint. The cache package is not changed: each member gets the owner's semantics — fetch on a
 // stale page view, the wait page, partial failures kept — over their own repositories, fetched
 // with their own token.
 type memberCaches struct {
@@ -34,40 +34,41 @@ type memberCaches struct {
 	log       *slog.Logger
 }
 
-// memberEntry is one member's cache and the fingerprint of the token and selection it was built
-// for. A session whose fingerprint differs — a new token after signing in again, a new selection —
-// replaces the entry rather than invalidating it: the old cache holds items of a different
-// selection, and nothing of it is worth keeping.
+// memberEntry is one cache, for one login, token and selection. A session with another token or
+// selection gets an entry of its own rather than replacing this one: one member signed in on two
+// devices holds two tokens, and were each device's request to replace the other's cache, two pages
+// polling the wait page would throw away each other's fetch on every poll, and neither would ever
+// land. An entry no session asks for any more is simply the least recently used, and goes.
 type memberEntry struct {
-	fingerprint string
-	cache       *snapshot.Cache
-	lastUsed    time.Time
+	cache    *snapshot.Cache
+	lastUsed time.Time
 }
 
 func newMemberCaches(newSource func(token string, repos []string) ports.Source, ttl time.Duration, clock ports.Clock, log *slog.Logger) *memberCaches {
 	return &memberCaches{entries: make(map[string]*memberEntry), newSource: newSource, ttl: ttl, clock: clock, log: log}
 }
 
-// cacheFor returns the cache for sess, building it when the member has none yet or theirs was
-// built for another token or selection.
+// cacheFor returns the cache for sess, building it when there is none yet for its login, token and
+// selection. The login is part of the key although a token already names one person: two logins
+// can then never meet in one cache, whatever a token turns out to be.
 func (m *memberCaches) cacheFor(sess session) *snapshot.Cache {
-	fp := memberFingerprint(sess.Token, sess.Repos)
+	key := sess.Login + "\x00" + memberFingerprint(sess.Token, sess.Repos)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := m.clock.Now()
-	if e, ok := m.entries[sess.Login]; ok && e.fingerprint == fp {
+	if e, ok := m.entries[key]; ok {
 		e.lastUsed = now
 		return e.cache
 	}
 	m.evictLocked()
 	src := memberSource(m.newSource(sess.Token, sess.Repos), sess.Token, sess.Login, len(sess.Repos), m.log)
-	e := &memberEntry{fingerprint: fp, cache: snapshot.New(src, m.ttl, m.clock), lastUsed: now}
-	m.entries[sess.Login] = e
+	e := &memberEntry{cache: snapshot.New(src, m.ttl, m.clock), lastUsed: now}
+	m.entries[key] = e
 	return e.cache
 }
 
 // evictLocked drops the least recently used entries until there is room for one more. The caller
-// holds the mutex. An entry being replaced counts as room: it is overwritten by its own login.
+// holds the mutex.
 func (m *memberCaches) evictLocked() {
 	for len(m.entries) >= maxMemberCaches {
 		oldestKey, oldest := "", time.Time{}

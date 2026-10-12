@@ -171,11 +171,13 @@ Accepted (D11).
 
 A member's items come from a `snapshot.Cache` of their own, with the fetching, waiting, partial
 failure and TTL semantics of ADR‑0011 and ADR‑0013 unchanged — the package is not modified. The
-web layer holds them in a `memberCaches` map keyed by login:
+web layer holds them in a `memberCaches` map keyed by login and fingerprint:
 
-* An entry is `{fingerprint, cache, lastUsed}`; the fingerprint is `SHA256(token ‖ "\n" ‖ repos…)`.
-  A session whose fingerprint differs from the entry's — a new token after re-signing in, or a new
-  selection — replaces the entry. `Invalidate` on the old one is unnecessary: it is dropped.
+* An entry is `{cache, lastUsed}`; the fingerprint is `SHA256(token ‖ "\n" ‖ repos…)`. A session
+  whose fingerprint is new — a new token after re-signing in, a second device, or a new selection —
+  gets an entry of its own rather than replacing another: one member on two devices holds two
+  tokens, and replacing would make the two devices throw away each other's fetch on every poll. An
+  entry no session uses any more ages out as the least recently used.
 * The cache's source is built by `Options.MemberSource func(token string, repos []string)
   ports.Source`, which main implements as `github.NewIssueFetcher` with that token, those
   repositories, all of them in `NoAlerts`, **no per-owner tokens** (ADR‑0017's `OwnerTokens` stay
@@ -312,8 +314,8 @@ What changes, said plainly:
 * `/repos`: the list, the checked state, the count line; saving 3 keeps 3 in list order; 13 is
   refused with the message; an unknown repository is dropped; an owner is redirected; the list
   is cached and refetched after an hour; a failing list shows the notice and the current selection.
-* Member caches: two members fetch separately; a changed selection replaces the entry; the same
-  session reuses it; the 65th login evicts the least recently used; a fetch error carrying the
+* Member caches: two members fetch separately; a changed selection builds its own entry; one
+  member on two devices keeps both caches; the same session reuses it; the 65th login evicts the least recently used; a fetch error carrying the
   token comes out scrubbed.
 * Sign-out: a member's token is revoked and the cookie cleared; a failed revocation still clears
   the cookie; an owner revokes nothing.
