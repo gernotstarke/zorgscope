@@ -235,11 +235,16 @@ func (s *Server) requireSession(next http.Handler, redirect bool) http.Handler {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
-		if r.Header.Get("HX-Request") == "true" {
-			w.Header().Set("HX-Redirect", "/login")
-		}
-		s.unauthorised(w)
+		s.refuseAnonymous(w, r)
 	})
+}
+
+// refuseAnonymous answers a request that has no session with 401, telling htmx where to go.
+func (s *Server) refuseAnonymous(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("HX-Redirect", "/login")
+	}
+	s.unauthorised(w)
 }
 
 // requireSignOut guards /logout. A valid session goes on to the handler like any session route.

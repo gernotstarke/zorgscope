@@ -47,8 +47,16 @@ func (s *Server) scopeFor(sess session) scope {
 // scopeOf resolves the request's scope. A member who has chosen nothing yet has no scope to
 // render: the request is answered here — a page is sent to /repos, an htmx fragment gets 204 with
 // HX-Redirect — and false says so. Nothing is fetched for a selection of nothing.
+//
+// A request requireSession did not admit carries the zero session, which is nobody's. scopeFor
+// would read it as the owner's, since it is not a member's, so it is refused here with 401: a
+// handler wired to the wrong route kind then fails closed instead of showing the owner's view.
 func (s *Server) scopeOf(w http.ResponseWriter, r *http.Request) (scope, bool) {
 	sess := sessionOf(r)
+	if sess.Role != roleOwner && sess.Role != roleMember {
+		s.refuseAnonymous(w, r)
+		return scope{}, false
+	}
 	if sess.member() && len(sess.Repos) == 0 {
 		if r.Header.Get("HX-Request") == "true" {
 			w.Header().Set("HX-Redirect", "/repos")

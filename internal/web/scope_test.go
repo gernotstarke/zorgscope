@@ -185,3 +185,26 @@ func TestNewRequiresAMemberSourceWhenMembersAreEnabled(t *testing.T) {
 		t.Fatal("New() accepted members without a MemberSource")
 	}
 }
+
+// scopeOf on a request requireSession never admitted sees the zero session, which is nobody's —
+// not the owner's. It refuses rather than hand out the configuration and the owner's cache, so a
+// handler wired to the wrong auth kind fails closed.
+func TestScopeOfRefusesARequestWithoutASession(t *testing.T) {
+	s := newTestServer(t)
+	for _, htmx := range []bool{false, true} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/items", nil)
+		if htmx {
+			req.Header.Set("HX-Request", "true")
+		}
+		if _, ok := s.scopeOf(rec, req); ok {
+			t.Fatalf("htmx=%v: scopeOf admitted a request with no session", htmx)
+		}
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("htmx=%v: status = %d, want 401", htmx, rec.Code)
+		}
+		if htmx && rec.Header().Get("HX-Redirect") != "/login" {
+			t.Fatalf("htmx: HX-Redirect = %q, want /login", rec.Header().Get("HX-Redirect"))
+		}
+	}
+}
