@@ -67,7 +67,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		Log:    log,
 		// Who may sign in is decided by GitHub, against the repository named in the
 		// configuration file (FR-8.3).
-		Access:     github.NewAccessChecker(cfg.GitHub.BaseURL, cfg.GitHub.AuthRepo, hc),
+		Access:     github.NewAccess(cfg.GitHub.BaseURL, cfg.Secrets.OAuthClientID, cfg.Secrets.OAuthClientSecret, hc),
 		HTTPClient: hc,
 	})
 	if err != nil {

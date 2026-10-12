@@ -146,7 +146,7 @@ func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	// The request's own context, not the one carrying oauth2.HTTPClient: the access checker holds
 	// the client it should use, and handing it a context that names another one would quietly
 	// decide for it.
-	ok, err := s.access.HasPushAccess(r.Context(), tok.AccessToken)
+	ok, err := s.access.HasPushAccess(r.Context(), tok.AccessToken, s.cfg.GitHub.AuthRepo)
 	switch {
 	// GitHub answered without saying what the visitor may do. The visitor is refused exactly as a
 	// stranger is — the check fails closed — but the log says which of the two happened, because

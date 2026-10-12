@@ -368,7 +368,7 @@ func TestTheLastAttemptInTheBudgetCanStillSignIn(t *testing.T) {
 		}
 	}
 	// The visitor finally signs in as themselves rather than as somebody with no push access.
-	access.allow = map[string]bool{"fake-token": true}
+	access.allow = map[string]bool{"fake-token " + testAuthRepo: true}
 	rec := signInThroughGitHub(t, h)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("the tenth attempt = %d, want 303: nine failures must not cost the tenth", rec.Code)

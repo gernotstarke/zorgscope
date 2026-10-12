@@ -834,19 +834,20 @@ func testOptions() Options {
 		Log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 		// The visitor GitHub vouches for in the tests is whoever presents the fake's token. A test
 		// about being refused replaces this with a stub that admits nobody.
-		Access: &stubAccess{allow: map[string]bool{"fake-token": true}},
+		Access: &stubAccess{allow: map[string]bool{"fake-token " + testAuthRepo: true}},
 	}
 }
 
-// stubAccess stands in for the GitHub adapter: it decides by token, or fails outright, so a test
-// can exercise the collaborator, the stranger and an unreachable GitHub without a fixture for each.
+// stubAccess stands in for the GitHub adapter: it decides by token and repository, or fails
+// outright, so a test can exercise the collaborator, the member, the stranger and an unreachable
+// GitHub without a fixture for each. The key is token + " " + repo.
 type stubAccess struct {
 	allow map[string]bool
 	err   error
 }
 
-func (s *stubAccess) HasPushAccess(_ context.Context, token string) (bool, error) {
-	return s.allow[token], s.err
+func (s *stubAccess) HasPushAccess(_ context.Context, token, repo string) (bool, error) {
+	return s.allow[token+" "+repo], s.err
 }
 
 // startFakeGitHub starts the fixture server and points the options' OAuth base URL at it. It

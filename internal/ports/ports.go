@@ -26,14 +26,34 @@ import (
 // importing an adapter, which ADR-0001 does not allow.
 var ErrNoPermissionsBlock = errors.New("the upstream answered without a permissions block")
 
-// AccessChecker decides who may sign in (FR-8.3). token is the visitor's own OAuth access token;
-// it is used for one request and never stored.
+// AccessChecker decides who may sign in (FR-8.3, FR-8.4). token is the visitor's own OAuth access
+// token; repo is the repository whose permissions block answers the question.
 type AccessChecker interface {
-	// HasPushAccess reports whether the visitor identified by token has push access to the
-	// repository or organisation that gates sign-in. It reports false with a non-nil error when
-	// it could not find out, including ErrNoPermissionsBlock: a caller must never read an error
-	// as permission.
-	HasPushAccess(ctx context.Context, token string) (bool, error)
+	// HasPushAccess reports whether the visitor identified by token has push access to repo. It
+	// reports false with a non-nil error when it could not find out, including
+	// ErrNoPermissionsBlock: a caller must never read an error as permission.
+	HasPushAccess(ctx context.Context, token, repo string) (bool, error)
+}
+
+// IdentityReader names the visitor a token belongs to (FR-8.4): the login the session carries.
+type IdentityReader interface {
+	Login(ctx context.Context, token string) (string, error)
+}
+
+// TokenRevoker ends a member's token at GitHub when they sign out (FR-8.4, spec 2026-10-12 §9).
+type TokenRevoker interface {
+	Revoke(ctx context.Context, token string) error
+}
+
+// Repo is one repository a member may choose (FR-8.5).
+type Repo struct {
+	FullName, Description string
+}
+
+// RepoLister lists the public, non-archived repositories of an organisation, fetched with the
+// member's own token (FR-8.5).
+type RepoLister interface {
+	PublicRepos(ctx context.Context, token, org string) ([]Repo, error)
 }
 
 // Clock reports the current time, so that callers needing time.Now can be tested with a fixed
