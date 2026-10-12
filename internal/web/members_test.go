@@ -108,6 +108,25 @@ func TestMemberSourceScrubsTheTokenAndLogsTheLogin(t *testing.T) {
 	}
 }
 
+// QS-4.3 for a panic: snapshot.Cache would recover it with the panic value in the error's text,
+// past the scrub and past Redact, which does not know a member's token. The wrapper recovers it
+// first, scrubbed, and logs it with the login.
+func TestAPanickingMemberSourceIsScrubbedToo(t *testing.T) {
+	var logged bytes.Buffer
+	src := ports.SourceFunc(func(context.Context) (domain.Fetched, error) {
+		panic("request with gho_secret went wrong")
+	})
+	wrapped := memberSource(src, "gho_secret", "octocat", 2, slog.New(slog.NewTextHandler(&logged, nil)))
+	_, err := wrapped.Fetch(context.Background())
+	if err == nil || strings.Contains(err.Error(), "gho_secret") || !strings.Contains(err.Error(), "[token]") {
+		t.Fatalf("err = %v", err)
+	}
+	line := firstLineContaining(logged.String(), "panicked")
+	if strings.Contains(logged.String(), "gho_secret") || !strings.Contains(line, "login=octocat") || !strings.Contains(line, "level=WARN") {
+		t.Fatalf("log = %s", logged.String())
+	}
+}
+
 // The page's error notice is the other consumer of a fetch error; it must be scrubbed too, by
 // construction, because it reads the same error.
 func TestAMemberFetchErrorReachesThePageScrubbed(t *testing.T) {

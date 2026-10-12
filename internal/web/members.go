@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -97,10 +98,20 @@ func memberFingerprint(token string, repos []string) string {
 // reaches both the log and the page's error notice, so it is scrubbed here, once, before either
 // can see it (QS-4.3). The scrubbed error is a new value: nothing downstream matches on the
 // original's type.
+//
+// A panic is recovered here too, before snapshot.Cache's own recovery sees it: that one puts the
+// panic value into the error's text unscrubbed, and Redact downstream knows the configured
+// secrets, not a member's token.
 func memberSource(src ports.Source, token, login string, repos int, log *slog.Logger) ports.Source {
-	return ports.SourceFunc(func(ctx context.Context) (domain.Fetched, error) {
+	return ports.SourceFunc(func(ctx context.Context) (got domain.Fetched, err error) {
+		defer func() {
+			if p := recover(); p != nil {
+				err = scrubbedError(fmt.Errorf("member fetch panicked: %v", p), token)
+				log.Warn("member fetch panicked", "login", login, "repos", repos, "err", err.Error())
+			}
+		}()
 		log.Info("member fetch", "login", login, "repos", repos)
-		got, err := src.Fetch(ctx)
+		got, err = src.Fetch(ctx)
 		if err != nil {
 			err = scrubbedError(err, token)
 			log.Warn("member fetch failed", "login", login, "repos", repos, "items", len(got.Items), "err", err.Error())
