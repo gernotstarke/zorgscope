@@ -19,3 +19,6 @@
 .idea/
 .vscode/
 *.swp
+
+# Linked worktrees (superpowers:using-git-worktrees)
+.worktrees/
