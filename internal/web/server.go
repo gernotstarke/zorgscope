@@ -291,6 +291,10 @@ const (
 	// authSessionPage needs the session cookie and is a browser navigation, so an anonymous GET
 	// is redirected to the sign-in page rather than refused (FR-8.3 AC1).
 	authSessionPage
+	// authSignOut is /logout's: a session route like authSessionFragment — no cookie, no entry —
+	// except that a cookie which is no valid session is cleared rather than refused, because
+	// refusing it would leave the visitor holding a cookie nothing can remove (requireSignOut).
+	authSignOut
 	// authPublic needs no credential: liveness, sign-in, the appearance switch and static assets.
 	// It is deliberately last, so that it can only ever be chosen by naming it.
 	authPublic
@@ -359,7 +363,7 @@ func (s *Server) routes() []route {
 		{http.MethodPost, "/repos", authSessionFragment, s.handleReposSave, ""},
 		{http.MethodGet, "/items", authSessionFragment, s.handleItems, ""},
 		{http.MethodPost, "/refresh", authSessionFragment, s.handleRefresh, ""},
-		{http.MethodPost, "/logout", authSessionFragment, s.handleLogout, ""},
+		{http.MethodPost, "/logout", authSignOut, s.handleLogout, ""},
 		// The visitor's own preferences (FR-1.12). authSessionFragment rather than the public
 		// treatment POST /theme gets: the appearance switch is public because the sign-in page is
 		// the one page where appearance is all there is, and none of these three settings means
@@ -388,6 +392,8 @@ func (s *Server) wrap(rt route) http.Handler {
 		h = s.requireSession(h, true)
 	case authSessionFragment:
 		h = s.requireSession(h, false)
+	case authSignOut:
+		h = s.requireSignOut(h)
 	}
 	return h
 }

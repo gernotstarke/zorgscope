@@ -178,7 +178,8 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 // so that a copy of the cookie dies with it; then the cookie, for everyone. The cookie is cleared
 // whatever GitHub said — the visitor asked to be signed out of this browser, and that never
 // depends on an upstream. It is the one sign-out a visitor can reach for themselves; the other is
-// rotating the OAuth client secret (FR-8.3 AC4).
+// rotating the OAuth client secret (FR-8.3 AC4). It runs behind requireSignOut, so sess is always
+// a valid session: a cookie that is not one was cleared there, without asking GitHub anything.
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	sess := sessionOf(r)
 	revoked := false
@@ -190,10 +191,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.log.Info("sign-out", "login", sess.Login, "role", sess.Role, "revoked", revoked)
-	http.SetCookie(w, &http.Cookie{
-		Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1,
-		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
-	})
+	clearSession(w)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 

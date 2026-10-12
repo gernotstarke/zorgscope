@@ -644,7 +644,7 @@ func TestAuthenticatedResponsesAreNotStoredByTheBrowser(t *testing.T) {
 	c := signIn(t, h)
 
 	for _, rt := range s.routes() {
-		if rt.auth != authSessionPage && rt.auth != authSessionFragment {
+		if rt.auth != authSessionPage && rt.auth != authSessionFragment && rt.auth != authSignOut {
 			continue
 		}
 		t.Run(rt.method+" "+rt.pattern, func(t *testing.T) {
@@ -1199,6 +1199,43 @@ func TestTheOwnerSigningOutRevokesNothing(t *testing.T) {
 	postAs(h, "/logout", url.Values{}, signIn(t, h))
 	if len(revoker.revoked) != 0 {
 		t.Fatalf("revoked %v for an owner", revoker.revoked)
+	}
+}
+
+// A member's cookie outlives a deployment that switches members off. It is then no session at
+// all, and every route has to agree on that: / sending it to /login while /login sent it back to /
+// was an endless redirect, and /logout refusing it left no way to be rid of it.
+func TestAMemberCookieAfterMembersAreSwitchedOffIsNoSession(t *testing.T) {
+	revoker := &stubRevoker{}
+	h := newTestServerWith(t, func(o *Options) { o.Revoker = revoker }).Handler()
+	c := mintMemberSession("isaqb-org/repo-01")
+
+	if rec := getAs(h, "/", c); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/login" {
+		t.Fatalf("GET / = %d %s, want 303 /login", rec.Code, rec.Header().Get("Location"))
+	}
+	if rec := getAs(h, "/login", c); rec.Code != http.StatusOK {
+		t.Fatalf("GET /login = %d %s, want the sign-in page: / and /login send it back and forth",
+			rec.Code, rec.Header().Get("Location"))
+	}
+	rec := postAs(h, "/logout", url.Values{}, c)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/login" {
+		t.Fatalf("POST /logout = %d %s, want 303 /login", rec.Code, rec.Header().Get("Location"))
+	}
+	if got := cookieNamed(rec, sessionCookieName); got == nil || got.MaxAge >= 0 {
+		t.Fatalf("POST /logout did not clear the cookie: %+v", got)
+	}
+	if len(revoker.revoked) != 0 {
+		t.Fatalf("revoked %v on a cookie that is no session", revoker.revoked)
+	}
+}
+
+// An invalid cookie of any kind — expired, tampered, or from before a secret rotation — is
+// cleared by /logout too: it proves nothing, and clearing it is the only thing asked for.
+func TestSigningOutWithAnInvalidCookieClearsIt(t *testing.T) {
+	h := newTestServer(t).Handler()
+	rec := postAs(h, "/logout", url.Values{}, &http.Cookie{Name: sessionCookieName, Value: "not-a-session"})
+	if c := cookieNamed(rec, sessionCookieName); rec.Code != http.StatusSeeOther || c == nil || c.MaxAge >= 0 {
+		t.Fatalf("logout = %d, cookie %+v", rec.Code, c)
 	}
 }
 

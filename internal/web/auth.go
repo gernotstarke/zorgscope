@@ -189,12 +189,21 @@ func (s *Server) setSession(w http.ResponseWriter, sess session) {
 
 // session reports the session a request's cookie proves, and whether it is currently valid. It
 // looks at nothing else: in particular the request's path or method never decide it.
+//
+// It is the one definition of "a valid session" — requireSession, /login and /logout all ask it —
+// so it carries the one rule the codec cannot know: a member's cookie is no session on a
+// deployment with members switched off. Checked anywhere else, one route would refuse such a
+// cookie while another accepted it, and / and /login redirected to each other forever.
 func (s *Server) session(r *http.Request) (session, bool) {
 	c, err := r.Cookie(sessionCookieName)
 	if err != nil {
 		return session{}, false
 	}
-	return s.codec.decode(c.Value, s.clock.Now())
+	sess, ok := s.codec.decode(c.Value, s.clock.Now())
+	if !ok || (sess.member() && !s.cfg.GitHub.MembersEnabled()) {
+		return session{}, false
+	}
+	return sess, true
 }
 
 // requireSession refuses a request without a valid session cookie.
@@ -206,12 +215,13 @@ func (s *Server) session(r *http.Request) (session, bool) {
 // expired session takes the browser to sign-in instead of leaving a silently dead button.
 func (s *Server) requireSession(next http.Handler, redirect bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if sess, ok := s.session(r); ok && (!sess.member() || s.cfg.GitHub.MembersEnabled()) {
-			// Rotating the OAuth client secret is the only sign-out this product has
-			// (FR-8.3 AC4), and a rotation cannot reach a page the browser has already stored.
-			// Without no-store the dashboard — names of repositories, issue titles — stays in
-			// the back-forward cache and in any disk cache after the secret is rotated, which is
-			// precisely the state the rotation was performed to end.
+		if sess, ok := s.session(r); ok {
+			// Neither way a session ends — signing out, which clears this browser's cookie, or
+			// rotating the OAuth client secret, which ends every session at once (FR-8.3 AC4) —
+			// can reach a page the browser has already stored. Without no-store the dashboard —
+			// names of repositories, issue titles — stays in the back-forward cache and in any
+			// disk cache after the session ended, which is precisely the state ending it was
+			// meant to end.
 			w.Header().Set("Cache-Control", "no-store")
 			if redirect {
 				// One line per page view (spec §10): who, as what, where. Fragments and polls are
@@ -229,6 +239,38 @@ func (s *Server) requireSession(next http.Handler, redirect bool) http.Handler {
 			w.Header().Set("HX-Redirect", "/login")
 		}
 		s.unauthorised(w)
+	})
+}
+
+// requireSignOut guards /logout. A valid session goes on to the handler like any session route.
+// A cookie that is no valid session — expired, altered, minted under a rotated secret, or a
+// member's after members were switched off — is cleared and the browser sent to sign in: it
+// proves nothing, clearing it grants nothing, and refusing it would leave the visitor no way to
+// be rid of it. A request carrying no cookie at all is refused like every other session route, so
+// /logout still refuses anonymous access (QS-4.1) and a cross-site post, which SameSite=Lax sends
+// without the cookie, cannot sign anyone out.
+func (s *Server) requireSignOut(next http.Handler) http.Handler {
+	guarded := s.requireSession(next, false)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := r.Cookie(sessionCookieName); err == nil {
+			if _, ok := s.session(r); !ok {
+				s.log.Info("sign-out", "role", "none", "revoked", false)
+				w.Header().Set("Cache-Control", "no-store")
+				clearSession(w)
+				http.Redirect(w, r, "/login", http.StatusSeeOther)
+				return
+			}
+		}
+		guarded.ServeHTTP(w, r)
+	})
+}
+
+// clearSession tells the browser to drop the session cookie. Its attributes are setSession's, so
+// the clear names the very cookie the set wrote.
+func clearSession(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1,
+		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
 	})
 }
 
