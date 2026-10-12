@@ -1,7 +1,9 @@
 // Package fakesources implements a fixture-backed stand-in for the upstream service zorgscope
 // reads from — GitHub's GraphQL API and its OAuth sign-in flow — plus one control route,
 // POST /_control/oauth-user, that a sign-in test uses to steer which permissions the fixture
-// answers with. It exists so that the adapters and the sign-in flow can be developed and tested
+// answers with — for all repositories or for one — and which login GET /user answers. For members
+// it also serves the organisation's repositories (GET /orgs/{org}/repos, paged) and token
+// revocation (DELETE /applications/{client_id}/token, read back at GET /_control/revoked). It exists so that the adapters and the sign-in flow can be developed and tested
 // against a real HTTP server instead of a live network dependency and a real credential.
 //
 // This package imitates upstream services; it deliberately does not know the shapes zorgscope
@@ -27,6 +29,13 @@ type server struct {
 	// oauthPermission selects, by key into permissionSets (oauth.go), the permissions block that
 	// GET /repos/{owner}/{repo} answers with. POST /_control/oauth-user sets it.
 	oauthPermission string
+
+	// oauthLogin is what GET /user answers; oauthRepoPermission overrides oauthPermission for one
+	// repository at a time, so a test can be an owner of one repository and a stranger to another.
+	oauthLogin          string
+	oauthRepoPermission map[string]string
+	// revoked is every token DELETE /applications/{client_id}/token was given.
+	revoked []string
 }
 
 // routes is the whole table, so that GET / can list it: the first thing anyone does with a fake
@@ -37,6 +46,10 @@ var routes = []string{
 	"POST /login/oauth/access_token",
 	"GET /repos/{owner}/{repo}",
 	"POST /_control/oauth-user",
+	"GET /user",
+	"GET /orgs/{org}/repos",
+	"DELETE /applications/{client_id}/token",
+	"GET /_control/revoked",
 }
 
 // NewServer returns an http.Handler serving a fixture-backed stand-in for GitHub, plus the
@@ -60,6 +73,10 @@ func NewServer() http.Handler {
 	mux.HandleFunc("GET /repos/{owner}/{repo}", s.handleRepository)
 	mux.HandleFunc("GET /repos/{owner}/{repo}/dependabot/alerts", s.handleDependabotAlerts)
 	mux.HandleFunc("POST /_control/oauth-user", s.handleControlOAuthUser)
+	mux.HandleFunc("GET /user", s.handleUser)
+	mux.HandleFunc("GET /orgs/{org}/repos", s.handleOrgRepos)
+	mux.HandleFunc("DELETE /applications/{client_id}/token", s.handleRevoke)
+	mux.HandleFunc("GET /_control/revoked", s.handleControlRevoked)
 	return mux
 }
 
@@ -71,7 +88,7 @@ func (s *server) handleIndex(w http.ResponseWriter, _ *http.Request) {
 	for _, r := range routes {
 		_, _ = io.WriteString(w, "  "+r+"\n")
 	}
-	_, _ = io.WriteString(w, "\nPoint the backend here with GITHUB_BASE_URL and GITHUB_OAUTH_BASE_URL in .env.\n")
+	_, _ = io.WriteString(w, "\nMember sign-in: GET /user, per-repository permissions via /_control/oauth-user?repo=owner/name,\nthe organisation's repositories, and token revocation.\n\nPoint the backend here with GITHUB_BASE_URL and GITHUB_OAUTH_BASE_URL in .env.\n")
 }
 
 // resetLocked loads every fixture fresh and resets the sign-in permission to its default. Caller
@@ -86,5 +103,8 @@ func (s *server) resetLocked() error {
 	}
 	s.githubRepos = fx.repos
 	s.oauthPermission = "push"
+	s.oauthLogin = "zorg"
+	s.oauthRepoPermission = map[string]string{}
+	s.revoked = nil
 	return nil
 }
