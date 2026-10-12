@@ -174,9 +174,22 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, safeReturn(r.FormValue("return")), http.StatusSeeOther) // #nosec G710 -- sanitised by safeReturn
 }
 
-// handleLogout clears the session cookie. It is this product's only other sign-out beyond
-// rotating the OAuth client secret (FR-8.3 AC4), and the one a visitor can reach for themselves.
+// handleLogout ends the session: for a member, first their token at GitHub (spec 2026-10-12 §9),
+// so that a copy of the cookie dies with it; then the cookie, for everyone. The cookie is cleared
+// whatever GitHub said — the visitor asked to be signed out of this browser, and that never
+// depends on an upstream. It is the one sign-out a visitor can reach for themselves; the other is
+// rotating the OAuth client secret (FR-8.3 AC4).
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	sess := sessionOf(r)
+	revoked := false
+	if sess.member() {
+		if err := s.revoker.Revoke(r.Context(), sess.Token); err != nil {
+			s.log.Warn("sign-out revocation failed", "login", sess.Login, "err", scrubbedError(err, sess.Token).Error())
+		} else {
+			revoked = true
+		}
+	}
+	s.log.Info("sign-out", "login", sess.Login, "role", sess.Role, "revoked", revoked)
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1,
 		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,

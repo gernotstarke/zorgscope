@@ -4,6 +4,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -848,6 +849,7 @@ func withMembers(o *Options) {
 	o.Config.GitHub.MembersOrg = testMembersOrg
 	o.MemberSource = (&stubMemberSources{}).source
 	o.Repos = &stubRepos{list: fourteenRepos()}
+	o.Revoker = &stubRevoker{}
 }
 
 // stubRepos stands in for GET /orgs/{org}/repos.
@@ -1126,5 +1128,120 @@ func TestAMemberCookieStaysSmall(t *testing.T) {
 func TestSessionTTLByRole(t *testing.T) {
 	if sessionTTLFor(roleOwner) != 30*24*time.Hour || sessionTTLFor(roleMember) != 7*24*time.Hour {
 		t.Fatal("ttl")
+	}
+}
+
+// stubRevoker stands in for DELETE /applications/{client_id}/token.
+type stubRevoker struct {
+	mu      sync.Mutex
+	revoked []string
+	err     error
+}
+
+func (s *stubRevoker) Revoke(_ context.Context, token string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.err == nil {
+		s.revoked = append(s.revoked, token)
+	}
+	return s.err
+}
+
+// Spec §9: a member signing out ends their token at GitHub, then loses the cookie. A failed
+// revocation still clears the cookie and is logged with the login, never the token.
+func TestAMemberSigningOutRevokesTheToken(t *testing.T) {
+	var logged bytes.Buffer
+	revoker := &stubRevoker{}
+	h := newTestServerWith(t, func(o *Options) {
+		withMembers(o)
+		o.Revoker = revoker
+		o.Log = slog.New(slog.NewTextHandler(&logged, nil))
+	}).Handler()
+	rec := postAs(h, "/logout", url.Values{}, mintMemberSession("isaqb-org/repo-01"))
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/login" {
+		t.Fatalf("logout = %d %s", rec.Code, rec.Header().Get("Location"))
+	}
+	if c := cookieNamed(rec, sessionCookieName); c == nil || c.MaxAge >= 0 {
+		t.Fatalf("the cookie was not cleared: %+v", c)
+	}
+	if len(revoker.revoked) != 1 || revoker.revoked[0] != testMemberToken {
+		t.Fatalf("revoked %v", revoker.revoked)
+	}
+	line := firstLineContaining(logged.String(), "sign-out")
+	if !strings.Contains(line, "login=octocat") || !strings.Contains(line, "revoked=true") || strings.Contains(logged.String(), testMemberToken) {
+		t.Fatalf("log = %s", logged.String())
+	}
+}
+
+func TestAFailedRevocationStillClearsTheCookie(t *testing.T) {
+	var logged bytes.Buffer
+	h := newTestServerWith(t, func(o *Options) {
+		withMembers(o)
+		o.Revoker = &stubRevoker{err: errors.New("GitHub answered 422 about " + testMemberToken)}
+		o.Log = slog.New(slog.NewTextHandler(&logged, nil))
+	}).Handler()
+	rec := postAs(h, "/logout", url.Values{}, mintMemberSession("isaqb-org/repo-01"))
+	if c := cookieNamed(rec, sessionCookieName); rec.Code != http.StatusSeeOther || c == nil || c.MaxAge >= 0 {
+		t.Fatalf("logout = %d, cookie %+v", rec.Code, c)
+	}
+	out := logged.String()
+	if !strings.Contains(out, "revocation failed") || !strings.Contains(out, "revoked=false") || strings.Contains(out, testMemberToken) {
+		t.Fatalf("log = %s", out)
+	}
+}
+
+func TestTheOwnerSigningOutRevokesNothing(t *testing.T) {
+	revoker := &stubRevoker{}
+	h := newTestServerWith(t, func(o *Options) {
+		withMembers(o)
+		o.Revoker = revoker
+	}).Handler()
+	postAs(h, "/logout", url.Values{}, signIn(t, h))
+	if len(revoker.revoked) != 0 {
+		t.Fatalf("revoked %v for an owner", revoker.revoked)
+	}
+}
+
+func TestNewRequiresARevokerWhenMembersAreEnabled(t *testing.T) {
+	o := testOptions()
+	withMembers(&o)
+	o.Revoker = nil
+	if _, err := New(o); err == nil {
+		t.Fatal("New() accepted members without a revoker")
+	}
+}
+
+// QS-4.3 for the member's token: a member signs in with a canary token, sees every page with a
+// failing fetch and a failing repository list, saves, and signs out with a failing revocation —
+// and no response and no log line carries the token.
+func TestNoResponseOrLogLineCarriesAMemberToken(t *testing.T) {
+	const canary = "member-canary-token"
+	var logged strings.Builder
+	sources := &stubMemberSources{err: errors.New("github rejected " + canary)}
+	h := newTestServerWith(t, func(o *Options) {
+		withMembers(o)
+		o.MemberSource = sources.source
+		o.Repos = &stubRepos{err: errors.New("list failed for " + canary)}
+		o.Revoker = &stubRevoker{err: errors.New("revocation refused " + canary)}
+		o.Log = slog.New(slog.NewTextHandler(&logged, nil))
+	}).Handler()
+	c := &http.Cookie{Name: sessionCookieName, Value: newSessionCodec(testClientSecret).mint(session{
+		Expiry: testNow.Add(memberSessionTTL), Role: roleMember, Login: "octocat", Token: canary,
+		Repos: []string{"isaqb-org/repo-01"},
+	})}
+	var bodies []string
+	for _, path := range []string{"/", "/sites", "/radar", "/contributors", "/search?q=x", "/repos", "/items"} {
+		bodies = append(bodies, getSettled(t, h, path, c).Body.String())
+	}
+	bodies = append(bodies, postAs(h, "/repos", url.Values{"repo": {"isaqb-org/repo-01"}}, c).Body.String())
+	rec := postAs(h, "/logout", url.Values{}, c)
+	bodies = append(bodies, rec.Body.String(), rec.Header().Get("Set-Cookie"))
+	for i, body := range bodies {
+		if strings.Contains(body, canary) {
+			t.Errorf("response %d carries the member's token: %s", i, firstLineContaining(body, canary))
+		}
+	}
+	if strings.Contains(logged.String(), canary) {
+		t.Errorf("the log carries the member's token: %s", firstLineContaining(logged.String(), canary))
 	}
 }

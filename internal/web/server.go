@@ -117,6 +117,8 @@ type Options struct {
 	// Repos lists the organisation's public repositories, fetched with a member's token
 	// (FR-8.5). Required when the configuration enables members.
 	Repos ports.RepoLister
+	// Revoker ends a member's token at GitHub when they sign out; required when members are enabled.
+	Revoker ports.TokenRevoker
 }
 
 // Server holds the HTTP layer's state: the parsed templates, the session codec, the sign-in rate
@@ -128,6 +130,7 @@ type Server struct {
 	members *memberCaches
 	// repos and orgRepos are the repository page's lister and its shared one-hour list.
 	repos    ports.RepoLister
+	revoker  ports.TokenRevoker
 	orgRepos orgRepos
 	clock    ports.Clock
 	log      *slog.Logger
@@ -186,6 +189,9 @@ func New(o Options) (*Server, error) {
 	if o.Config.GitHub.MembersEnabled() && o.Repos == nil {
 		return nil, errors.New("web: a repository lister is required when members are enabled")
 	}
+	if o.Config.GitHub.MembersEnabled() && o.Revoker == nil {
+		return nil, errors.New("web: a token revoker is required when members are enabled")
+	}
 	if o.Clock == nil {
 		o.Clock = ports.SystemClock{}
 	}
@@ -236,6 +242,7 @@ func New(o Options) (*Server, error) {
 		members:          newMemberCaches(o.MemberSource, o.Config.GitHub.CacheTTL, o.Clock, o.Log),
 		clock:            o.Clock,
 		repos:            o.Repos,
+		revoker:          o.Revoker,
 		log:              o.Log,
 		pages:            pages,
 		fragments:        fragments,
