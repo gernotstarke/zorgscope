@@ -18,6 +18,8 @@ timezone: Europe/Berlin
 github:
   auth_repo: gernotstarke/zorgscope   # push access here admits a visitor
   owner: gernotstarke                 # the login the Needs-you band works for
+  members_repo: gernotstarke/zorgscope-members  # write access here admits a member (FR-8.4)
+  members_org: isaqb-org              # whose public repositories a member may choose from
   cache_ttl: 5m                       # how old the fetched list may be before a page view refetches
   repos:
     - arc42/arc42-template
@@ -56,6 +58,12 @@ need `read:org` as well.
 login for a review, or opened by anyone else and ready, needs the owner and is listed in the Needs-you
 band above the list. It is optional; without it only the marked items (FR‑1.13) need anyone. It is
 not an access rule — who may sign in is still `auth_repo`'s question.
+`github.members_repo` and `github.members_org` switch members on (FR‑8.4, FR‑8.5,
+[ADR‑0019](../decisions/0019-members-allowlist-repository-personal-scope.md)): a visitor with push
+or admin permission on `members_repo` is admitted as a member and chooses up to 12 of the public
+repositories of `members_org`. To invite someone, add them as a collaborator of `members_repo` with
+the Write role on GitHub; to end their access, remove them there — it ends at their next sign-in.
+Leave both keys out and nobody but the collaborators of `auth_repo` gets in.
 `github.cache_ttl` is how old the in-memory snapshot may be before a page view triggers a
 fetch instead of reusing it (design §5) — shown as the wait page while it runs (FR‑1.9); it
 defaults to 5 minutes when the field is left out. Both sit in the YAML file rather than the

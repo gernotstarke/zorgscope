@@ -10,6 +10,12 @@ github:
   # whose own pull requests are not somebody else's contribution. Without it the Needs-you band
   # holds only the marked items.
   owner: gernotstarke
+  # Write access here admits a visitor as a member (FR-8.4): a personal scope over at most 12
+  # public repositories of members_org, fetched with the member's own token (ADR-0019). Invite a
+  # member with the Write role on GitHub; remove them there to end their access at the next
+  # sign-in. Leave both keys out and nobody but the collaborators of auth_repo gets in.
+  members_repo: gernotstarke/zorgscope-members
+  members_org: isaqb-org
   # How old the fetched item list may be before a page view refetches it.
   cache_ttl: 5m
   # The repository names are the ones GitHub actually uses, which for the arc42 family means the

@@ -24,6 +24,7 @@ the old record stays, because the reasoning is the point.
 | 0016 | Site groups: one snapshot, a radar per group | `0016-site-groups-one-snapshot-a-radar-per-group.md` | accepted, amended by 0018 |
 | 0017 | A token per repository owner | `0017-a-token-per-repository-owner.md` | accepted |
 | 0018 | Fixed radars over families; aim42 in three colours | `0018-fixed-radars-over-families.md` | accepted |
+| 0019 | Members: an allowlist by a second repository, a personal scope in an encrypted cookie, fetches on the member's own token | `0019-members-allowlist-repository-personal-scope.md` | accepted |
 
 The records are kept current with the design specs. A spec that decides something — the reset
 design of 2026-08-17, the GitHub sign-in and focus design of 2026-09-14, the stateless reset design

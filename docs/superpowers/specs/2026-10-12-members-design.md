@@ -1,6 +1,6 @@
 # Members: a personal scope for invited iSAQB people — design
 
-Date: 2026-10-12. Status: proposed. Reconciled with 2.4.1 (ADR‑0017 per-owner tokens, ADR‑0018 fixed radars) the same day.
+Date: 2026-10-12. Status: implemented in 2.5.0. Reconciled with 2.4.1 (ADR‑0017 per-owner tokens, ADR‑0018 fixed radars) the same day.
 Builds on the GitHub sign-in (ADR‑0009), the stateless reset (ADR‑0010), the per-site tiles
 (`2026-09-15-per-site-tiles-design.md`), the radar (`2026-09-25-radar-design.md`) and the iSAQB group
 (`2026-09-29-isaqb-group-design.md`). No database, no ticker, no inline script or style.

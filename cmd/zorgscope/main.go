@@ -60,15 +60,30 @@ func run(ctx context.Context, log *slog.Logger) error {
 
 	cache := snapshot.New(loggingSource(fetcher, log, cfg.Secrets), cfg.GitHub.CacheTTL, ports.SystemClock{})
 
+	// One adapter answers every sign-in question — the owner's repository, the members' one, who
+	// the visitor is — and revokes a member's token on sign-out (FR-8.3, FR-8.4).
+	access := github.NewAccess(cfg.GitHub.BaseURL, cfg.Secrets.OAuthClientID, cfg.Secrets.OAuthClientSecret, hc)
+
 	srv, err := web.New(web.Options{
-		Config: cfg,
-		Cache:  cache,
-		Clock:  ports.SystemClock{},
-		Log:    log,
-		// Who may sign in is decided by GitHub, against the repository named in the
-		// configuration file (FR-8.3).
-		Access:     github.NewAccess(cfg.GitHub.BaseURL, cfg.Secrets.OAuthClientID, cfg.Secrets.OAuthClientSecret, hc),
+		Config:     cfg,
+		Cache:      cache,
+		Clock:      ports.SystemClock{},
+		Log:        log,
+		Access:     access,
+		Identity:   access,
+		Revoker:    access,
+		Repos:      access,
 		HTTPClient: hc,
+		// A member's view is fetched with their own token over their own repositories, none of
+		// them asked for Dependabot alerts (spec 2026-10-12 §8): at most 24 requests, on the
+		// member's own rate limit, never on GITHUB_TOKEN's.
+		// Never the per-owner tokens of ADR-0017: those read private repositories and are the
+		// owner's alone; a member's fetch carries the member's token and nothing else.
+		MemberSource: func(token string, repos []string) ports.Source {
+			c := githubConfig(cfg)
+			c.Token, c.Repos, c.NoAlerts, c.OwnerTokens = token, repos, repos, nil
+			return github.NewIssueFetcher(c, hc)
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("web server: %w", err)

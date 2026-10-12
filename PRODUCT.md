@@ -8,10 +8,12 @@ web
 
 ## Users
 
-One person: Gernot Starke, maintainer of the arc42 family of sites. He opens zorgscope many times a
-day, for seconds at a time, from whatever device and connection is at hand, to answer one question:
-*does anything need me right now?* Sign-in is gated on push access to `gernotstarke/zorgscope`, but
-the product is personal — "you" and "me" in the interface always mean Gernot's GitHub login.
+Gernot Starke, maintainer of the arc42 family of sites, and a handful of invited members of the
+iSAQB, each with a personal view of public repositories they chose; "you" means the signed-in
+person. Gernot opens zorgscope many times a day, for seconds at a time, from whatever device and
+connection is at hand, to answer one question: *does anything need me right now?* Sign-in is gated
+on push access to `gernotstarke/zorgscope` (or, for a member, to `gernotstarke/zorgscope-members`),
+and the interface's "you" and "me" always mean the signed-in GitHub login.
 
 ## Product Purpose
 
@@ -22,7 +24,7 @@ page, finds any of them and the people behind them in seconds, and costs almost 
 ## Positioning
 
 A single-owner triage page for one specific family of documentation sites — arc42, req42 and their
-relatives — not a general GitHub dashboard. It knows which repository belongs to which site, draws
+relatives — and, for invited members, the same over their own public repositories; not a general GitHub dashboard. It knows which repository belongs to which site, draws
 each in that site's registry colour, and marks security and dependency items from evidence
 (FR‑1.13).
 
@@ -39,6 +41,8 @@ each in that site's registry colour, and marks security and dependency items fro
 
 - Views: List (grouped by repository, filterable), Sites (one tile per site, plus the Security
   tile), Radar (every item as a blip on a radar scope), Contributors, Search (Cmd‑K).
+- A member sees List, Sites, Radar, Contributors and Search over up to 12 chosen public
+  repositories; no Security tile, no alerts, no group switch (FR‑1.17).
 - Every open item of every watched repository is shown; a failing repository never hides the
   others (QG‑1). Anything that emphasises some items must not hide the rest.
 - Go server-rendered HTML with htmx; hand-written CSS, no build step (ADR‑0002). Strict CSP with no
