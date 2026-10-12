@@ -166,6 +166,6 @@ func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	// name — the visitor did not choose to publish one here — and never the token (FR-8.3 AC5).
 	s.log.Info("sign-in accepted", "ip", ip)
 	// The cookie carries the expiry and nothing else (ADR-0012).
-	s.setSession(w, session{Expiry: s.clock.Now().Add(sessionTTL)})
+	s.setSession(w, session{Expiry: s.clock.Now().Add(sessionTTL), Role: roleOwner, Login: "zorg"})
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

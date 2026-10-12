@@ -5,8 +5,8 @@ package web
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -130,31 +130,26 @@ func TestPublicRoutesNeedNoSession(t *testing.T) {
 func TestTamperedCookieIsRejected(t *testing.T) {
 	h := newTestServer(t).Handler()
 	c := signIn(t, h)
+	v := c.Value
 
-	payload, sig, ok := strings.Cut(c.Value, ".")
-	if !ok {
-		t.Fatalf("cookie value %q is not payload.signature", c.Value)
+	flip := func(at int) string {
+		b := []byte(v)
+		if b[at] == 'A' {
+			b[at] = 'B'
+		} else {
+			b[at] = 'A'
+		}
+		return string(b)
 	}
-	flipped := "A" + sig[1:]
-	if flipped == sig {
-		flipped = "B" + sig[1:]
-	}
-
 	for name, value := range map[string]string{
-		"tampered signature":       payload + "." + flipped,
-		"tampered payload":         "A" + payload[1:] + "." + sig,
-		"no signature":             payload,
-		"empty":                    "",
-		"extra dots":               payload + "." + sig + "." + sig,
-		"dot only":                 ".",
-		"invalid base64 payload":   "!!not-base64!!." + sig,
-		"invalid base64 signature": payload + ".!!not-base64!!",
-		// A truncated signature still decodes; it is the length that is wrong, and
-		// ConstantTimeCompare of unequal lengths must not be treated as a match.
-		"short signature": payload + "." + sig[:len(sig)-4],
-		"long signature":  payload + "." + sig + "AAAA",
-		// A payload that is not an integer cannot be a session.
-		"non-numeric payload": base64.RawURLEncoding.EncodeToString([]byte("tomorrow")) + "." + sig,
+		"tampered nonce":      flip(0),
+		"tampered ciphertext": flip(len(v) / 2),
+		"tampered tag":        flip(len(v) - 2),
+		"truncated":           v[:len(v)-4],
+		"extended":            v + "AAAA",
+		"empty":               "",
+		"dot only":            ".",
+		"not base64":          "!!not-base64!!",
 	} {
 		t.Run(name, func(t *testing.T) {
 			bad := &http.Cookie{Name: sessionCookieName, Value: value}
@@ -165,22 +160,11 @@ func TestTamperedCookieIsRejected(t *testing.T) {
 	}
 }
 
-// A payload minted before 2026-09-18 carried "expiry:seen". It proves nothing this codec signs
-// now, and is refused like the pre-reset format was: the visitor signs in once more.
-func TestTheOldTwoIntegerPayloadIsRefused(t *testing.T) {
-	codec := newSessionCodec(testClientSecret)
-	payload := strconv.FormatInt(testNow.Add(sessionTTL).Unix(), 10) + ":0"
-	value := sessionEncoding.EncodeToString([]byte(payload)) + "." + sessionEncoding.EncodeToString(codec.sign(payload))
-	if _, ok := codec.decode(value, testNow); ok {
-		t.Error("a two-integer payload decoded; the seen mark is gone and its format with it")
-	}
-}
-
 // Step 1's round trip, directly against the codec: what mint writes for a session, decode reads
 // back unchanged.
 func TestSessionCodecRoundTripsTheExpiry(t *testing.T) {
 	codec := newSessionCodec(testClientSecret)
-	want := session{Expiry: testNow.Add(sessionTTL)}
+	want := session{Expiry: testNow.Add(sessionTTL), Role: roleOwner, Login: "zorg"}
 	got, ok := codec.decode(codec.mint(want), testNow)
 	if !ok {
 		t.Fatal("decode of a freshly minted session = false")
@@ -190,34 +174,22 @@ func TestSessionCodecRoundTripsTheExpiry(t *testing.T) {
 	}
 }
 
-// The expiry sits inside the signed payload precisely so it cannot be moved on its own: a cookie
-// whose expiry is altered by one character, with the signature left exactly as it was minted, must
-// fail to decode — not merely disagree with what was minted.
-func TestACookieWithTheExpiryAlteredByOneCharacterFails(t *testing.T) {
+// The expiry sits inside the authenticated ciphertext precisely so it cannot be moved on its own:
+// a cookie altered at any single character must fail to decode — not merely disagree with what
+// was minted.
+func TestACookieAlteredByOneCharacterFails(t *testing.T) {
 	codec := newSessionCodec(testClientSecret)
-	value := codec.mint(session{Expiry: testNow.Add(sessionTTL)})
-
-	encPayload, encSig, ok := strings.Cut(value, ".")
-	if !ok {
-		t.Fatalf("cookie value %q is not payload.signature", value)
-	}
-	payload, err := sessionEncoding.DecodeString(encPayload)
-	if err != nil {
-		t.Fatalf("decoding payload: %v", err)
-	}
-
-	// Flip the last digit of the payload; the signature is untouched.
-	digits := []byte(string(payload))
-	last := len(digits) - 1
-	if digits[last] == '1' {
-		digits[last] = '2'
-	} else {
-		digits[last] = '1'
-	}
-	tampered := sessionEncoding.EncodeToString(digits) + "." + encSig
-
-	if _, ok := codec.decode(tampered, testNow); ok {
-		t.Error("decode accepted a cookie whose expiry was altered by one character without re-signing")
+	value := codec.mint(session{Expiry: testNow.Add(sessionTTL), Role: roleOwner, Login: "zorg"})
+	for at := range value {
+		b := []byte(value)
+		if b[at] == 'A' {
+			b[at] = 'B'
+		} else {
+			b[at] = 'A'
+		}
+		if _, ok := codec.decode(string(b), testNow); ok {
+			t.Fatalf("decode accepted a cookie altered at offset %d", at)
+		}
 	}
 }
 
@@ -967,4 +939,85 @@ func cookieNamed(rec *httptest.ResponseRecorder, name string) *http.Cookie {
 		}
 	}
 	return nil
+}
+
+// Spec 2026-10-12 §4: the cookie is encrypted and authenticated, carries role and login for
+// everyone and token and repositories for a member, and refuses everything it did not mint.
+func TestSessionCodecRoundTripsOwnerAndMember(t *testing.T) {
+	c := newSessionCodec(testClientSecret)
+	exp := testNow.Add(sessionTTL).Truncate(time.Second)
+	owner := session{Expiry: exp, Role: roleOwner, Login: "zorg"}
+	member := session{Expiry: exp, Role: roleMember, Login: "octocat", Token: "gho_secret",
+		Repos: []string{"isaqb-org/glossary", "isaqb-org/curriculum-foundation"}}
+	for name, want := range map[string]session{"owner": owner, "member": member} {
+		value := c.mint(want)
+		got, ok := c.decode(value, testNow)
+		if !ok {
+			t.Fatalf("%s: a freshly minted cookie does not decode", name)
+		}
+		if !got.Expiry.Equal(want.Expiry) || got.Role != want.Role || got.Login != want.Login ||
+			got.Token != want.Token || strings.Join(got.Repos, ",") != strings.Join(want.Repos, ",") {
+			t.Fatalf("%s: decode = %+v, want %+v", name, got, want)
+		}
+		if strings.Contains(value, "octocat") || strings.Contains(value, "gho_secret") || strings.Contains(value, "glossary") {
+			t.Fatalf("%s: the cookie value is readable: %s", name, value)
+		}
+	}
+	if !member.member() || owner.member() {
+		t.Fatal("member()")
+	}
+}
+
+func TestSessionCodecRefusesWhatItDidNotMint(t *testing.T) {
+	c := newSessionCodec(testClientSecret)
+	exp := testNow.Add(sessionTTL)
+	good := c.mint(session{Expiry: exp, Role: roleMember, Login: "octocat", Token: "t"})
+	flipped := []byte(good)
+	flipped[len(flipped)/2] ^= 0x01
+	// A version-2 cookie: base64(expiry) "." base64(hmac).
+	v2 := sessionEncoding.EncodeToString([]byte("1760000000")) + "." + sessionEncoding.EncodeToString(make([]byte, 32))
+	for name, value := range map[string]string{
+		"bit-flipped":          string(flipped),
+		"version 2":            v2,
+		"other key":            newSessionCodec("another-secret").mint(session{Expiry: exp, Role: roleOwner, Login: "zorg"}),
+		"not base64":           "%%%",
+		"empty":                "",
+		"expired":              c.mint(session{Expiry: testNow.Add(-time.Second), Role: roleOwner, Login: "zorg"}),
+		"unknown role":         c.mint(session{Expiry: exp, Role: "admin", Login: "zorg"}),
+		"no login":             c.mint(session{Expiry: exp, Role: roleOwner}),
+		"bad login":            c.mint(session{Expiry: exp, Role: roleOwner, Login: "-x-"}),
+		"member without token": c.mint(session{Expiry: exp, Role: roleMember, Login: "octocat"}),
+		"13 repos":             c.mint(session{Expiry: exp, Role: roleMember, Login: "octocat", Token: "t", Repos: thirteenRepos()}),
+		"bad repo":             c.mint(session{Expiry: exp, Role: roleMember, Login: "octocat", Token: "t", Repos: []string{"no-slash"}}),
+	} {
+		if _, ok := c.decode(value, testNow); ok {
+			t.Errorf("%s: decoded", name)
+		}
+	}
+}
+
+func thirteenRepos() []string {
+	out := make([]string, 13)
+	for i := range out {
+		out[i] = fmt.Sprintf("isaqb-org/repo-%02d", i+1)
+	}
+	return out
+}
+
+// A member's cookie with the most it can carry stays far under a browser's 4 KB limit.
+func TestAMemberCookieStaysSmall(t *testing.T) {
+	repos := thirteenRepos()[:12]
+	value := newSessionCodec(testClientSecret).mint(session{
+		Expiry: testNow.Add(memberSessionTTL), Role: roleMember, Login: strings.Repeat("a", 39),
+		Token: "gho_" + strings.Repeat("x", 40), Repos: repos,
+	})
+	if len(value) > 2048 {
+		t.Fatalf("cookie is %d bytes", len(value))
+	}
+}
+
+func TestSessionTTLByRole(t *testing.T) {
+	if sessionTTLFor(roleOwner) != 30*24*time.Hour || sessionTTLFor(roleMember) != 7*24*time.Hour {
+		t.Fatal("ttl")
+	}
 }

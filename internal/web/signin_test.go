@@ -5,13 +5,11 @@ package web
 
 import (
 	"bytes"
-	"encoding/base64"
 	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -117,46 +115,20 @@ func TestACollaboratorIsSignedIn(t *testing.T) {
 	}
 }
 
-// FR-8.3 AC2, in the form the old token sign-in was pinned in: not merely "no credential appears
-// verbatim" — a cookie carrying base64(secret) would pass that and still hand the credential to
-// anything that reads the cookie jar — but "the value is an expiry and a signature over it, and
-// nothing else".
-func TestTheSessionCookieCarriesOnlyAnExpiryAndASignature(t *testing.T) {
-	s := newTestServerWith(t, func(o *Options) { startFakeGitHub(t, o) })
-	c := cookieNamed(signInThroughGitHub(t, s.Handler()), sessionCookieName)
-	if c == nil {
-		t.Fatal("no session cookie")
+// FR-8.3 AC2: the cookie is opaque — no credential, and no readable structure, appears in it —
+// and an owner's carries neither a token nor a selection.
+func TestTheSessionCookieIsOpaqueAndOwnerShaped(t *testing.T) {
+	h := newTestServerWith(t, func(o *Options) { startFakeGitHub(t, o) }).Handler()
+	c := cookieNamed(signInThroughGitHub(t, h), sessionCookieName)
+	if c == nil || !c.HttpOnly || !c.Secure || c.SameSite != http.SameSiteLaxMode {
+		t.Fatalf("session cookie = %+v", c)
 	}
-
-	for _, credential := range []string{testClientSecret, "fake-token", "fake-code"} {
-		for name, enc := range map[string]string{
-			"verbatim":          credential,
-			"base64url":         base64.RawURLEncoding.EncodeToString([]byte(credential)),
-			"base64":            base64.StdEncoding.EncodeToString([]byte(credential)),
-			"base64 unpadded":   base64.RawStdEncoding.EncodeToString([]byte(credential)),
-			"url-encoded":       url.QueryEscape(credential),
-			"hex-ish uppercase": strings.ToUpper(credential),
-		} {
-			if strings.Contains(c.Value, enc) {
-				t.Errorf("the cookie carries %q as %s (FR-8.3 AC2)", credential, name)
-			}
-		}
+	sess, ok := newSessionCodec(testClientSecret).decode(c.Value, testNow)
+	if !ok || sess.Role != roleOwner || sess.Token != "" || sess.Repos != nil {
+		t.Fatalf("session = %+v, ok %v", sess, ok)
 	}
-
-	encPayload, _, _ := strings.Cut(c.Value, ".")
-	payload, err := base64.RawURLEncoding.DecodeString(encPayload)
-	if err != nil {
-		t.Fatalf("the cookie payload is not base64url: %v", err)
-	}
-	if strings.Contains(string(payload), ":") {
-		t.Errorf("the cookie payload carries a second field: %q", payload)
-	}
-	exp, err := strconv.ParseInt(string(payload), 10, 64)
-	if err != nil {
-		t.Fatalf("the cookie payload is not a timestamp: %q", payload)
-	}
-	if want := testNow.Add(sessionTTL).Unix(); exp != want {
-		t.Errorf("cookie expiry = %d, want %d", exp, want)
+	if strings.Contains(c.Value, "fake-token") || strings.Contains(c.Value, ".") {
+		t.Fatalf("the cookie is not opaque: %s", c.Value)
 	}
 }
 

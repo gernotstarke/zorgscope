@@ -1,16 +1,19 @@
 package web
 
 import (
-	"crypto/hmac"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
+	"encoding/json"
 	"net"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gernotstarke/zorgscope/internal/config"
 )
 
 const (
@@ -20,12 +23,16 @@ const (
 	// session is a round trip to GitHub on a phone, for a dashboard whose whole purpose is being
 	// glanced at.
 	sessionTTL = 30 * 24 * time.Hour
-	// sessionKeyContext domain-separates the signing key, so that the client secret used for
-	// anything else cannot produce the same key. It says v2 because the seed changed from
-	// ZORGSCOPE_TOKEN to the OAuth client secret (design 2026-09-14 §2): every cookie minted under
-	// the old scheme stops verifying the moment this deploys, which is the correct answer to
-	// replacing the credential a session stood for.
-	sessionKeyContext = "zorgscope-session-v2"
+	// sessionKeyContext domain-separates the key. v3 (spec 2026-10-12 §4): the cookie became
+	// encrypted and started carrying a role, a login and — for a member — a token and a
+	// selection. Every v2 cookie fails to open under the new key and is refused, which is the
+	// right answer to a cookie whose meaning changed.
+	sessionKeyContext = "zorgscope-session-v3"
+
+	// memberSessionTTL is a member's session (spec 2026-10-12 D9): shorter than the owner's,
+	// because the cookie now carries a token, and a lost phone should carry it for days, not a
+	// month.
+	memberSessionTTL = 7 * 24 * time.Hour
 
 	// stateCookieName holds the CSRF state of a sign-in in flight, and stateTTL is how long that
 	// sign-in may take. Ten minutes is long enough to authorise the App and log into GitHub on the
@@ -43,73 +50,119 @@ const (
 // sessionEncoding is URL-safe and unpadded, so a cookie value never needs quoting.
 var sessionEncoding = base64.RawURLEncoding
 
-// session is what the cookie proves: that the visitor signed in, and until when. It carries no
-// identity and, since 2026-09-18, no seen mark (ADR-0012).
-type session struct {
-	Expiry time.Time
+// role is what a session may see: the configured scope (owner) or a personal one (member).
+type role string
+
+const (
+	roleOwner  role = "owner"
+	roleMember role = "member"
+)
+
+// sessionTTLFor is how long a sign-in of role r lasts.
+func sessionTTLFor(r role) time.Duration {
+	if r == roleMember {
+		return memberSessionTTL
+	}
+	return sessionTTL
 }
 
-// sessionCodec mints and verifies session cookie values.
+// session is what the cookie proves: who signed in, as what, until when — and for a member, the
+// token their own view is fetched with and the repositories it shows (spec 2026-10-12 §4).
+type session struct {
+	Expiry time.Time
+	Role   role
+	Login  string
+	// Token is a member's OAuth access token; empty for an owner, whose view runs on the
+	// configured token. Repos is a member's selection, at most config.MaxMemberRepos.
+	Token string
+	Repos []string
+}
+
+// member reports whether this is a member's session.
+func (s session) member() bool { return s.Role == roleMember }
+
+// sessionWire is the cookie's plaintext.
+type sessionWire struct {
+	Exp   int64    `json:"exp"`
+	Role  string   `json:"role"`
+	Login string   `json:"login"`
+	Token string   `json:"tok,omitempty"`
+	Repos []string `json:"repos,omitempty"`
+}
+
+// sessionCodec mints and opens session cookie values.
 //
-// A cookie value is base64(expiry) + "." + base64(HMAC-SHA256(key, expiry)), where the key is
-// SHA-256 of sessionKeyContext concatenated with GITHUB_OAUTH_CLIENT_SECRET. Two properties fall
-// out of that derivation. The browser never holds a credential — only an expiry and a signature
-// over it, so FR-8.3 AC2 needs no separate store, and neither the visitor's GitHub token nor the
-// client secret is ever in the cookie jar. And rotating the client secret changes the key, which
-// invalidates every signature ever minted under the old one: FR-8.3 AC4 without a session table, a
-// revocation list or anything else that would have to survive the Machine being stopped.
-//
-// The cookie holds no identity on purpose. The product has no per-user state, and "which
-// collaborator is this" is a question it would then have to keep answering correctly.
-type sessionCodec struct{ key [32]byte }
+// A cookie value is base64url(nonce ‖ AES-256-GCM(key, nonce, json)), where the key is SHA-256 of
+// sessionKeyContext concatenated with GITHUB_OAUTH_CLIENT_SECRET. GCM authenticates as well as
+// encrypts, so a forged or altered value fails to open, and rotating the client secret changes the
+// key and ends every session at once — FR-8.3 AC4 without a session table. Encryption rather than
+// a signature because a member's cookie carries their token, which must be confidential to the
+// browser and to anyone who copies the cookie, not merely tamper-proof.
+type sessionCodec struct{ aead cipher.AEAD }
 
 func newSessionCodec(secret string) *sessionCodec {
-	return &sessionCodec{key: sha256.Sum256([]byte(sessionKeyContext + secret))}
+	key := sha256.Sum256([]byte(sessionKeyContext + secret))
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		panic(err) // a 32-byte key never fails
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		panic(err)
+	}
+	return &sessionCodec{aead: aead}
 }
 
 // mint returns the cookie value for s.
 func (c *sessionCodec) mint(s session) string {
-	payload := strconv.FormatInt(s.Expiry.Unix(), 10)
-	return sessionEncoding.EncodeToString([]byte(payload)) + "." +
-		sessionEncoding.EncodeToString(c.sign(payload))
+	plain, err := json.Marshal(sessionWire{
+		Exp: s.Expiry.Unix(), Role: string(s.Role), Login: s.Login, Token: s.Token, Repos: s.Repos,
+	})
+	if err != nil {
+		panic(err) // strings and ints only
+	}
+	nonce := make([]byte, c.aead.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		panic(err) // crypto/rand never fails on a platform this runs on; Go crashes before returning one
+	}
+	return sessionEncoding.EncodeToString(c.aead.Seal(nonce, nonce, plain, nil))
 }
 
-// decode returns the session a cookie value proves, and false when the value is not a signature
-// this codec produced over a session still valid at now.
+// decode returns the session a cookie value proves, and false when the value did not come from
+// this codec, has expired, or names something a session may not: an unknown role, a login that is
+// not one, a member without a token, more than config.MaxMemberRepos repositories or one not in
+// owner/name form. Every refusal is a sign-in, never a 500 (spec 2026-10-12 §4).
 func (c *sessionCodec) decode(value string, now time.Time) (session, bool) {
-	encPayload, encSig, ok := strings.Cut(value, ".")
-	if !ok {
+	raw, err := sessionEncoding.DecodeString(value)
+	if err != nil || len(raw) < c.aead.NonceSize() {
 		return session{}, false
 	}
-	payload, err := sessionEncoding.DecodeString(encPayload)
+	nonce, sealed := raw[:c.aead.NonceSize()], raw[c.aead.NonceSize():]
+	plain, err := c.aead.Open(nil, nonce, sealed, nil)
 	if err != nil {
 		return session{}, false
 	}
-	sig, err := sessionEncoding.DecodeString(encSig)
-	if err != nil {
+	var w sessionWire
+	if err := json.Unmarshal(plain, &w); err != nil {
 		return session{}, false
 	}
-	if subtle.ConstantTimeCompare(sig, c.sign(string(payload))) != 1 {
+	s := session{Expiry: time.Unix(w.Exp, 0), Role: role(w.Role), Login: w.Login, Token: w.Token, Repos: w.Repos}
+	switch {
+	case s.Role != roleOwner && s.Role != roleMember:
+		return session{}, false
+	case !config.IsLogin(s.Login):
+		return session{}, false
+	case s.member() && s.Token == "":
+		return session{}, false
+	case len(s.Repos) > config.MaxMemberRepos:
 		return session{}, false
 	}
-	// A payload of the 2026-09-15 to 2026-09-18 format, expiry:seen, was signed under the key this
-	// codec still holds, so nothing else here would refuse it: the seen mark is gone (ADR-0012) and
-	// the format with it, and a cookie of that shape has to be refused explicitly.
-	if strings.Contains(string(payload), ":") {
-		return session{}, false
+	for _, repo := range s.Repos {
+		if !config.IsRepo(repo) {
+			return session{}, false
+		}
 	}
-	exp, err := strconv.ParseInt(string(payload), 10, 64)
-	if err != nil {
-		return session{}, false
-	}
-	s := session{Expiry: time.Unix(exp, 0)}
 	return s, now.Before(s.Expiry)
-}
-
-func (c *sessionCodec) sign(payload string) []byte {
-	mac := hmac.New(sha256.New, c.key[:])
-	_, _ = mac.Write([]byte(payload))
-	return mac.Sum(nil)
 }
 
 // setSession writes the session cookie for sess.
