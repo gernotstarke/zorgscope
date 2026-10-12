@@ -1113,16 +1113,25 @@ func thirteenRepos() []string {
 	return out
 }
 
-// A member's cookie with the most it can carry stays far under a browser's 4 KB limit.
+// A member's cookie with the most it can carry — the longest login, twelve repositories of the
+// longest owner (39 characters) and name (100) GitHub allows — stays under a browser's 4 KB limit.
+// It comes to about 2.5 KB.
 func TestAMemberCookieStaysSmall(t *testing.T) {
-	repos := thirteenRepos()[:12]
+	repos := make([]string, config.MaxMemberRepos)
+	for i := range repos {
+		repos[i] = strings.Repeat("o", 39) + "/" + fmt.Sprintf("%02d", i) + strings.Repeat("n", 98)
+	}
 	value := newSessionCodec(testClientSecret).mint(session{
 		Expiry: testNow.Add(memberSessionTTL), Role: roleMember, Login: strings.Repeat("a", 39),
 		Token: "gho_" + strings.Repeat("x", 40), Repos: repos,
 	})
-	if len(value) > 2048 {
-		t.Fatalf("cookie is %d bytes", len(value))
+	if _, ok := newSessionCodec(testClientSecret).decode(value, testNow); !ok {
+		t.Fatal("the longest cookie a member can hold does not decode: the repository names are not valid ones")
 	}
+	if len(sessionCookieName)+1+len(value) > 4096 {
+		t.Fatalf("cookie is %d bytes", len(sessionCookieName)+1+len(value))
+	}
+	t.Logf("the longest member cookie is %d bytes", len(sessionCookieName)+1+len(value))
 }
 
 func TestSessionTTLByRole(t *testing.T) {

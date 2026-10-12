@@ -82,7 +82,8 @@ The plaintext is compact JSON:
   somehow carries junk is a sign-in, not a 500.
 * TTL: owner 30 days as today; member **7 days** (D9).
 * Size: a token (about 40 bytes), a login (≤ 39) and 12 repositories (≤ 140 bytes each as GitHub
-  limits them) encrypt to well under 2 KB, half a browser's 4 KB limit.
+  limits them) encrypt to a cookie that stays under 4 KB, a browser's limit — about 2.5 KB at
+  most.
 
 Nothing in the cookie is readable by the browser or anyone holding the cookie without the key: the
 token is confidential, not merely tamper-proof. What a stolen member cookie leaks is stated plainly
@@ -304,7 +305,8 @@ What changes, said plainly:
 
 * `internal/web/auth_test.go`: the v3 codec round-trips an owner and a member session; a v2 cookie,
   a bit-flipped value, a wrong key, an expired payload, an unknown role, a member without a token
-  and 13 repositories are all refused; a member cookie is under 2 KB.
+  and 13 repositories are all refused; a member cookie of 12 longest-possible repositories is
+  under 4 KB.
 * Sign-in: owner admitted on `auth_repo`; member admitted on `members_repo` with role, login and
   token in the session; pull-only on both refused; `GET /user` failing refuses; members disabled in
   config means the members repository is never asked; the request count per sign-in.
