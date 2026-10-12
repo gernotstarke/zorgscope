@@ -195,3 +195,37 @@ func TestPublicReposFollowsPaginationAndDropsArchived(t *testing.T) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
 }
+
+// The next page is requested with the member's token, so it is followed only on the API host this
+// adapter was built for. A Link header naming another host ends the list with an error, and that
+// host is never asked anything.
+func TestPublicReposFollowsNoNextPageOnAnotherHost(t *testing.T) {
+	foreign := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		t.Errorf("the foreign host was asked %s with Authorization %q", r.URL, r.Header.Get("Authorization"))
+	}))
+	defer foreign.Close()
+	for name, next := range map[string]func(api string) string{
+		"another host": func(string) string { return foreign.URL + "/orgs/isaqb-org/repos?page=2" },
+		// http://127.0.0.1:1234@evil.example/… starts with the API's URL — the API's address is
+		// the user name — but not with its URL and a slash.
+		"a host behind the API's address": func(api string) string { return api + "@evil.example/orgs/isaqb-org/repos?page=2" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			var srv *httptest.Server
+			srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Link", `<`+next(srv.URL)+`>; rel="next"`)
+				_, _ = w.Write([]byte(`[{"full_name":"isaqb-org/a","description":"A","archived":false}]`))
+			}))
+			defer srv.Close()
+			a := github.NewAccess(srv.URL, "id", "secret", srv.Client())
+			_, err := a.PublicRepos(context.Background(), "gho_member", "isaqb-org")
+			if err == nil || !strings.Contains(err.Error(), "repository list: next page on another host") {
+				t.Fatalf("err = %v", err)
+			}
+			if strings.Contains(err.Error(), "evil") || strings.Contains(err.Error(), foreign.URL) {
+				t.Fatalf("the error quotes the URL: %v", err)
+			}
+		})
+	}
+}

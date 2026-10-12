@@ -137,7 +137,7 @@ var nextLink = regexp.MustCompile(`<([^>]+)>;\s*rel="next"`)
 const maxRepoPages = 100
 
 // PublicRepos lists org's public, non-archived repositories in GitHub's order (by name), following
-// Link pagination.
+// Link pagination on the API host and nowhere else.
 func (a *Access) PublicRepos(ctx context.Context, token, org string) ([]ports.Repo, error) {
 	next := a.apiBase + "/orgs/" + org + "/repos?type=public&per_page=100"
 	var out []ports.Repo
@@ -173,6 +173,13 @@ func (a *Access) PublicRepos(ctx context.Context, token, org string) ([]ports.Re
 		next = ""
 		if m := nextLink.FindStringSubmatch(resp.Header.Get("Link")); m != nil {
 			next = m[1]
+			// The next page is asked for with the member's token, so it may only be on the host
+			// this adapter talks to. The slash matters: without it, a URL whose user name is the
+			// API's address — https://api.github.com@elsewhere/ — would pass. The error quotes no
+			// URL, since this one could carry anything.
+			if !strings.HasPrefix(next, a.apiBase+"/") {
+				return nil, errors.New("repository list: next page on another host")
+			}
 		}
 	}
 	return out, nil
