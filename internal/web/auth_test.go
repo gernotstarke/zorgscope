@@ -46,6 +46,8 @@ func TestEveryProtectedRouteRefusesAnonymousAccess(t *testing.T) {
 		{http.MethodGet, "/", http.StatusSeeOther},      // FR-8.3 AC1: redirect, not 401
 		{http.MethodGet, "/sites", http.StatusSeeOther}, // a page, so a redirect like / (FR-8.3 AC1)
 		{http.MethodGet, "/radar", http.StatusSeeOther},
+		{http.MethodGet, "/repos", http.StatusSeeOther},
+		{http.MethodPost, "/repos", http.StatusUnauthorized},
 		{http.MethodGet, "/items", http.StatusUnauthorized},
 		{http.MethodPost, "/refresh", http.StatusUnauthorized},
 		{http.MethodPost, "/logout", http.StatusUnauthorized},
@@ -845,6 +847,32 @@ func withMembers(o *Options) {
 	o.Config.GitHub.MembersRepo = testMembersRepo
 	o.Config.GitHub.MembersOrg = testMembersOrg
 	o.MemberSource = (&stubMemberSources{}).source
+	o.Repos = &stubRepos{list: fourteenRepos()}
+}
+
+// stubRepos stands in for GET /orgs/{org}/repos.
+type stubRepos struct {
+	mu    sync.Mutex
+	list  []ports.Repo
+	err   error
+	calls int
+}
+
+func (s *stubRepos) PublicRepos(_ context.Context, _ string, _ string) ([]ports.Repo, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls++
+	return append([]ports.Repo(nil), s.list...), s.err
+}
+
+// fourteenRepos is the fake organisation: repo-01 … repo-14, as the fixture server lists them.
+func fourteenRepos() []ports.Repo {
+	out := make([]ports.Repo, 14)
+	for i := range out {
+		n := fmt.Sprintf("%02d", i+1)
+		out[i] = ports.Repo{FullName: testMembersOrg + "/repo-" + n, Description: "Repository " + n}
+	}
+	return out
 }
 
 const (

@@ -48,7 +48,7 @@ var embedded embed.FS
 // pageFiles are the page templates, each of which supplies the "content" block that layout.html
 // wraps. They are parsed one page at a time — layout plus that page — because every page defines a
 // block of the same name, so a single template set would have them overwrite each other.
-var pageFiles = []string{"login.html", "dashboard.html", "sites.html", "search.html", "contributors.html", "radar.html", "waiting.html"}
+var pageFiles = []string{"login.html", "dashboard.html", "sites.html", "search.html", "contributors.html", "radar.html", "waiting.html", "repos.html"}
 
 // fragmentGlob matches the templates that are both part of a page and answerable on their own.
 // They are parsed twice on purpose: into every page set, so that dashboard.html can compose the
@@ -114,6 +114,9 @@ type Options struct {
 	// MemberSource builds the source a member's view is fetched from: their token, their
 	// repositories (spec 2026-10-12 §8). Required when the configuration enables members.
 	MemberSource func(token string, repos []string) ports.Source
+	// Repos lists the organisation's public repositories, fetched with a member's token
+	// (FR-8.5). Required when the configuration enables members.
+	Repos ports.RepoLister
 }
 
 // Server holds the HTTP layer's state: the parsed templates, the session codec, the sign-in rate
@@ -123,9 +126,12 @@ type Server struct {
 	cache *snapshot.Cache
 	// members holds one cache per signed-in member (spec 2026-10-12 §8).
 	members *memberCaches
-	clock   ports.Clock
-	log     *slog.Logger
-	pages   map[string]*template.Template
+	// repos and orgRepos are the repository page's lister and its shared one-hour list.
+	repos    ports.RepoLister
+	orgRepos orgRepos
+	clock    ports.Clock
+	log      *slog.Logger
+	pages    map[string]*template.Template
 	// fragments is the set holding the templates GET /items executes without a layout. See
 	// fragmentGlob for why the same files are also parsed into every page.
 	fragments *template.Template
@@ -177,6 +183,9 @@ func New(o Options) (*Server, error) {
 	if o.Config.GitHub.MembersEnabled() && o.MemberSource == nil {
 		return nil, errors.New("web: a member source is required when members are enabled")
 	}
+	if o.Config.GitHub.MembersEnabled() && o.Repos == nil {
+		return nil, errors.New("web: a repository lister is required when members are enabled")
+	}
 	if o.Clock == nil {
 		o.Clock = ports.SystemClock{}
 	}
@@ -226,6 +235,7 @@ func New(o Options) (*Server, error) {
 		cache:            o.Cache,
 		members:          newMemberCaches(o.MemberSource, o.Config.GitHub.CacheTTL, o.Clock, o.Log),
 		clock:            o.Clock,
+		repos:            o.Repos,
 		log:              o.Log,
 		pages:            pages,
 		fragments:        fragments,
@@ -336,6 +346,10 @@ func (s *Server) routes() []route {
 		{http.MethodGet, "/contributors", authSessionPage, s.handleContributors, ""},
 		// The Radar view (FR-1.15): the same snapshot once more, drawn as a radar scope.
 		{http.MethodGet, "/radar", authSessionPage, s.handleRadar, ""},
+		// The repository page (FR-8.5): a member's selection. A page, so an anonymous visitor is
+		// redirected to sign in; the post is a plain form.
+		{http.MethodGet, "/repos", authSessionPage, s.handleRepos, ""},
+		{http.MethodPost, "/repos", authSessionFragment, s.handleReposSave, ""},
 		{http.MethodGet, "/items", authSessionFragment, s.handleItems, ""},
 		{http.MethodPost, "/refresh", authSessionFragment, s.handleRefresh, ""},
 		{http.MethodPost, "/logout", authSessionFragment, s.handleLogout, ""},
@@ -738,6 +752,8 @@ type pageData struct {
 	// Dashboard is set only by handleDashboard. dashboard.html reads it for the header's fetched
 	// time, the error notice and the list; every other page leaves it nil.
 	Dashboard *dashboardView
+	// Repos is set only by the repository page (handleRepos, handleReposSave).
+	Repos *reposView
 	// Sites is set only by handleSites. sites.html reads it for the header and the tiles; every
 	// other page leaves it nil.
 	Sites *sitesView
