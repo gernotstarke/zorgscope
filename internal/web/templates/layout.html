@@ -140,6 +140,15 @@
       </summary>
       <div class="settings-panel" id="settings">
 
+        {{if $.Member}}
+        <fieldset class="setting">
+          <legend>Repositories</legend>
+          {{/* A member's scope is their own choice (FR-8.5); the owner's is the configuration
+               and has no page. */}}
+          <p class="setting-note"><a href="/repos">Choose the repositories you watch</a></p>
+        </fieldset>
+        {{end}}
+
         <fieldset class="setting">
           <legend>Open at</legend>
           {{/* One button per view in one form rather than a select and a submit: with JavaScript

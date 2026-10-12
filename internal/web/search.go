@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gernotstarke/zorgscope/internal/config"
 	"github.com/gernotstarke/zorgscope/internal/domain"
 	"github.com/gernotstarke/zorgscope/internal/snapshot"
 )
@@ -12,15 +13,19 @@ import (
 // handleSearch renders the results page (FR-12.1). Like the list, it reads only the snapshot;
 // answeredWaiting handles a fetch in flight exactly as it does for the list (FR-1.9).
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
-	snap, waiting := s.answeredWaiting(w, r)
+	sc, ok := s.scopeOf(w, r)
+	if !ok {
+		return
+	}
+	snap, waiting := s.answeredWaiting(w, r, sc)
 	if waiting {
 		return
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	view := s.searchView(snap, q, s.clock.Now(), settingsOf(r).Quiet)
+	view := s.searchView(snap, q, s.clock.Now(), settingsOf(r).Quiet, sc.GH)
 	s.execute(w, r, http.StatusOK, "search.html", pageData{
 		Title:  "Search",
-		Chrome: chromeFor(r, snap, s.cfg.GitHub.Owner, s.clock.Now()),
+		Chrome: chromeFor(r, snap, sc.GH.Owner, s.clock.Now()),
 		Search: &view,
 	})
 }
@@ -62,7 +67,7 @@ type titleRun struct {
 }
 
 // searchView ranks the snapshot against q and renders the hits.
-func (s *Server) searchView(snap snapshot.Snapshot, q string, now time.Time, quiet time.Duration) searchView {
+func (s *Server) searchView(snap snapshot.Snapshot, q string, now time.Time, quiet time.Duration, gh config.GitHub) searchView {
 	hits := domain.Search(snap.Items, domain.ParseQuery(q))
 	v := searchView{
 		headerView: s.headerView(snap),
@@ -74,7 +79,7 @@ func (s *Server) searchView(snap snapshot.Snapshot, q string, now time.Time, qui
 		v.Hits = append(v.Hits, hitView{
 			Kind:    kindLabel(h.Item.Kind),
 			Repo:    h.Item.Repo,
-			Hue:     hueForRepo(s.cfg.GitHub, h.Item.Repo),
+			Hue:     hueForRepo(gh, h.Item.Repo),
 			Number:  h.Item.Number,
 			Title:   titleRuns(h.Item.Title, h.TitleSpans),
 			URL:     h.Item.URL,

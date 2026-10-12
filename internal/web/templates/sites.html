@@ -11,6 +11,7 @@
        rule appears only while a security item is open. */}}
   {{/* Bound to a variable rather than reached for as $.Security inside the with: $ is the page's
        own data, not this block's. */}}
+  {{if not $.Member}}
   {{$security := .Security}}
   {{with .Security}}
   <section class="tile tile-tier{{if .Clear}} is-clear{{else if eq .Band "security"}} is-marked{{else if eq .Band "alert"}} is-alerted{{end}}{{if .Alert}} is-alert{{end}}" aria-labelledby="{{.ID}}">
@@ -38,6 +39,7 @@
       {{end}}
     </div>
   </section>
+  {{end}}
   {{end}}
   {{range .Tiles}}
   <section class="tile hue-{{.Hue}}" aria-labelledby="{{.ID}}">

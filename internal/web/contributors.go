@@ -10,12 +10,16 @@ import (
 // handleContributors renders the Contributors page (FR-12.2): the people who opened the open
 // items, busiest first. It reads only the snapshot, through answeredWaiting like every page.
 func (s *Server) handleContributors(w http.ResponseWriter, r *http.Request) {
-	snap, waiting := s.answeredWaiting(w, r)
+	sc, ok := s.scopeOf(w, r)
+	if !ok {
+		return
+	}
+	snap, waiting := s.answeredWaiting(w, r, sc)
 	if waiting {
 		return
 	}
 	now := s.clock.Now()
-	people := domain.BuildContributors(snap.Items, s.cfg.GitHub.Repos)
+	people := domain.BuildContributors(snap.Items, sc.GH.Repos)
 	view := contributorsView{
 		headerView: s.headerView(snap),
 		CountLine:  contributorsCountLine(len(people)),
@@ -36,7 +40,7 @@ func (s *Server) handleContributors(w http.ResponseWriter, r *http.Request) {
 		view.Rows = append(view.Rows, row)
 	}
 	s.execute(w, r, http.StatusOK, "contributors.html", pageData{
-		Title: "Contributors", Chrome: chromeFor(r, snap, s.cfg.GitHub.Owner, s.clock.Now()), Contributors: &view,
+		Title: "Contributors", Chrome: chromeFor(r, snap, sc.GH.Owner, s.clock.Now()), Contributors: &view,
 	})
 }
 

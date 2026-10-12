@@ -844,6 +844,53 @@ const (
 func withMembers(o *Options) {
 	o.Config.GitHub.MembersRepo = testMembersRepo
 	o.Config.GitHub.MembersOrg = testMembersOrg
+	o.MemberSource = (&stubMemberSources{}).source
+}
+
+const (
+	testMemberLogin = "octocat"
+	testMemberToken = "member-token-canary"
+)
+
+// stubMemberSources stands in for Options.MemberSource: one fakeSource per (token, repos) it is
+// asked for, remembered so a test can see which fetches were built and feed each its items.
+type stubMemberSources struct {
+	mu    sync.Mutex
+	items map[string][]domain.Item // repo -> items
+	err   error
+	made  []string // fingerprints, in order
+}
+
+func (m *stubMemberSources) source(token string, repos []string) ports.Source {
+	m.mu.Lock()
+	m.made = append(m.made, memberFingerprint(token, repos))
+	m.mu.Unlock()
+	return ports.SourceFunc(func(context.Context) (domain.Fetched, error) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		var out []domain.Item
+		for _, repo := range repos {
+			out = append(out, m.items[repo]...)
+		}
+		return domain.Fetched{Items: out}, m.err
+	})
+}
+
+func (m *stubMemberSources) built() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.made)
+}
+
+// mintMemberSession is a member's cookie: octocat, holding testMemberToken, watching repos.
+func mintMemberSession(repos ...string) *http.Cookie {
+	return &http.Cookie{
+		Name: sessionCookieName,
+		Value: newSessionCodec(testClientSecret).mint(session{
+			Expiry: testNow.Add(memberSessionTTL), Role: roleMember, Login: testMemberLogin,
+			Token: testMemberToken, Repos: repos,
+		}),
+	}
 }
 
 // stubIdentity stands in for GET /user.

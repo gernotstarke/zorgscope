@@ -32,32 +32,38 @@ const unclaimedHue = "slate"
 
 // handleSites renders the Sites view (FR-1.8). Like render, it reads only the snapshot.
 func (s *Server) handleSites(w http.ResponseWriter, r *http.Request) {
-	snap, waiting := s.answeredWaiting(w, r)
+	sc, ok := s.scopeOf(w, r)
+	if !ok {
+		return
+	}
+	snap, waiting := s.answeredWaiting(w, r, sc)
 	if waiting {
 		return
 	}
 	now := s.clock.Now()
 
-	tier := domain.BuildTierTile(domain.TierTileInput{
-		Items: snap.Items, MaxPRs: tileMaxPRs, MaxIssues: tileMaxIssues, MaxAlerts: tileMaxAlerts,
-		Repos: s.cfg.GitHub.Repos, Coverage: snap.Coverage,
-	})
+	view := sitesView{headerView: s.headerView(snap)}
+	if !sc.Member {
+		// The Security tile belongs to the owner's scope (FR-1.8, FR-1.13): a member's
+		// repositories are fetched without alerts and the tile would have nothing to say.
+		tier := domain.BuildTierTile(domain.TierTileInput{
+			Items: snap.Items, MaxPRs: tileMaxPRs, MaxIssues: tileMaxIssues, MaxAlerts: tileMaxAlerts,
+			Repos: sc.GH.Repos, Coverage: snap.Coverage,
+		})
+		view.Security = newTierTileView(tier, now)
+	}
 	tiles := domain.BuildSiteTiles(domain.SiteTilesInput{
-		Items: snap.Items, Sites: siteSpecs(s.cfg.GitHub),
+		Items: snap.Items, Sites: siteSpecs(sc.GH),
 		MaxPRs: tileMaxPRs, MaxIssues: tileMaxIssues,
 	})
-	view := sitesView{
-		headerView: s.headerView(snap),
-		Security:   newTierTileView(tier, now),
-		Tiles:      make([]tileView, 0, len(tiles)),
-	}
+	view.Tiles = make([]tileView, 0, len(tiles))
 	for i, tile := range tiles {
 		view.Tiles = append(view.Tiles, newTileView(i+1, tile, now))
 	}
 	s.execute(w, r, http.StatusOK, "sites.html", pageData{
 		Title:  "Sites",
 		Sites:  &view,
-		Chrome: chromeFor(r, snap, s.cfg.GitHub.Owner, s.clock.Now()),
+		Chrome: chromeFor(r, snap, sc.GH.Owner, s.clock.Now()),
 	})
 }
 

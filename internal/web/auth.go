@@ -206,14 +206,19 @@ func (s *Server) session(r *http.Request) (session, bool) {
 // expired session takes the browser to sign-in instead of leaving a silently dead button.
 func (s *Server) requireSession(next http.Handler, redirect bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := s.session(r); ok {
+		if sess, ok := s.session(r); ok && (!sess.member() || s.cfg.GitHub.MembersEnabled()) {
 			// Rotating the OAuth client secret is the only sign-out this product has
 			// (FR-8.3 AC4), and a rotation cannot reach a page the browser has already stored.
 			// Without no-store the dashboard — names of repositories, issue titles — stays in
 			// the back-forward cache and in any disk cache after the secret is rotated, which is
 			// precisely the state the rotation was performed to end.
 			w.Header().Set("Cache-Control", "no-store")
-			next.ServeHTTP(w, r)
+			if redirect {
+				// One line per page view (spec §10): who, as what, where. Fragments and polls are
+				// not pages and would flood the log.
+				s.log.Info("page view", "login", sess.Login, "role", sess.Role, "path", r.URL.Path)
+			}
+			next.ServeHTTP(w, withSession(r, sess))
 			return
 		}
 		if redirect && (r.Method == http.MethodGet || r.Method == http.MethodHead) {

@@ -177,16 +177,20 @@ var radarKeys = []string{"author", "opened", "activity", "labels"}
 
 // handleRadar renders the Radar view (FR-1.15). Like every page it reads only the snapshot.
 func (s *Server) handleRadar(w http.ResponseWriter, r *http.Request) {
-	snap, waiting := s.answeredWaiting(w, r)
+	sc, ok := s.scopeOf(w, r)
+	if !ok {
+		return
+	}
+	snap, waiting := s.answeredWaiting(w, r, sc)
 	if waiting {
 		return
 	}
-	view := buildRadar(snap.Items, s.cfg.GitHub, r.URL.Query().Get("group"), s.clock.Now())
+	view := buildRadar(snap.Items, sc.GH, r.URL.Query().Get("group"), s.clock.Now())
 	view.headerView = s.headerView(snap)
 	s.execute(w, r, http.StatusOK, "radar.html", pageData{
 		Title:  "Radar",
 		Radar:  &view,
-		Chrome: chromeFor(r, snap, s.cfg.GitHub.Owner, s.clock.Now()),
+		Chrome: chromeFor(r, snap, sc.GH.Owner, s.clock.Now()),
 	})
 }
 

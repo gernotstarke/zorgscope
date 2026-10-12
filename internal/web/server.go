@@ -111,6 +111,9 @@ type Options struct {
 	// whether the Fly-Client-IP header may be believed (see clientIP). nil means "work it out
 	// from the runtime environment"; the tests set it either way to exercise both paths.
 	BehindFlyProxy *bool
+	// MemberSource builds the source a member's view is fetched from: their token, their
+	// repositories (spec 2026-10-12 §8). Required when the configuration enables members.
+	MemberSource func(token string, repos []string) ports.Source
 }
 
 // Server holds the HTTP layer's state: the parsed templates, the session codec, the sign-in rate
@@ -118,9 +121,11 @@ type Options struct {
 type Server struct {
 	cfg   config.Config
 	cache *snapshot.Cache
-	clock ports.Clock
-	log   *slog.Logger
-	pages map[string]*template.Template
+	// members holds one cache per signed-in member (spec 2026-10-12 §8).
+	members *memberCaches
+	clock   ports.Clock
+	log     *slog.Logger
+	pages   map[string]*template.Template
 	// fragments is the set holding the templates GET /items executes without a layout. See
 	// fragmentGlob for why the same files are also parsed into every page.
 	fragments *template.Template
@@ -169,6 +174,9 @@ func New(o Options) (*Server, error) {
 	if o.Identity == nil {
 		return nil, errors.New("web: an identity reader is required")
 	}
+	if o.Config.GitHub.MembersEnabled() && o.MemberSource == nil {
+		return nil, errors.New("web: a member source is required when members are enabled")
+	}
 	if o.Clock == nil {
 		o.Clock = ports.SystemClock{}
 	}
@@ -216,6 +224,7 @@ func New(o Options) (*Server, error) {
 	s := &Server{
 		cfg:              o.Config,
 		cache:            o.Cache,
+		members:          newMemberCaches(o.MemberSource, o.Config.GitHub.CacheTTL, o.Clock, o.Log),
 		clock:            o.Clock,
 		log:              o.Log,
 		pages:            pages,
@@ -754,6 +763,11 @@ type pageData struct {
 	// MembersEnabled is a fact about the deployment, not the visitor: whether a members repository
 	// is configured. execute fills it in from the config; the sign-in page words itself by it.
 	MembersEnabled bool
+	// Member and Login are facts about the visitor's session, filled in by execute: whether they
+	// are a member rather than the owner, and who. The settings panel offers a member their
+	// repositories.
+	Member bool
+	Login  string
 	// Theme is the appearance the visitor asked for, and Path the page they are on so that the
 	// theme control can send them back to it. Both are filled in by execute, from the request,
 	// for every page: an appearance that applied to some pages and not others would be worse
@@ -811,6 +825,8 @@ func (s *Server) execute(w http.ResponseWriter, r *http.Request, status int, pag
 	}
 	data.Version = version.String()
 	data.MembersEnabled = s.cfg.GitHub.MembersEnabled()
+	sess := sessionOf(r)
+	data.Member, data.Login = sess.member(), sess.Login
 	data.Theme = themeOf(r)
 	data.Path = r.URL.Path
 	data.Settings = settingsOf(r)
