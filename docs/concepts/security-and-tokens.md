@@ -178,11 +178,12 @@ signs in with the same scope-less OAuth App as the owner, and unlike the owner's
 ## Constant-time comparison and rate limiting
 
 QS‑4.2 requires that refused sign-in callbacks are rate-limited and that neither the authorization
-code, the state, nor the visitor's token ever reaches a log. `subtle.ConstantTimeCompare` is used
-for both secret comparisons in the sign-in path — the OAuth state parameter against its cookie, and
-the session cookie's signature against the recomputed HMAC — so that a failed comparison takes the
-same time regardless of how many leading bytes matched. An ordinary `==` on secret bytes does not
-have that property, and is exactly the kind of timing side-channel `subtle` exists to close.
+code, the state, nor the visitor's token ever reaches a log. `subtle.ConstantTimeCompare` compares
+the OAuth state parameter against its cookie, so that a failed comparison takes the same time
+regardless of how many leading bytes matched. An ordinary `==` on secret bytes does not have that
+property, and is exactly the kind of timing side-channel `subtle` exists to close. The session
+cookie needs no comparison of its own: its authenticity is AES‑GCM's tag check (see above), which
+also fails without revealing how much of the tag matched.
 
 Callbacks are rate-limited by an in-memory token bucket keyed by client IP, and the token is spent
 at the top of the handler — before the state is compared, and before any request leaves this
