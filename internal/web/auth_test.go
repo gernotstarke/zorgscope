@@ -806,7 +806,8 @@ func testOptions() Options {
 		Log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 		// The visitor GitHub vouches for in the tests is whoever presents the fake's token. A test
 		// about being refused replaces this with a stub that admits nobody.
-		Access: &stubAccess{allow: map[string]bool{"fake-token " + testAuthRepo: true}},
+		Access:   &stubAccess{allow: map[string]bool{"fake-token " + testAuthRepo: true}},
+		Identity: &stubIdentity{login: "zorg"},
 	}
 }
 
@@ -814,13 +815,44 @@ func testOptions() Options {
 // outright, so a test can exercise the collaborator, the member, the stranger and an unreachable
 // GitHub without a fixture for each. The key is token + " " + repo.
 type stubAccess struct {
+	mu    sync.Mutex
 	allow map[string]bool
 	err   error
+	asked []string
 }
 
 func (s *stubAccess) HasPushAccess(_ context.Context, token, repo string) (bool, error) {
+	s.mu.Lock()
+	s.asked = append(s.asked, repo)
+	s.mu.Unlock()
 	return s.allow[token+" "+repo], s.err
 }
+
+func (s *stubAccess) askedRepos() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.asked...)
+}
+
+const (
+	testMembersRepo = "gernotstarke/zorgscope-members"
+	testMembersOrg  = "isaqb-org"
+)
+
+// withMembers configures a deployment that admits members (FR-8.4). Later tasks add the stubs the
+// member paths need to this one function, so every member test starts from the same shape.
+func withMembers(o *Options) {
+	o.Config.GitHub.MembersRepo = testMembersRepo
+	o.Config.GitHub.MembersOrg = testMembersOrg
+}
+
+// stubIdentity stands in for GET /user.
+type stubIdentity struct {
+	login string
+	err   error
+}
+
+func (s *stubIdentity) Login(context.Context, string) (string, error) { return s.login, s.err }
 
 // startFakeGitHub starts the fixture server and points the options' OAuth base URL at it. It
 // returns the fake's URL.

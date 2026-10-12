@@ -102,6 +102,8 @@ type Options struct {
 	// token it is given may push to the configured repository (FR-8.3). It is required — a server
 	// that cannot answer that question would have to admit everybody or nobody.
 	Access ports.AccessChecker
+	// Identity names the visitor a token belongs to, once per accepted sign-in (FR-8.4). Required.
+	Identity ports.IdentityReader
 	// HTTPClient is what the OAuth code-for-token exchange uses. nil means a client bounded by
 	// oauthTimeout; the tests point it at their in-process GitHub.
 	HTTPClient *http.Client
@@ -130,6 +132,7 @@ type Server struct {
 	cacheEpoch string
 	signIn     *rateLimiter
 	access     ports.AccessChecker
+	identity   ports.IdentityReader
 	// httpClient is the client the code-for-token exchange runs on. It is an option rather than a
 	// constant so that a test can point the exchange at an in-process GitHub; a deployment hands
 	// in the same client its adapters use.
@@ -162,6 +165,9 @@ func New(o Options) (*Server, error) {
 	}
 	if o.Access == nil {
 		return nil, errors.New("web: an access checker is required")
+	}
+	if o.Identity == nil {
+		return nil, errors.New("web: an identity reader is required")
 	}
 	if o.Clock == nil {
 		o.Clock = ports.SystemClock{}
@@ -219,6 +225,7 @@ func New(o Options) (*Server, error) {
 		cacheEpoch:       newCacheEpoch(o.Config.Secrets.OAuthClientSecret),
 		signIn:           newRateLimiter(signInAttempts, signInWindow),
 		access:           o.Access,
+		identity:         o.Identity,
 		httpClient:       o.HTTPClient,
 		trustFlyClientIP: trustFly,
 		loc:              loc,
@@ -744,6 +751,9 @@ type pageData struct {
 	// Error is a message written for the visitor. It is never an error's own text: those can
 	// carry a token (QS-4.3).
 	Error string
+	// MembersEnabled is a fact about the deployment, not the visitor: whether a members repository
+	// is configured. execute fills it in from the config; the sign-in page words itself by it.
+	MembersEnabled bool
 	// Theme is the appearance the visitor asked for, and Path the page they are on so that the
 	// theme control can send them back to it. Both are filled in by execute, from the request,
 	// for every page: an appearance that applied to some pages and not others would be worse
@@ -800,6 +810,7 @@ func (s *Server) execute(w http.ResponseWriter, r *http.Request, status int, pag
 		return
 	}
 	data.Version = version.String()
+	data.MembersEnabled = s.cfg.GitHub.MembersEnabled()
 	data.Theme = themeOf(r)
 	data.Path = r.URL.Path
 	data.Settings = settingsOf(r)
