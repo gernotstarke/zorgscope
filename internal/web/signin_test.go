@@ -350,7 +350,7 @@ func TestTheLastAttemptInTheBudgetCanStillSignIn(t *testing.T) {
 	}
 }
 
-// FR-8.3 AC4: rotating the client secret is this product's only sign-out, and it works because the
+// FR-8.3 AC4: rotating the client secret ends every session at once, and it works because the
 // session key is derived from that secret (design 2026-09-14 §2).
 func TestRotatingTheClientSecretInvalidatesExistingSessions(t *testing.T) {
 	old := newTestServerWith(t, func(o *Options) { startFakeGitHub(t, o) })

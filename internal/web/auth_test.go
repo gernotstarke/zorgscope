@@ -636,8 +636,8 @@ func TestARouteWithNoDeclaredCredentialFailsClosed(t *testing.T) {
 	}
 }
 
-// Rotating the OAuth client secret is this product's only sign-out (FR-8.3 AC4), and it cannot
-// reach a page the browser has already stored. Authenticated responses therefore say no-store.
+// Neither signing out nor rotating the OAuth client secret (FR-8.3 AC4) can reach a page the
+// browser has already stored. Authenticated responses therefore say no-store.
 func TestAuthenticatedResponsesAreNotStoredByTheBrowser(t *testing.T) {
 	s := newTestServer(t)
 	h := s.Handler()
