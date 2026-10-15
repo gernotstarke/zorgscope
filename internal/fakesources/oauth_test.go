@@ -5,6 +5,7 @@
 package fakesources_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -157,4 +158,91 @@ func postJSON(t *testing.T, h http.Handler, path, body string) *httptest.Respons
 	req.Header.Set("Content-Type", "application/json")
 	h.ServeHTTP(rec, req)
 	return rec
+}
+
+func TestUserAnswersTheControlledLogin(t *testing.T) {
+	h := fakesources.NewServer()
+	var body struct{ Login string }
+	rec := getWithBearer(t, h, "/user", "fake-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	_ = json.NewDecoder(rec.Body).Decode(&body)
+	if body.Login != "zorg" {
+		t.Fatalf("login = %q", body.Login)
+	}
+	post(t, h, "/_control/oauth-user?permission=push&login=octocat")
+	rec = getWithBearer(t, h, "/user", "fake-token")
+	_ = json.NewDecoder(rec.Body).Decode(&body)
+	if body.Login != "octocat" {
+		t.Fatalf("login = %q", body.Login)
+	}
+	if rec := getWithBearer(t, h, "/user", "other"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("a wrong token got %d", rec.Code)
+	}
+}
+
+func TestRepositoryPermissionCanBeSetPerRepository(t *testing.T) {
+	h := fakesources.NewServer()
+	post(t, h, "/_control/oauth-user?permission=pull")
+	post(t, h, "/_control/oauth-user?permission=push&repo=g/members")
+	perm := func(repo string) bool {
+		var body struct {
+			Permissions map[string]bool `json:"permissions"`
+		}
+		rec := getWithBearer(t, h, "/repos/"+repo, "fake-token")
+		_ = json.NewDecoder(rec.Body).Decode(&body)
+		return body.Permissions["push"]
+	}
+	if perm("g/zorgscope") || !perm("g/members") {
+		t.Fatal("the override did not apply to the one repository alone")
+	}
+	post(t, h, "/_control/oauth-user?permission=admin")
+	if !perm("g/zorgscope") || !perm("g/members") {
+		t.Fatal("setting the default did not clear the override")
+	}
+}
+
+func TestOrgReposPagesByTenAndMarksOneArchived(t *testing.T) {
+	h := fakesources.NewServer()
+	rec := getWithBearer(t, h, "/orgs/isaqb-org/repos?type=public&per_page=100", "fake-token")
+	var rows []struct {
+		FullName string `json:"full_name"`
+		Archived bool   `json:"archived"`
+	}
+	_ = json.NewDecoder(rec.Body).Decode(&rows)
+	if len(rows) != 10 || rows[0].FullName != "isaqb-org/repo-01" {
+		t.Fatalf("page 1 = %v", rows)
+	}
+	if !strings.Contains(rec.Header().Get("Link"), `page=2>; rel="next"`) {
+		t.Fatalf("Link = %q", rec.Header().Get("Link"))
+	}
+	rec = getWithBearer(t, h, "/orgs/isaqb-org/repos?type=public&per_page=100&page=2", "fake-token")
+	rows = nil
+	_ = json.NewDecoder(rec.Body).Decode(&rows)
+	if len(rows) != 5 || !rows[4].Archived || rows[4].FullName != "isaqb-org/old" || rec.Header().Get("Link") != "" {
+		t.Fatalf("page 2 = %v, Link %q", rows, rec.Header().Get("Link"))
+	}
+}
+
+func TestRevocationRecordsTheToken(t *testing.T) {
+	h := fakesources.NewServer()
+	revoke := func(clientID string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodDelete, "/applications/"+clientID+"/token", strings.NewReader(`{"access_token":"fake-token"}`))
+		req.SetBasicAuth("the-id", "whatever")
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := revoke("the-id"); rec.Code != http.StatusNoContent {
+		t.Fatalf("revoke = %d", rec.Code)
+	}
+	var revoked []string
+	_ = json.NewDecoder(get(t, h, "/_control/revoked").Body).Decode(&revoked)
+	if len(revoked) != 1 || revoked[0] != "fake-token" {
+		t.Fatalf("revoked = %v", revoked)
+	}
+	if rec := revoke("other-id"); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("a mismatched client id got %d", rec.Code)
+	}
 }

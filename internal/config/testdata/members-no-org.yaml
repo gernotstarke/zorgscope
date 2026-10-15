@@ -1,0 +1,5 @@
+timezone: Europe/Berlin
+github:
+  auth_repo: gernotstarke/zorgscope
+  members_repo: gernotstarke/zorgscope-members
+  repos: [org/repo]

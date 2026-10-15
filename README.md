@@ -17,6 +17,8 @@ disposable — it remembers nothing between restarts except what a signed-in vis
 carries in its session cookie (design [ADR‑0010](docs/decisions/0010-stateless-no-database.md),
 [ADR‑0011](docs/decisions/0011-request-triggered-fetch-never-a-ticker.md)).
 
+**Members.** A handful of invited people get a personal view: write access on `gernotstarke/zorgscope-members` admits them, they choose up to 12 public iSAQB repositories on a settings page, and their view is fetched with their own GitHub token ([ADR‑0019](docs/decisions/0019-members-allowlist-repository-personal-scope.md)). To invite someone, add them as a collaborator with the Write role; to remove them, remove them there — that takes effect at their next sign-in, and a member's session lasts up to 7 days. Rotating the OAuth client secret ends every session at once.
+
 ## Quick start
 
 Only Docker and GNU make are needed. Nothing is installed on the host.
@@ -89,6 +91,7 @@ code; `make check` passes.
 
 | Version | Date | Change |
 |---------|------|--------|
+| 2.5.0 | 2026-10-12 | Members: write access on zorgscope-members admits invited people to a personal list, tiles and radar over up to 12 public iSAQB repositories of their choice, fetched with their own token; the session cookie is encrypted and carries role and login; signing out revokes a member's token; every existing session ends once at this deploy — everyone signs in once more (FR‑1.17, FR‑8.4, FR‑8.5, ADR‑0019) |
 | 2.4.1 | 2026-10-11 | QS-2.3's page budget raised to 300 kB over a 250-item fixture (was 150 kB over 150 items): 229 items are open across the 19 watched repositories |
 | 2.4.0 | 2026-10-11 | aim42 and aim42.org-site as two tiles in aim42's red, blue and green side by side, with Dependabot alerts; the Radar switch is arc42 \| iSAQB \| all — all draws one sector per family (arc42, iSAQB, systems42, aim42, an empty private); systems42 a family of its own, still a sector on the arc42 radar; at most 19 repositories, 38 requests per fetch (ADR-0018) |
 | 2.3.0 | 2026-10-07 | systems42 replaces zorgscope: the three systems42-org repositories as one green tile and one Radar sector; a site may name several repositories; a token of its own per repository owner (`GITHUB_TOKEN_SYSTEMS42_ORG`) reads the private ones; at most 17 repositories, 34 requests per fetch (ADR-0017) |

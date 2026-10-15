@@ -1,6 +1,7 @@
 package web
 
 import (
+	"crypto/sha256"
 	"strings"
 	"testing"
 )
@@ -25,7 +26,7 @@ func TestTheEpochChangesWithTheSecret(t *testing.T) {
 func TestTheEpochSaysNothingAboutTheSigningKey(t *testing.T) {
 	const secret = "the-client-secret"
 	epoch := newCacheEpoch(secret)
-	key := newSessionCodec(secret).key
+	key := sha256.Sum256([]byte(sessionKeyContext + secret))
 
 	if strings.Contains(string(key[:]), epoch) {
 		t.Error("the epoch appears inside the session signing key")

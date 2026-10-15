@@ -10,6 +10,7 @@ import (
 
 	"golang.org/x/oauth2"
 
+	"github.com/gernotstarke/zorgscope/internal/config"
 	"github.com/gernotstarke/zorgscope/internal/ports"
 )
 
@@ -85,8 +86,9 @@ func stateCookie(value string, maxAge int) *http.Cookie {
 // the sign-in rate limit, every refusal clears the state cookie and sets no session, and nothing
 // here is logged with the code, the state or the token.
 //
-// The visitor's access token lives for exactly one question — may this person push to the
-// repository? — and is never stored, logged or rendered (design 2026-09-14 §2).
+// The visitor's access token answers the access checks and the identity request. An owner's is
+// then dropped, never stored, logged or rendered (design 2026-09-14 §2); a member's goes into the
+// encrypted session cookie, because their view is fetched with it, and nowhere else.
 func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	clearState := func() { http.SetCookie(w, stateCookie("", -1)) }
 	ip := s.clientIP(r)
@@ -143,10 +145,20 @@ func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	notACollaborator := "This dashboard is for collaborators of " + s.cfg.GitHub.AuthRepo + "."
-	// The request's own context, not the one carrying oauth2.HTTPClient: the access checker holds
-	// the client it should use, and handing it a context that names another one would quietly
-	// decide for it.
-	ok, err := s.access.HasPushAccess(r.Context(), tok.AccessToken)
+	if s.cfg.GitHub.MembersEnabled() {
+		notACollaborator = "This dashboard is for collaborators of " + s.cfg.GitHub.AuthRepo +
+			" or " + s.cfg.GitHub.MembersRepo + "."
+	}
+	// Owner first (spec 2026-10-12 D8): push on auth_repo is the stronger claim and decides on its
+	// own; the members repository is asked only when that said no and members exist at all. The
+	// request's own context, not the one carrying oauth2.HTTPClient: the access checker holds the
+	// client it should use.
+	who := roleOwner
+	ok, err := s.access.HasPushAccess(r.Context(), tok.AccessToken, s.cfg.GitHub.AuthRepo)
+	if err == nil && !ok && s.cfg.GitHub.MembersEnabled() {
+		who = roleMember
+		ok, err = s.access.HasPushAccess(r.Context(), tok.AccessToken, s.cfg.GitHub.MembersRepo)
+	}
 	switch {
 	// GitHub answered without saying what the visitor may do. The visitor is refused exactly as a
 	// stranger is — the check fails closed — but the log says which of the two happened, because
@@ -161,11 +173,22 @@ func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 		refuse(http.StatusForbidden, "no push access", notACollaborator)
 		return
 	}
+	// Admitted people only are asked who they are: a refused visitor's login is not logged and
+	// not fetched. A session without a login is not a session (spec §3).
+	login, err := s.identity.Login(r.Context(), tok.AccessToken)
+	if err != nil || !config.IsLogin(login) {
+		refuse(http.StatusBadGateway, "identity failed", "GitHub could not be asked who you are. Try again.")
+		return
+	}
 	clearState()
-	// The one audit line this product needs: a collaborator signed in, from where. Never a login
-	// name — the visitor did not choose to publish one here — and never the token (FR-8.3 AC5).
-	s.log.Info("sign-in accepted", "ip", ip)
-	// The cookie carries the expiry and nothing else (ADR-0012).
-	s.setSession(w, session{Expiry: s.clock.Now().Add(sessionTTL)})
+	// The audit line (spec §10): who signed in, as what, from where. Never the token.
+	s.log.Info("sign-in accepted", "ip", ip, "login", login, "role", who)
+	sess := session{Expiry: s.clock.Now().Add(sessionTTLFor(who)), Role: who, Login: login}
+	if who == roleMember {
+		// A member's view is fetched with their own token, which therefore has to outlive this
+		// request: it goes into the encrypted cookie and nowhere else (spec §4, §12).
+		sess.Token = tok.AccessToken
+	}
+	s.setSession(w, sess)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

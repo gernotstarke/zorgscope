@@ -60,8 +60,8 @@ type waitingView struct {
 // defeating FR-1.9 for every boosted link.
 //
 // When no fetch is in flight it answers nothing and the caller renders as it always has.
-func (s *Server) answeredWaiting(w http.ResponseWriter, r *http.Request) (snapshot.Snapshot, bool) {
-	snap := s.cache.Get(r.Context())
+func (s *Server) answeredWaiting(w http.ResponseWriter, r *http.Request, sc scope) (snapshot.Snapshot, bool) {
+	snap := sc.Cache.Get(r.Context())
 	// A fetch in flight is not by itself a reason to withhold the page. What is, is having
 	// nothing to put on it: an empty snapshot can only draw an empty list, and "nothing is open"
 	// is a wrong answer rather than a stale one — which is the whole reason the wait page exists.
@@ -81,8 +81,8 @@ func (s *Server) answeredWaiting(w http.ResponseWriter, r *http.Request) (snapsh
 		// it must never come back out of a browser cache, since it is only ever right now.
 		w.Header().Set("Cache-Control", "no-store")
 		s.execute(w, r, http.StatusOK, "waiting.html", pageData{
-			Waiting: &waitingView{Repos: len(s.cfg.GitHub.Repos), Path: r.URL.RequestURI()},
-			Chrome:  chromeFor(r, snap, s.cfg.GitHub.Owner, s.clock.Now()),
+			Waiting: &waitingView{Repos: len(sc.GH.Repos), Path: r.URL.RequestURI()},
+			Chrome:  chromeFor(r, snap, sc.GH.Owner, s.clock.Now()),
 		})
 		return snap, true
 	}
@@ -100,6 +100,10 @@ func (s *Server) answeredWaiting(w http.ResponseWriter, r *http.Request) (snapsh
 // answeredWaiting, and handleItems reads its own, since GET /items answers on its own rather than
 // as part of a page view.
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	sc, ok := s.scopeOf(w, r)
+	if !ok {
+		return
+	}
 	// The visitor's landing view (FR-1.12 AC3). "/" is where the list lives, so only the other
 	// views redirect; landingList falling through is what keeps "/" from bouncing to itself.
 	//
@@ -117,19 +121,23 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	// filtered link and every bookmark of a filtered list unreachable for anyone whose landing
 	// view is not the list.
 	if target := settingsOf(r).Landing.path(); target != "/" && r.URL.RawQuery == "" {
-		_ = s.cache.Get(r.Context())
+		_ = sc.Cache.Get(r.Context())
 		http.Redirect(w, r, target, http.StatusSeeOther)
 		return
 	}
 
-	snap, waiting := s.answeredWaiting(w, r)
+	snap, waiting := s.answeredWaiting(w, r, sc)
 	if waiting {
 		return
 	}
-	s.render(w, r, "dashboard.html", snap)
+	s.render(w, r, "dashboard.html", snap, sc)
 }
 func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, fragmentItemsTemplate, s.cache.Get(r.Context()))
+	sc, ok := s.scopeOf(w, r)
+	if !ok {
+		return
+	}
+	s.render(w, r, fragmentItemsTemplate, sc.Cache.Get(r.Context()), sc)
 }
 
 // render assembles the dashboard from snap — the snapshot its caller already read from the cache —
@@ -138,37 +146,52 @@ func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
 // already dealt with a fetch in flight before render runs, and snap is the very snapshot it decided
 // that with; the /items fragment is deliberately served from the current snapshot whatever the
 // cache is doing (FR-1.9 AC5).
-func (s *Server) render(w http.ResponseWriter, r *http.Request, tmpl string, snap snapshot.Snapshot) {
+func (s *Server) render(w http.ResponseWriter, r *http.Request, tmpl string, snap snapshot.Snapshot, sc scope) {
 	now := s.clock.Now()
 	quiet := settingsOf(r).Quiet
 
 	d := domain.BuildDashboard(domain.DashboardInput{
 		Now: now, Items: snap.Items,
-		Repos: s.cfg.GitHub.Repos, Filter: parseFilter(r.URL.Query(), s.loc),
+		Repos: sc.GH.Repos, Filter: parseFilter(r.URL.Query(), s.loc),
 	})
-	view := s.dashboardView(d, snap, now, quiet)
+	view := s.dashboardView(d, snap, now, quiet, sc.GH)
 
 	if tmpl == fragmentItemsTemplate {
 		s.writeFragment(w, r, view.Items)
 		return
 	}
-	s.execute(w, r, http.StatusOK, tmpl, pageData{Dashboard: &view, Chrome: chromeFor(r, snap, s.cfg.GitHub.Owner, s.clock.Now())})
+	s.execute(w, r, http.StatusOK, tmpl, pageData{Dashboard: &view, Chrome: chromeFor(r, snap, sc.GH.Owner, s.clock.Now())})
 }
 
 // handleRefresh throws the snapshot away so the redirected GET fetches (FR-1.3), and goes back to
 // the page it was pressed on (FR-1.8 AC4).
 func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
-	s.cache.Invalidate()
+	sc, ok := s.scopeOf(w, r)
+	if !ok {
+		return
+	}
+	sc.Cache.Invalidate()
 	http.Redirect(w, r, safeReturn(r.FormValue("return")), http.StatusSeeOther) // #nosec G710 -- sanitised by safeReturn
 }
 
-// handleLogout clears the session cookie. It is this product's only other sign-out beyond
-// rotating the OAuth client secret (FR-8.3 AC4), and the one a visitor can reach for themselves.
+// handleLogout ends the session: for a member, first their token at GitHub (spec 2026-10-12 §9),
+// so that a copy of the cookie dies with it; then the cookie, for everyone. The cookie is cleared
+// whatever GitHub said — the visitor asked to be signed out of this browser, and that never
+// depends on an upstream. It is the one sign-out a visitor can reach for themselves; the other is
+// rotating the OAuth client secret (FR-8.3 AC4). It runs behind requireSignOut, so sess is always
+// a valid session: a cookie that is not one was cleared there, without asking GitHub anything.
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{
-		Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1,
-		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
-	})
+	sess := sessionOf(r)
+	revoked := false
+	if sess.member() {
+		if err := s.revoker.Revoke(r.Context(), sess.Token); err != nil {
+			s.log.Warn("sign-out revocation failed", "login", sess.Login, "err", scrubbedError(err, sess.Token).Error())
+		} else {
+			revoked = true
+		}
+	}
+	s.log.Info("sign-out", "login", sess.Login, "role", sess.Role, "revoked", revoked)
+	clearSession(w)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
@@ -489,14 +512,14 @@ func chromeFor(r *http.Request, snap snapshot.Snapshot, owner string, now time.T
 
 // dashboardView turns the assembled domain dashboard and the snapshot it was built from into the
 // page's presentation data.
-func (s *Server) dashboardView(d domain.Dashboard, snap snapshot.Snapshot, now time.Time, quiet time.Duration) dashboardView {
+func (s *Server) dashboardView(d domain.Dashboard, snap snapshot.Snapshot, now time.Time, quiet time.Duration, gh config.GitHub) dashboardView {
 	return dashboardView{
 		headerView: s.headerView(snap),
 		Total:      d.Total,
 		Shown:      d.Shown,
 		Filter:     newFilterView(d.Filter),
-		Repos:      filterRepos(s.cfg.GitHub.Repos, d.Filter.Repo),
-		Items:      s.itemsView(d, snap, now, quiet),
+		Repos:      filterRepos(gh.Repos, d.Filter.Repo),
+		Items:      s.itemsView(d, snap, now, quiet, gh),
 	}
 }
 
@@ -504,7 +527,7 @@ func (s *Server) dashboardView(d domain.Dashboard, snap snapshot.Snapshot, now t
 // domain produced — BuildDashboard groups in configuration order and sorts each group most
 // recently updated first — because re-sorting here would silently disagree with the counts the
 // same pass produced.
-func (s *Server) itemsView(d domain.Dashboard, snap snapshot.Snapshot, now time.Time, quiet time.Duration) itemsView {
+func (s *Server) itemsView(d domain.Dashboard, snap snapshot.Snapshot, now time.Time, quiet time.Duration, gh config.GitHub) itemsView {
 	v := itemsView{
 		Query:     template.URL(queryString(d.Filter)), // #nosec G203 -- see the field's comment
 		Groups:    make([]groupView, 0, len(d.Groups)),
@@ -514,24 +537,24 @@ func (s *Server) itemsView(d domain.Dashboard, snap snapshot.Snapshot, now time.
 		Alerts:    d.Alerts,
 		Serious:   d.Serious,
 		Fetching:  snap.Fetching,
-		Repos:     len(s.cfg.GitHub.Repos),
+		Repos:     len(gh.Repos),
 	}
 	// With nothing open at all, "Nothing open." already says everything the band would. A filter
 	// does not hide the band: it answers "what needs me", whatever the list is narrowed to, and a
 	// band that vanished would move the filter out from under the pointer that just changed it.
 	if d.Total > 0 {
-		v.Needs = newNeedsView(snap.Items, s.cfg.GitHub, now)
+		v.Needs = newNeedsView(snap.Items, gh, now)
 	}
 	for _, g := range d.Groups {
 		gv := groupView{
 			Repo:      g.Repo,
-			Hue:       hueForRepo(s.cfg.GitHub, g.Repo),
+			Hue:       hueForRepo(gh, g.Repo),
 			CountLine: countLine(len(g.Items), g.Total, v.Filtered),
 			Items:     make([]itemView, 0, len(g.Items)),
 		}
 		for _, it := range g.Items {
 			iv := newItemView(it, now, quiet)
-			iv.Needed = domain.NeedsNow(it, s.cfg.GitHub.Owner, now)
+			iv.Needed = domain.NeedsNow(it, gh.Owner, now)
 			gv.Items = append(gv.Items, iv)
 		}
 		v.Groups = append(v.Groups, gv)

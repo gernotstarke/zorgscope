@@ -48,7 +48,7 @@ var embedded embed.FS
 // pageFiles are the page templates, each of which supplies the "content" block that layout.html
 // wraps. They are parsed one page at a time — layout plus that page — because every page defines a
 // block of the same name, so a single template set would have them overwrite each other.
-var pageFiles = []string{"login.html", "dashboard.html", "sites.html", "search.html", "contributors.html", "radar.html", "waiting.html"}
+var pageFiles = []string{"login.html", "dashboard.html", "sites.html", "search.html", "contributors.html", "radar.html", "waiting.html", "repos.html"}
 
 // fragmentGlob matches the templates that are both part of a page and answerable on their own.
 // They are parsed twice on purpose: into every page set, so that dashboard.html can compose the
@@ -102,6 +102,8 @@ type Options struct {
 	// token it is given may push to the configured repository (FR-8.3). It is required — a server
 	// that cannot answer that question would have to admit everybody or nobody.
 	Access ports.AccessChecker
+	// Identity names the visitor a token belongs to, once per accepted sign-in (FR-8.4). Required.
+	Identity ports.IdentityReader
 	// HTTPClient is what the OAuth code-for-token exchange uses. nil means a client bounded by
 	// oauthTimeout; the tests point it at their in-process GitHub.
 	HTTPClient *http.Client
@@ -109,6 +111,14 @@ type Options struct {
 	// whether the Fly-Client-IP header may be believed (see clientIP). nil means "work it out
 	// from the runtime environment"; the tests set it either way to exercise both paths.
 	BehindFlyProxy *bool
+	// MemberSource builds the source a member's view is fetched from: their token, their
+	// repositories (spec 2026-10-12 §8). Required when the configuration enables members.
+	MemberSource func(token string, repos []string) ports.Source
+	// Repos lists the organisation's public repositories, fetched with a member's token
+	// (FR-8.5). Required when the configuration enables members.
+	Repos ports.RepoLister
+	// Revoker ends a member's token at GitHub when they sign out; required when members are enabled.
+	Revoker ports.TokenRevoker
 }
 
 // Server holds the HTTP layer's state: the parsed templates, the session codec, the sign-in rate
@@ -116,9 +126,15 @@ type Options struct {
 type Server struct {
 	cfg   config.Config
 	cache *snapshot.Cache
-	clock ports.Clock
-	log   *slog.Logger
-	pages map[string]*template.Template
+	// members holds one cache per signed-in member (spec 2026-10-12 §8).
+	members *memberCaches
+	// repos and orgRepos are the repository page's lister and its shared one-hour list.
+	repos    ports.RepoLister
+	revoker  ports.TokenRevoker
+	orgRepos orgRepos
+	clock    ports.Clock
+	log      *slog.Logger
+	pages    map[string]*template.Template
 	// fragments is the set holding the templates GET /items executes without a layout. See
 	// fragmentGlob for why the same files are also parsed into every page.
 	fragments *template.Template
@@ -130,6 +146,7 @@ type Server struct {
 	cacheEpoch string
 	signIn     *rateLimiter
 	access     ports.AccessChecker
+	identity   ports.IdentityReader
 	// httpClient is the client the code-for-token exchange runs on. It is an option rather than a
 	// constant so that a test can point the exchange at an in-process GitHub; a deployment hands
 	// in the same client its adapters use.
@@ -162,6 +179,18 @@ func New(o Options) (*Server, error) {
 	}
 	if o.Access == nil {
 		return nil, errors.New("web: an access checker is required")
+	}
+	if o.Identity == nil {
+		return nil, errors.New("web: an identity reader is required")
+	}
+	if o.Config.GitHub.MembersEnabled() && o.MemberSource == nil {
+		return nil, errors.New("web: a member source is required when members are enabled")
+	}
+	if o.Config.GitHub.MembersEnabled() && o.Repos == nil {
+		return nil, errors.New("web: a repository lister is required when members are enabled")
+	}
+	if o.Config.GitHub.MembersEnabled() && o.Revoker == nil {
+		return nil, errors.New("web: a token revoker is required when members are enabled")
 	}
 	if o.Clock == nil {
 		o.Clock = ports.SystemClock{}
@@ -210,7 +239,10 @@ func New(o Options) (*Server, error) {
 	s := &Server{
 		cfg:              o.Config,
 		cache:            o.Cache,
+		members:          newMemberCaches(o.MemberSource, o.Config.GitHub.CacheTTL, o.Clock, o.Log),
 		clock:            o.Clock,
+		repos:            o.Repos,
+		revoker:          o.Revoker,
 		log:              o.Log,
 		pages:            pages,
 		fragments:        fragments,
@@ -219,6 +251,7 @@ func New(o Options) (*Server, error) {
 		cacheEpoch:       newCacheEpoch(o.Config.Secrets.OAuthClientSecret),
 		signIn:           newRateLimiter(signInAttempts, signInWindow),
 		access:           o.Access,
+		identity:         o.Identity,
 		httpClient:       o.HTTPClient,
 		trustFlyClientIP: trustFly,
 		loc:              loc,
@@ -258,6 +291,10 @@ const (
 	// authSessionPage needs the session cookie and is a browser navigation, so an anonymous GET
 	// is redirected to the sign-in page rather than refused (FR-8.3 AC1).
 	authSessionPage
+	// authSignOut is /logout's: a session route like authSessionFragment — no cookie, no entry —
+	// except that a cookie which is no valid session is cleared rather than refused, because
+	// refusing it would leave the visitor holding a cookie nothing can remove (requireSignOut).
+	authSignOut
 	// authPublic needs no credential: liveness, sign-in, the appearance switch and static assets.
 	// It is deliberately last, so that it can only ever be chosen by naming it.
 	authPublic
@@ -320,9 +357,13 @@ func (s *Server) routes() []route {
 		{http.MethodGet, "/contributors", authSessionPage, s.handleContributors, ""},
 		// The Radar view (FR-1.15): the same snapshot once more, drawn as a radar scope.
 		{http.MethodGet, "/radar", authSessionPage, s.handleRadar, ""},
+		// The repository page (FR-8.5): a member's selection. A page, so an anonymous visitor is
+		// redirected to sign in; the post is a plain form.
+		{http.MethodGet, "/repos", authSessionPage, s.handleRepos, ""},
+		{http.MethodPost, "/repos", authSessionFragment, s.handleReposSave, ""},
 		{http.MethodGet, "/items", authSessionFragment, s.handleItems, ""},
 		{http.MethodPost, "/refresh", authSessionFragment, s.handleRefresh, ""},
-		{http.MethodPost, "/logout", authSessionFragment, s.handleLogout, ""},
+		{http.MethodPost, "/logout", authSignOut, s.handleLogout, ""},
 		// The visitor's own preferences (FR-1.12). authSessionFragment rather than the public
 		// treatment POST /theme gets: the appearance switch is public because the sign-in page is
 		// the one page where appearance is all there is, and none of these three settings means
@@ -351,6 +392,8 @@ func (s *Server) wrap(rt route) http.Handler {
 		h = s.requireSession(h, true)
 	case authSessionFragment:
 		h = s.requireSession(h, false)
+	case authSignOut:
+		h = s.requireSignOut(h)
 	}
 	return h
 }
@@ -722,6 +765,8 @@ type pageData struct {
 	// Dashboard is set only by handleDashboard. dashboard.html reads it for the header's fetched
 	// time, the error notice and the list; every other page leaves it nil.
 	Dashboard *dashboardView
+	// Repos is set only by the repository page (handleRepos, handleReposSave).
+	Repos *reposView
 	// Sites is set only by handleSites. sites.html reads it for the header and the tiles; every
 	// other page leaves it nil.
 	Sites *sitesView
@@ -744,6 +789,14 @@ type pageData struct {
 	// Error is a message written for the visitor. It is never an error's own text: those can
 	// carry a token (QS-4.3).
 	Error string
+	// MembersEnabled is a fact about the deployment, not the visitor: whether a members repository
+	// is configured. execute fills it in from the config; the sign-in page words itself by it.
+	MembersEnabled bool
+	// Member and Login are facts about the visitor's session, filled in by execute: whether they
+	// are a member rather than the owner, and who. The settings panel offers a member their
+	// repositories.
+	Member bool
+	Login  string
 	// Theme is the appearance the visitor asked for, and Path the page they are on so that the
 	// theme control can send them back to it. Both are filled in by execute, from the request,
 	// for every page: an appearance that applied to some pages and not others would be worse
@@ -800,6 +853,9 @@ func (s *Server) execute(w http.ResponseWriter, r *http.Request, status int, pag
 		return
 	}
 	data.Version = version.String()
+	data.MembersEnabled = s.cfg.GitHub.MembersEnabled()
+	sess := sessionOf(r)
+	data.Member, data.Login = sess.member(), sess.Login
 	data.Theme = themeOf(r)
 	data.Path = r.URL.Path
 	data.Settings = settingsOf(r)

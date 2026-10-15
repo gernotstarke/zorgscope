@@ -127,41 +127,63 @@ would be blocked; a link navigation is not subject to `form-action`.
 Signing in does not create a server-side session record. The cookie's value is:
 
 ```text
-base64(expiry) + "." + base64(HMAC-SHA256(key, expiry))
-where key = SHA256("zorgscope-session-v2" + GITHUB_OAUTH_CLIENT_SECRET)
+base64url(nonce ‖ AES-256-GCM(key, nonce, json))
+where key = SHA256("zorgscope-session-v3" + GITHUB_OAUTH_CLIENT_SECRET)
 ```
 
-`expiry` is Unix seconds, and it is the whole of the payload: the seen mark that used to sit beside
-it went with `NEW` on 2026-09-18 ([ADR‑0012](../decisions/0012-no-seen-mark.md)). Verifying
-a request recomputes the HMAC from the *current* `GITHUB_OAUTH_CLIENT_SECRET` and compares it
-against the cookie's signature with `subtle.ConstantTimeCompare`. This gives three properties for
-free, without a database:
+The JSON payload is `{"exp", "role", "login"}` and, for a member, `"tok"` (their GitHub token) and
+`"repos"` (their selection). `exp` is Unix seconds. Opening a cookie recomputes the key from the
+*current* `GITHUB_OAUTH_CLIENT_SECRET` and lets AES‑GCM authenticate and decrypt it; a cookie that
+fails authentication, is malformed, has expired or names an unknown role is no session. This gives
+three properties for free, without a database:
 
 * **Stateless verification.** No session table, no lookup — the server needs nothing but the current
   client secret to check a cookie's validity, which fits a machine that may be stopped and started
-  between any two requests. It also means an existing session survives a GitHub outage: verifying
+  between any two requests. It also means an existing session survives a GitHub outage: opening
   one touches nothing upstream.
 * **Rotation invalidates every session (FR‑8.3 AC4).** Because `key` is derived from the client
-  secret, regenerating that secret on GitHub changes the key, and every cookie signed under the old
-  key fails verification immediately — everywhere, on every device, without a sign-out action or a
-  revocation list.
-* **Nothing in the payload is worth forging.** The cookie carries no identity, no preference and no
-  mark a visitor could move to their advantage — only the moment it stops being accepted. Extending
-  that moment is exactly what the signature prevents, and there is nothing else in it to tamper with.
+  secret, regenerating that secret on GitHub changes the key, and every cookie sealed under the old
+  key fails to open immediately — everywhere, on every device, without a sign-out action or a
+  revocation list. The `v3` in the key context also ends every cookie of the earlier, signed
+  format at the 2.5.0 deployment: each person signs in once more.
+* **Confidential and tamper-evident.** GCM both hides the payload from anyone without the key and
+  refuses any altered byte, so a visitor can neither read their own token out of the cookie nor
+  extend its expiry or change its role.
 
-The cookie carries HttpOnly, Secure and SameSite=Lax (FR‑8.3 AC2) and holds a signature over an
-expiry and nothing else — no identity, no login name, and above all not the visitor's GitHub token,
-which was dropped at the end of the callback. A leaked cookie therefore leaks a thirty-day session,
-and nothing else.
+The cookie carries HttpOnly, Secure and SameSite=Lax (FR‑8.3 AC2). An owner's cookie holds expiry,
+role and login and not the GitHub token, which was dropped at the end of the callback; a leaked one
+leaks a thirty-day session. A member's cookie also holds their token and selection (next section).
+
+## A member's token
+
+A member (FR‑8.4, [ADR‑0019](../decisions/0019-members-allowlist-repository-personal-scope.md))
+signs in with the same scope-less OAuth App as the owner, and unlike the owner's their token is kept.
+
+* **Where it lives.** In the encrypted session cookie and nowhere else — not in a log, a response,
+  an error text or a file.
+* **What it can do.** The token has no scopes: it reads public data and says who its holder is. It
+  cannot read a private repository and cannot write anything.
+* **What it costs.** A member's fetch is at most 12 repositories × 2 queries = 24 requests (QS‑3.5),
+  spent on the member's own rate limit and never on `GITHUB_TOKEN`'s. The fetch never carries a
+  per-owner token of [ADR‑0017](../decisions/0017-a-token-per-repository-owner.md).
+* **How it ends.** Signing out asks GitHub to revoke the token before the cookie is cleared; a
+  failed revocation is logged with the login and the cookie is cleared regardless. Otherwise the
+  session expires after 7 days; rotating the client secret ends every session at once; and the
+  member can revoke zorgscope any time under GitHub's "Authorized OAuth Apps".
+* **What is scrubbed.** Every fetch error of a member's source, the error of the organisation's
+  repository list and the error of the revocation each have the member's token replaced by
+  `[token]` (`scrubbedError`) before a log line or a page can see them. `TestNoResponseOrLogLineCarriesAMemberToken` and
+  `TestMemberSourceScrubsTheTokenAndLogsTheLogin` assert it (QS‑4.3).
 
 ## Constant-time comparison and rate limiting
 
 QS‑4.2 requires that refused sign-in callbacks are rate-limited and that neither the authorization
-code, the state, nor the visitor's token ever reaches a log. `subtle.ConstantTimeCompare` is used
-for both secret comparisons in the sign-in path — the OAuth state parameter against its cookie, and
-the session cookie's signature against the recomputed HMAC — so that a failed comparison takes the
-same time regardless of how many leading bytes matched. An ordinary `==` on secret bytes does not
-have that property, and is exactly the kind of timing side-channel `subtle` exists to close.
+code, the state, nor the visitor's token ever reaches a log. `subtle.ConstantTimeCompare` compares
+the OAuth state parameter against its cookie, so that a failed comparison takes the same time
+regardless of how many leading bytes matched. An ordinary `==` on secret bytes does not have that
+property, and is exactly the kind of timing side-channel `subtle` exists to close. The session
+cookie needs no comparison of its own: its authenticity is AES‑GCM's tag check (see above), which
+also fails without revealing how much of the tag matched.
 
 Callbacks are rate-limited by an in-memory token bucket keyed by client IP, and the token is spent
 at the top of the handler — before the state is compared, and before any request leaves this
@@ -199,12 +221,12 @@ limit is `sign-in rate-limited` and the client IP alone: the budget is spent bef
 at that point there is no reason yet to name.
 
 It never carries the authorization code, the state value, the visitor's access token, the client
-secret, or a login name the visitor did not choose to publish. The session cookie holds no identity
-either, so nothing downstream can reconstruct one from it.
+secret, or a login name the visitor did not choose to publish. The session cookie is encrypted, so
+nothing downstream can read the login it carries.
 
 ## What is never logged (QS‑4.3)
 
-No client secret, no derived session key, no authorization code, no visitor token and no upstream
+No client secret, no derived session key, no authorization code, no visitor token, no member's token and no upstream
 API token may appear in a log line, an HTTP response body, or an error page. Two pieces of this sit
 in code that has nothing to do with the web layer:
 

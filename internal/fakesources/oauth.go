@@ -2,8 +2,10 @@ package fakesources
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -97,7 +99,11 @@ func (s *server) handleRepository(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	perms := permissionSets[s.oauthPermission]
+	key := s.oauthPermission
+	if override, ok := s.oauthRepoPermission[r.PathValue("owner")+"/"+r.PathValue("repo")]; ok {
+		key = override
+	}
+	perms := permissionSets[key]
 	s.mu.Unlock()
 	body := map[string]any{"full_name": r.PathValue("owner") + "/" + r.PathValue("repo")}
 	if perms != nil {
@@ -106,17 +112,104 @@ func (s *server) handleRepository(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, body)
 }
 
-// handleControlOAuthUser serves POST /_control/oauth-user?permission=…, steering the permissions
-// block the next GET /repos/{owner}/{repo} responses carry, so a test can exercise every access
-// level the backend must recognise without a second fixture mechanism.
+// handleControlOAuthUser serves POST /_control/oauth-user?permission=P[&repo=owner/name][&login=L].
+// Without repo it sets the default permission GET /repos/{owner}/{repo} answers with and clears
+// every per-repository override; with repo it sets that repository's alone, so a test can exercise
+// every access level the backend must recognise. login sets what GET /user answers.
 func (s *server) handleControlOAuthUser(w http.ResponseWriter, r *http.Request) {
-	p := r.URL.Query().Get("permission")
+	q := r.URL.Query()
+	p := q.Get("permission")
 	if _, ok := permissionSets[p]; !ok {
 		http.Error(w, "permission must be one of admin, maintain, push, pull, none, absent", http.StatusBadRequest)
 		return
 	}
 	s.mu.Lock()
-	s.oauthPermission = p
+	if repo := q.Get("repo"); repo != "" {
+		s.oauthRepoPermission[repo] = p
+	} else {
+		s.oauthPermission = p
+		s.oauthRepoPermission = map[string]string{}
+	}
+	if login := q.Get("login"); login != "" {
+		s.oauthLogin = login
+	}
 	s.mu.Unlock()
 	w.WriteHeader(http.StatusOK)
+}
+
+// handleUser serves GET /user: the login the control set, for the fake's one token.
+func (s *server) handleUser(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Authorization") != "Bearer "+fakeToken {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "Bad credentials"})
+		return
+	}
+	s.mu.Lock()
+	login := s.oauthLogin
+	s.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{"login": login, "id": 1})
+}
+
+// orgRepoPageSize is how many repositories one page of GET /orgs/{org}/repos holds, whatever
+// per_page asks: small, so that the adapter's Link-following is exercised by fifteen fixtures.
+const orgRepoPageSize = 10
+
+// handleOrgRepos serves GET /orgs/{org}/repos: fourteen live repositories and one archived, in
+// name order, paged by orgRepoPageSize with a Link header to the next page.
+func (s *server) handleOrgRepos(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Authorization") != "Bearer "+fakeToken {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "Bad credentials"})
+		return
+	}
+	org := r.PathValue("org")
+	all := make([]map[string]any, 0, 15)
+	for i := 1; i <= 14; i++ {
+		n := fmt.Sprintf("%02d", i)
+		all = append(all, map[string]any{"full_name": org + "/repo-" + n, "description": "Repository " + n, "archived": false})
+	}
+	all = append(all, map[string]any{"full_name": org + "/old", "description": nil, "archived": true})
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	from := min((page-1)*orgRepoPageSize, len(all))
+	to := min(from+orgRepoPageSize, len(all))
+	if to < len(all) {
+		next := *r.URL
+		q := next.Query()
+		q.Del("page")
+		// page goes last, as GitHub writes it, so that the link ends in page=N>.
+		next.RawQuery = strings.TrimPrefix(q.Encode()+"&page="+strconv.Itoa(page+1), "&")
+		w.Header().Set("Link", "<http://"+r.Host+next.String()+`>; rel="next"`)
+	}
+	writeJSON(w, http.StatusOK, all[from:to])
+}
+
+// handleRevoke serves DELETE /applications/{client_id}/token: the App revoking one of its tokens.
+// The fake knows no client secret, so it checks only that the basic-auth user is the client id in
+// the path and that the body names its one token.
+func (s *server) handleRevoke(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := r.BasicAuth()
+	var body struct {
+		AccessToken string `json:"access_token"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if !ok || user != r.PathValue("client_id") || body.AccessToken != fakeToken {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"message": "not a token of this app"})
+		return
+	}
+	s.mu.Lock()
+	s.revoked = append(s.revoked, body.AccessToken)
+	s.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleControlRevoked serves GET /_control/revoked: every token handleRevoke accepted.
+func (s *server) handleControlRevoked(w http.ResponseWriter, _ *http.Request) {
+	s.mu.Lock()
+	out := append([]string(nil), s.revoked...)
+	s.mu.Unlock()
+	if out == nil {
+		out = []string{}
+	}
+	writeJSON(w, http.StatusOK, out)
 }

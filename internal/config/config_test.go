@@ -535,3 +535,64 @@ func TestLoadReadsATokenPerOwner(t *testing.T) {
 		t.Errorf("owner tokens without GITHUB_TOKEN_FAMILY_ORG = %v (err %v), want none", cfg.Secrets.OwnerTokens, err)
 	}
 }
+
+// FR-8.4: the members repository and organisation are a pair of deployment facts; absent, nobody
+// but the collaborators of auth_repo gets in.
+func TestLoadMembers(t *testing.T) {
+	cfg, err := config.Load("testdata/members.yaml", env(fullEnv()))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.GitHub.MembersRepo != "gernotstarke/zorgscope-members" || cfg.GitHub.MembersOrg != "isaqb-org" {
+		t.Fatalf("members = %q / %q", cfg.GitHub.MembersRepo, cfg.GitHub.MembersOrg)
+	}
+	if !cfg.GitHub.MembersEnabled() {
+		t.Fatal("MembersEnabled() = false with both keys set")
+	}
+	plain, err := config.Load("testdata/valid.yaml", env(fullEnv()))
+	if err != nil {
+		t.Fatalf("Load(valid) error = %v", err)
+	}
+	if plain.GitHub.MembersEnabled() {
+		t.Fatal("MembersEnabled() = true with neither key set")
+	}
+}
+
+func TestLoadRejectsHalfConfiguredOrSelfReferentialMembers(t *testing.T) {
+	for path, want := range map[string]string{
+		"testdata/members-no-org.yaml":    "github.members_org",
+		"testdata/members-same-repo.yaml": "github.members_repo",
+	} {
+		_, err := config.Load(path, env(fullEnv()))
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: err = %v, want it to name %s", path, err, want)
+		}
+	}
+}
+
+func TestIsLoginAndIsRepo(t *testing.T) {
+	if !config.IsLogin("octocat") || config.IsLogin("-bad") || config.IsLogin("a b") {
+		t.Error("IsLogin")
+	}
+	if !config.IsRepo("isaqb-org/glossary") || config.IsRepo("glossary") || config.IsRepo("a/b/c") {
+		t.Error("IsRepo")
+	}
+	if config.MaxMemberRepos != 12 {
+		t.Errorf("MaxMemberRepos = %d", config.MaxMemberRepos)
+	}
+}
+
+// D11: a member's twelve colours are twelve of the stylesheet's keys, one per possible repository,
+// and none of them the striped aim42 key or systems42's green.
+func TestMemberHuesAreTwelvePlainHueKeys(t *testing.T) {
+	if len(config.MemberHues) != config.MaxMemberRepos {
+		t.Fatalf("MemberHues has %d keys, want %d", len(config.MemberHues), config.MaxMemberRepos)
+	}
+	seen := map[string]bool{}
+	for _, h := range config.MemberHues {
+		if !slices.Contains(config.HueKeys, h) || h == "aim42" || h == "green" || seen[h] {
+			t.Errorf("MemberHues holds %q", h)
+		}
+		seen[h] = true
+	}
+}

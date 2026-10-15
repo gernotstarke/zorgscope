@@ -821,7 +821,7 @@ func dashHandlerWith(t *testing.T, src ports.Source) (http.Handler, *snapshot.Ca
 func mintSession() *http.Cookie {
 	return &http.Cookie{
 		Name:  sessionCookieName,
-		Value: newSessionCodec(testClientSecret).mint(session{Expiry: testNow.Add(sessionTTL)}),
+		Value: newSessionCodec(testClientSecret).mint(session{Expiry: testNow.Add(sessionTTL), Role: roleOwner, Login: "zorg"}),
 	}
 }
 

@@ -5,13 +5,11 @@ package web
 
 import (
 	"bytes"
-	"encoding/base64"
 	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -117,46 +115,20 @@ func TestACollaboratorIsSignedIn(t *testing.T) {
 	}
 }
 
-// FR-8.3 AC2, in the form the old token sign-in was pinned in: not merely "no credential appears
-// verbatim" — a cookie carrying base64(secret) would pass that and still hand the credential to
-// anything that reads the cookie jar — but "the value is an expiry and a signature over it, and
-// nothing else".
-func TestTheSessionCookieCarriesOnlyAnExpiryAndASignature(t *testing.T) {
-	s := newTestServerWith(t, func(o *Options) { startFakeGitHub(t, o) })
-	c := cookieNamed(signInThroughGitHub(t, s.Handler()), sessionCookieName)
-	if c == nil {
-		t.Fatal("no session cookie")
+// FR-8.3 AC2: the cookie is opaque — no credential, and no readable structure, appears in it —
+// and an owner's carries neither a token nor a selection.
+func TestTheSessionCookieIsOpaqueAndOwnerShaped(t *testing.T) {
+	h := newTestServerWith(t, func(o *Options) { startFakeGitHub(t, o) }).Handler()
+	c := cookieNamed(signInThroughGitHub(t, h), sessionCookieName)
+	if c == nil || !c.HttpOnly || !c.Secure || c.SameSite != http.SameSiteLaxMode {
+		t.Fatalf("session cookie = %+v", c)
 	}
-
-	for _, credential := range []string{testClientSecret, "fake-token", "fake-code"} {
-		for name, enc := range map[string]string{
-			"verbatim":          credential,
-			"base64url":         base64.RawURLEncoding.EncodeToString([]byte(credential)),
-			"base64":            base64.StdEncoding.EncodeToString([]byte(credential)),
-			"base64 unpadded":   base64.RawStdEncoding.EncodeToString([]byte(credential)),
-			"url-encoded":       url.QueryEscape(credential),
-			"hex-ish uppercase": strings.ToUpper(credential),
-		} {
-			if strings.Contains(c.Value, enc) {
-				t.Errorf("the cookie carries %q as %s (FR-8.3 AC2)", credential, name)
-			}
-		}
+	sess, ok := newSessionCodec(testClientSecret).decode(c.Value, testNow)
+	if !ok || sess.Role != roleOwner || sess.Token != "" || sess.Repos != nil {
+		t.Fatalf("session = %+v, ok %v", sess, ok)
 	}
-
-	encPayload, _, _ := strings.Cut(c.Value, ".")
-	payload, err := base64.RawURLEncoding.DecodeString(encPayload)
-	if err != nil {
-		t.Fatalf("the cookie payload is not base64url: %v", err)
-	}
-	if strings.Contains(string(payload), ":") {
-		t.Errorf("the cookie payload carries a second field: %q", payload)
-	}
-	exp, err := strconv.ParseInt(string(payload), 10, 64)
-	if err != nil {
-		t.Fatalf("the cookie payload is not a timestamp: %q", payload)
-	}
-	if want := testNow.Add(sessionTTL).Unix(); exp != want {
-		t.Errorf("cookie expiry = %d, want %d", exp, want)
+	if strings.Contains(c.Value, "fake-token") || strings.Contains(c.Value, ".") {
+		t.Fatalf("the cookie is not opaque: %s", c.Value)
 	}
 }
 
@@ -368,7 +340,7 @@ func TestTheLastAttemptInTheBudgetCanStillSignIn(t *testing.T) {
 		}
 	}
 	// The visitor finally signs in as themselves rather than as somebody with no push access.
-	access.allow = map[string]bool{"fake-token": true}
+	access.allow = map[string]bool{"fake-token " + testAuthRepo: true}
 	rec := signInThroughGitHub(t, h)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("the tenth attempt = %d, want 303: nine failures must not cost the tenth", rec.Code)
@@ -378,7 +350,7 @@ func TestTheLastAttemptInTheBudgetCanStillSignIn(t *testing.T) {
 	}
 }
 
-// FR-8.3 AC4: rotating the client secret is this product's only sign-out, and it works because the
+// FR-8.3 AC4: rotating the client secret ends every session at once, and it works because the
 // session key is derived from that secret (design 2026-09-14 §2).
 func TestRotatingTheClientSecretInvalidatesExistingSessions(t *testing.T) {
 	old := newTestServerWith(t, func(o *Options) { startFakeGitHub(t, o) })
@@ -469,5 +441,114 @@ func TestTheStateCookieIsScopedAndShortLived(t *testing.T) {
 	}
 	if want := int(stateTTL / time.Second); c.MaxAge != want {
 		t.Errorf("state cookie Max-Age = %d, want %d", c.MaxAge, want)
+	}
+}
+
+// FR-8.4: write access on the members repository admits a member, whose session carries their
+// login and token and lasts seven days; the audit line names login and role.
+func TestAMemberIsSignedInWithLoginAndToken(t *testing.T) {
+	var logged bytes.Buffer
+	access := &stubAccess{allow: map[string]bool{"fake-token " + testMembersRepo: true}}
+	h := newTestServerWith(t, func(o *Options) {
+		startFakeGitHub(t, o)
+		withMembers(o)
+		o.Access = access
+		o.Identity = &stubIdentity{login: "octocat"}
+		o.Log = slog.New(slog.NewTextHandler(&logged, nil))
+	}).Handler()
+	rec := signInThroughGitHub(t, h)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
+		t.Fatalf("callback = %d %s", rec.Code, rec.Header().Get("Location"))
+	}
+	c := cookieNamed(rec, sessionCookieName)
+	sess, ok := newSessionCodec(testClientSecret).decode(c.Value, testNow)
+	if !ok || sess.Role != roleMember || sess.Login != "octocat" || sess.Token != "fake-token" || len(sess.Repos) != 0 {
+		t.Fatalf("session = %+v", sess)
+	}
+	if !sess.Expiry.Equal(testNow.Add(memberSessionTTL)) {
+		t.Fatalf("expiry = %v, want 7 days", sess.Expiry)
+	}
+	if got := access.askedRepos(); len(got) != 2 || got[0] != testAuthRepo || got[1] != testMembersRepo {
+		t.Fatalf("asked %v", got)
+	}
+	line := firstLineContaining(logged.String(), "sign-in accepted")
+	if !strings.Contains(line, "login=octocat") || !strings.Contains(line, "role=member") || strings.Contains(logged.String(), "fake-token") {
+		t.Fatalf("log = %s", logged.String())
+	}
+}
+
+// Owner wins (spec D8): a collaborator of auth_repo who is also in the members repository is an
+// owner, and the members repository is never even asked.
+func TestOwnerWinsAndTheMembersRepositoryIsNotAsked(t *testing.T) {
+	access := &stubAccess{allow: map[string]bool{"fake-token " + testAuthRepo: true, "fake-token " + testMembersRepo: true}}
+	h := newTestServerWith(t, func(o *Options) {
+		startFakeGitHub(t, o)
+		withMembers(o)
+		o.Access = access
+	}).Handler()
+	c := cookieNamed(signInThroughGitHub(t, h), sessionCookieName)
+	sess, ok := newSessionCodec(testClientSecret).decode(c.Value, testNow)
+	if !ok || sess.Role != roleOwner || sess.Login != "zorg" || sess.Token != "" {
+		t.Fatalf("session = %+v", sess)
+	}
+	if got := access.askedRepos(); len(got) != 1 || got[0] != testAuthRepo {
+		t.Fatalf("asked %v", got)
+	}
+}
+
+func TestAStrangerToBothRepositoriesIsRefusedNamingBoth(t *testing.T) {
+	h := newTestServerWith(t, func(o *Options) {
+		startFakeGitHub(t, o)
+		withMembers(o)
+		o.Access = &stubAccess{allow: map[string]bool{}}
+	}).Handler()
+	rec := signInThroughGitHub(t, h)
+	if rec.Code != http.StatusForbidden || cookieNamed(rec, sessionCookieName) != nil {
+		t.Fatalf("callback = %d, cookie %v", rec.Code, cookieNamed(rec, sessionCookieName))
+	}
+	if body := rec.Body.String(); !strings.Contains(body, testAuthRepo) || !strings.Contains(body, testMembersRepo) {
+		t.Fatalf("refusal names neither repository: %s", body)
+	}
+}
+
+// Without members configured, the members repository is never asked — a write collaborator of
+// it is a stranger.
+func TestWithoutMembersConfiguredTheMembersRepositoryIsNeverAsked(t *testing.T) {
+	access := &stubAccess{allow: map[string]bool{"fake-token " + testMembersRepo: true}}
+	h := newTestServerWith(t, func(o *Options) {
+		startFakeGitHub(t, o)
+		o.Access = access
+	}).Handler()
+	if rec := signInThroughGitHub(t, h); rec.Code != http.StatusForbidden {
+		t.Fatalf("callback = %d", rec.Code)
+	}
+	if got := access.askedRepos(); len(got) != 1 || got[0] != testAuthRepo {
+		t.Fatalf("asked %v", got)
+	}
+}
+
+// Nobody is admitted without a login: GET /user failing, or answering something that is not a
+// login, refuses with no session.
+func TestAnIdentityFailureRefuses(t *testing.T) {
+	for name, id := range map[string]*stubIdentity{
+		"error":       {err: errors.New("github is down")},
+		"not a login": {login: "-no-"},
+	} {
+		h := newTestServerWith(t, func(o *Options) {
+			startFakeGitHub(t, o)
+			o.Identity = id
+		}).Handler()
+		rec := signInThroughGitHub(t, h)
+		if rec.Code != http.StatusBadGateway || cookieNamed(rec, sessionCookieName) != nil {
+			t.Errorf("%s: callback = %d, cookie %v", name, rec.Code, cookieNamed(rec, sessionCookieName))
+		}
+	}
+}
+
+func TestNewRequiresAnIdentityReader(t *testing.T) {
+	o := testOptions()
+	o.Identity = nil
+	if _, err := New(o); err == nil {
+		t.Fatal("New() accepted no identity reader")
 	}
 }

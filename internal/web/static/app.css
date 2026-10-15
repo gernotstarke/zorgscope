@@ -514,6 +514,16 @@ button:hover,
 }
 .setting-note { margin: 0.35rem 0 0; color: var(--muted); font-size: 0.78rem; }
 
+/* The repository page (FR-8.5): one checkbox per repository, the description muted beside it. */
+.repos { max-width: 44rem; margin: 1.5rem auto; padding: 0 1rem; }
+.repos-intro, .repos-count { color: var(--muted); }
+.repos-list { list-style: none; margin: 0 0 1rem; padding: 0; }
+.repos-list li { padding: 0.35rem 0; border-bottom: 1px solid var(--border); }
+.repos-list label { display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 0.6rem; align-items: baseline; cursor: pointer; }
+.repos-name { font-weight: 600; }
+.repos-description { grid-column: 2; color: var(--muted); font-size: 0.9rem; }
+.repos-saved { color: var(--muted); }
+
 /* ---------------------------------------------------------------- the footer */
 
 .footer-made,

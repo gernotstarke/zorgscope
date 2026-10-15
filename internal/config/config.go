@@ -30,6 +30,10 @@ const DefaultGroup = "arc42"
 // per fetch.
 const MaxRepos = 19
 
+// MaxMemberRepos is how many repositories a member may choose (spec 2026-10-12 D5, D11): as many
+// as there are plain site hues, so twelve sectors are twelve colours.
+const MaxMemberRepos = 12
+
 // groupPattern is a group's display name: short enough for a sector's name on the radar.
 var groupPattern = regexp.MustCompile(`^[A-Za-z0-9.-]{1,12}$`)
 
@@ -45,6 +49,12 @@ const maxTagLen = 3
 // inline styles, so a hex value in the YAML would have nowhere to go.
 var HueKeys = []string{"navy", "blue", "plum", "teal", "umber", "rose", "slate",
 	"apricot", "orange", "tangerine", "rust", "copper", "green", "aim42"}
+
+// MemberHues are a member's tile and sector colours, by position in their selection (spec
+// 2026-10-12 D11): the twelve plain keys of HueKeys — systems42's green belongs to one site and
+// aim42 is striped, so neither is here.
+var MemberHues = []string{"navy", "blue", "plum", "teal", "umber", "rose", "slate",
+	"apricot", "orange", "tangerine", "rust", "copper"}
 
 // Site is one web property or family of repositories drawn as a tile on the Sites view (FR-1.8): its
 // name, its address, the watched repositories behind it, its colour key, an optional short tag that
@@ -89,7 +99,11 @@ type GitHub struct {
 	// pull requests are not somebody else's contribution (FR-1.14). Empty means nobody's, and the
 	// Needs-you band then holds only the marked items.
 	Owner string
-	Repos []string
+	// MembersRepo is the repository whose write access admits a visitor as a member (FR-8.4), and
+	// MembersOrg the organisation whose public repositories a member may choose from (FR-8.5).
+	// Both or neither: Load refuses one without the other. Empty means no members at all.
+	MembersRepo, MembersOrg string
+	Repos                   []string
 	// Sites are the tiles of the Sites view, in the order they are drawn (FR-1.8), each in a group:
 	// its family on the radars (FR-1.15, ADR-0018). Each names one or more
 	// repositories of Repos; the repositories no site names share a tile of their own. Empty is valid:
@@ -104,6 +118,9 @@ type GitHub struct {
 	// even at the real GitHub: the API answers at api.github.com and sign-in at github.com.
 	OAuthBaseURL string // "" means github.com; set via GITHUB_OAUTH_BASE_URL.
 }
+
+// MembersEnabled reports whether invited members are admitted at all (FR-8.4).
+func (g GitHub) MembersEnabled() bool { return g.MembersRepo != "" }
 
 // Groups are the sites' groups — their families on the radars — in order of first appearance, nil
 // without sites (FR-1.15, ADR-0018).
@@ -166,11 +183,13 @@ func OwnerTokenVar(owner string) string {
 type fileConfig struct {
 	Timezone string `yaml:"timezone"`
 	GitHub   struct {
-		AuthRepo string     `yaml:"auth_repo"`
-		Owner    string     `yaml:"owner"`
-		CacheTTL string     `yaml:"cache_ttl"`
-		Repos    []string   `yaml:"repos"`
-		Sites    []fileSite `yaml:"sites"`
+		AuthRepo    string     `yaml:"auth_repo"`
+		Owner       string     `yaml:"owner"`
+		MembersRepo string     `yaml:"members_repo"`
+		MembersOrg  string     `yaml:"members_org"`
+		CacheTTL    string     `yaml:"cache_ttl"`
+		Repos       []string   `yaml:"repos"`
+		Sites       []fileSite `yaml:"sites"`
 	} `yaml:"github"`
 }
 
@@ -193,6 +212,12 @@ var loginPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0
 
 // repoPattern matches a GitHub "owner/name" repository reference.
 var repoPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+
+// IsLogin reports whether s is a GitHub login, by the rule github.owner is checked with.
+func IsLogin(s string) bool { return loginPattern.MatchString(s) }
+
+// IsRepo reports whether s is an owner/name repository reference.
+func IsRepo(s string) bool { return repoPattern.MatchString(s) }
 
 // Load reads the YAML file at path, overlays secrets from env, and validates the result.
 //
@@ -253,6 +278,8 @@ func Load(path string, env func(string) string) (Config, error) {
 		GitHub: GitHub{
 			AuthRepo:     fc.GitHub.AuthRepo,
 			Owner:        fc.GitHub.Owner,
+			MembersRepo:  fc.GitHub.MembersRepo,
+			MembersOrg:   fc.GitHub.MembersOrg,
 			Repos:        fc.GitHub.Repos,
 			Sites:        sites,
 			CacheTTL:     cacheTTL,
@@ -273,6 +300,20 @@ func Load(path string, env func(string) string) (Config, error) {
 	// deployment notices (FR-8.3).
 	if !repoPattern.MatchString(fc.GitHub.AuthRepo) {
 		return Config{}, fmt.Errorf("github.auth_repo: %q is not in owner/name form", fc.GitHub.AuthRepo)
+	}
+	switch {
+	case fc.GitHub.MembersRepo == "" && fc.GitHub.MembersOrg == "":
+		// No members: the deployment admits the collaborators of auth_repo and nobody else.
+	case fc.GitHub.MembersRepo == "":
+		return Config{}, errors.New("github.members_repo: required when github.members_org is set")
+	case fc.GitHub.MembersOrg == "":
+		return Config{}, errors.New("github.members_org: required when github.members_repo is set")
+	case !repoPattern.MatchString(fc.GitHub.MembersRepo):
+		return Config{}, fmt.Errorf("github.members_repo: %q is not in owner/name form", fc.GitHub.MembersRepo)
+	case fc.GitHub.MembersRepo == fc.GitHub.AuthRepo:
+		return Config{}, errors.New("github.members_repo: must differ from github.auth_repo — a collaborator of auth_repo is an owner, not a member")
+	case !loginPattern.MatchString(fc.GitHub.MembersOrg):
+		return Config{}, fmt.Errorf("github.members_org: %q is not a GitHub login", fc.GitHub.MembersOrg)
 	}
 	if cfg.Secrets.OAuthClientID == "" {
 		return Config{}, errors.New("GITHUB_OAUTH_CLIENT_ID is not set")

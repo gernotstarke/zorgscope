@@ -1,0 +1,6 @@
+timezone: Europe/Berlin
+github:
+  auth_repo: gernotstarke/zorgscope
+  members_repo: gernotstarke/zorgscope-members
+  members_org: isaqb-org
+  repos: [org/repo]

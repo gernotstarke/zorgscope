@@ -4,9 +4,10 @@
 package web
 
 import (
+	"bytes"
 	"context"
-	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -46,6 +47,8 @@ func TestEveryProtectedRouteRefusesAnonymousAccess(t *testing.T) {
 		{http.MethodGet, "/", http.StatusSeeOther},      // FR-8.3 AC1: redirect, not 401
 		{http.MethodGet, "/sites", http.StatusSeeOther}, // a page, so a redirect like / (FR-8.3 AC1)
 		{http.MethodGet, "/radar", http.StatusSeeOther},
+		{http.MethodGet, "/repos", http.StatusSeeOther},
+		{http.MethodPost, "/repos", http.StatusUnauthorized},
 		{http.MethodGet, "/items", http.StatusUnauthorized},
 		{http.MethodPost, "/refresh", http.StatusUnauthorized},
 		{http.MethodPost, "/logout", http.StatusUnauthorized},
@@ -130,31 +133,26 @@ func TestPublicRoutesNeedNoSession(t *testing.T) {
 func TestTamperedCookieIsRejected(t *testing.T) {
 	h := newTestServer(t).Handler()
 	c := signIn(t, h)
+	v := c.Value
 
-	payload, sig, ok := strings.Cut(c.Value, ".")
-	if !ok {
-		t.Fatalf("cookie value %q is not payload.signature", c.Value)
+	flip := func(at int) string {
+		b := []byte(v)
+		if b[at] == 'A' {
+			b[at] = 'B'
+		} else {
+			b[at] = 'A'
+		}
+		return string(b)
 	}
-	flipped := "A" + sig[1:]
-	if flipped == sig {
-		flipped = "B" + sig[1:]
-	}
-
 	for name, value := range map[string]string{
-		"tampered signature":       payload + "." + flipped,
-		"tampered payload":         "A" + payload[1:] + "." + sig,
-		"no signature":             payload,
-		"empty":                    "",
-		"extra dots":               payload + "." + sig + "." + sig,
-		"dot only":                 ".",
-		"invalid base64 payload":   "!!not-base64!!." + sig,
-		"invalid base64 signature": payload + ".!!not-base64!!",
-		// A truncated signature still decodes; it is the length that is wrong, and
-		// ConstantTimeCompare of unequal lengths must not be treated as a match.
-		"short signature": payload + "." + sig[:len(sig)-4],
-		"long signature":  payload + "." + sig + "AAAA",
-		// A payload that is not an integer cannot be a session.
-		"non-numeric payload": base64.RawURLEncoding.EncodeToString([]byte("tomorrow")) + "." + sig,
+		"tampered nonce":      flip(0),
+		"tampered ciphertext": flip(len(v) / 2),
+		"tampered tag":        flip(len(v) - 2),
+		"truncated":           v[:len(v)-4],
+		"extended":            v + "AAAA",
+		"empty":               "",
+		"dot only":            ".",
+		"not base64":          "!!not-base64!!",
 	} {
 		t.Run(name, func(t *testing.T) {
 			bad := &http.Cookie{Name: sessionCookieName, Value: value}
@@ -165,22 +163,11 @@ func TestTamperedCookieIsRejected(t *testing.T) {
 	}
 }
 
-// A payload minted before 2026-09-18 carried "expiry:seen". It proves nothing this codec signs
-// now, and is refused like the pre-reset format was: the visitor signs in once more.
-func TestTheOldTwoIntegerPayloadIsRefused(t *testing.T) {
-	codec := newSessionCodec(testClientSecret)
-	payload := strconv.FormatInt(testNow.Add(sessionTTL).Unix(), 10) + ":0"
-	value := sessionEncoding.EncodeToString([]byte(payload)) + "." + sessionEncoding.EncodeToString(codec.sign(payload))
-	if _, ok := codec.decode(value, testNow); ok {
-		t.Error("a two-integer payload decoded; the seen mark is gone and its format with it")
-	}
-}
-
 // Step 1's round trip, directly against the codec: what mint writes for a session, decode reads
 // back unchanged.
 func TestSessionCodecRoundTripsTheExpiry(t *testing.T) {
 	codec := newSessionCodec(testClientSecret)
-	want := session{Expiry: testNow.Add(sessionTTL)}
+	want := session{Expiry: testNow.Add(sessionTTL), Role: roleOwner, Login: "zorg"}
 	got, ok := codec.decode(codec.mint(want), testNow)
 	if !ok {
 		t.Fatal("decode of a freshly minted session = false")
@@ -190,34 +177,22 @@ func TestSessionCodecRoundTripsTheExpiry(t *testing.T) {
 	}
 }
 
-// The expiry sits inside the signed payload precisely so it cannot be moved on its own: a cookie
-// whose expiry is altered by one character, with the signature left exactly as it was minted, must
-// fail to decode — not merely disagree with what was minted.
-func TestACookieWithTheExpiryAlteredByOneCharacterFails(t *testing.T) {
+// The expiry sits inside the authenticated ciphertext precisely so it cannot be moved on its own:
+// a cookie altered at any single character must fail to decode — not merely disagree with what
+// was minted.
+func TestACookieAlteredByOneCharacterFails(t *testing.T) {
 	codec := newSessionCodec(testClientSecret)
-	value := codec.mint(session{Expiry: testNow.Add(sessionTTL)})
-
-	encPayload, encSig, ok := strings.Cut(value, ".")
-	if !ok {
-		t.Fatalf("cookie value %q is not payload.signature", value)
-	}
-	payload, err := sessionEncoding.DecodeString(encPayload)
-	if err != nil {
-		t.Fatalf("decoding payload: %v", err)
-	}
-
-	// Flip the last digit of the payload; the signature is untouched.
-	digits := []byte(string(payload))
-	last := len(digits) - 1
-	if digits[last] == '1' {
-		digits[last] = '2'
-	} else {
-		digits[last] = '1'
-	}
-	tampered := sessionEncoding.EncodeToString(digits) + "." + encSig
-
-	if _, ok := codec.decode(tampered, testNow); ok {
-		t.Error("decode accepted a cookie whose expiry was altered by one character without re-signing")
+	value := codec.mint(session{Expiry: testNow.Add(sessionTTL), Role: roleOwner, Login: "zorg"})
+	for at := range value {
+		b := []byte(value)
+		if b[at] == 'A' {
+			b[at] = 'B'
+		} else {
+			b[at] = 'A'
+		}
+		if _, ok := codec.decode(string(b), testNow); ok {
+			t.Fatalf("decode accepted a cookie altered at offset %d", at)
+		}
 	}
 }
 
@@ -661,15 +636,15 @@ func TestARouteWithNoDeclaredCredentialFailsClosed(t *testing.T) {
 	}
 }
 
-// Rotating the OAuth client secret is this product's only sign-out (FR-8.3 AC4), and it cannot
-// reach a page the browser has already stored. Authenticated responses therefore say no-store.
+// Neither signing out nor rotating the OAuth client secret (FR-8.3 AC4) can reach a page the
+// browser has already stored. Authenticated responses therefore say no-store.
 func TestAuthenticatedResponsesAreNotStoredByTheBrowser(t *testing.T) {
 	s := newTestServer(t)
 	h := s.Handler()
 	c := signIn(t, h)
 
 	for _, rt := range s.routes() {
-		if rt.auth != authSessionPage && rt.auth != authSessionFragment {
+		if rt.auth != authSessionPage && rt.auth != authSessionFragment && rt.auth != authSignOut {
 			continue
 		}
 		t.Run(rt.method+" "+rt.pattern, func(t *testing.T) {
@@ -834,20 +809,127 @@ func testOptions() Options {
 		Log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 		// The visitor GitHub vouches for in the tests is whoever presents the fake's token. A test
 		// about being refused replaces this with a stub that admits nobody.
-		Access: &stubAccess{allow: map[string]bool{"fake-token": true}},
+		Access:   &stubAccess{allow: map[string]bool{"fake-token " + testAuthRepo: true}},
+		Identity: &stubIdentity{login: "zorg"},
 	}
 }
 
-// stubAccess stands in for the GitHub adapter: it decides by token, or fails outright, so a test
-// can exercise the collaborator, the stranger and an unreachable GitHub without a fixture for each.
+// stubAccess stands in for the GitHub adapter: it decides by token and repository, or fails
+// outright, so a test can exercise the collaborator, the member, the stranger and an unreachable
+// GitHub without a fixture for each. The key is token + " " + repo.
 type stubAccess struct {
+	mu    sync.Mutex
 	allow map[string]bool
+	err   error
+	asked []string
+}
+
+func (s *stubAccess) HasPushAccess(_ context.Context, token, repo string) (bool, error) {
+	s.mu.Lock()
+	s.asked = append(s.asked, repo)
+	s.mu.Unlock()
+	return s.allow[token+" "+repo], s.err
+}
+
+func (s *stubAccess) askedRepos() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.asked...)
+}
+
+const (
+	testMembersRepo = "gernotstarke/zorgscope-members"
+	testMembersOrg  = "isaqb-org"
+)
+
+// withMembers configures a deployment that admits members (FR-8.4). Later tasks add the stubs the
+// member paths need to this one function, so every member test starts from the same shape.
+func withMembers(o *Options) {
+	o.Config.GitHub.MembersRepo = testMembersRepo
+	o.Config.GitHub.MembersOrg = testMembersOrg
+	o.MemberSource = (&stubMemberSources{}).source
+	o.Repos = &stubRepos{list: fourteenRepos()}
+	o.Revoker = &stubRevoker{}
+}
+
+// stubRepos stands in for GET /orgs/{org}/repos.
+type stubRepos struct {
+	mu    sync.Mutex
+	list  []ports.Repo
+	err   error
+	calls int
+}
+
+func (s *stubRepos) PublicRepos(_ context.Context, _ string, _ string) ([]ports.Repo, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls++
+	return append([]ports.Repo(nil), s.list...), s.err
+}
+
+// fourteenRepos is the fake organisation: repo-01 … repo-14, as the fixture server lists them.
+func fourteenRepos() []ports.Repo {
+	out := make([]ports.Repo, 14)
+	for i := range out {
+		n := fmt.Sprintf("%02d", i+1)
+		out[i] = ports.Repo{FullName: testMembersOrg + "/repo-" + n, Description: "Repository " + n}
+	}
+	return out
+}
+
+const (
+	testMemberLogin = "octocat"
+	testMemberToken = "member-token-canary"
+)
+
+// stubMemberSources stands in for Options.MemberSource: one fakeSource per (token, repos) it is
+// asked for, remembered so a test can see which fetches were built and feed each its items.
+type stubMemberSources struct {
+	mu    sync.Mutex
+	items map[string][]domain.Item // repo -> items
+	err   error
+	made  []string // fingerprints, in order
+}
+
+func (m *stubMemberSources) source(token string, repos []string) ports.Source {
+	m.mu.Lock()
+	m.made = append(m.made, memberFingerprint(token, repos))
+	m.mu.Unlock()
+	return ports.SourceFunc(func(context.Context) (domain.Fetched, error) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		var out []domain.Item
+		for _, repo := range repos {
+			out = append(out, m.items[repo]...)
+		}
+		return domain.Fetched{Items: out}, m.err
+	})
+}
+
+func (m *stubMemberSources) built() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.made)
+}
+
+// mintMemberSession is a member's cookie: octocat, holding testMemberToken, watching repos.
+func mintMemberSession(repos ...string) *http.Cookie {
+	return &http.Cookie{
+		Name: sessionCookieName,
+		Value: newSessionCodec(testClientSecret).mint(session{
+			Expiry: testNow.Add(memberSessionTTL), Role: roleMember, Login: testMemberLogin,
+			Token: testMemberToken, Repos: repos,
+		}),
+	}
+}
+
+// stubIdentity stands in for GET /user.
+type stubIdentity struct {
+	login string
 	err   error
 }
 
-func (s *stubAccess) HasPushAccess(_ context.Context, token string) (bool, error) {
-	return s.allow[token], s.err
-}
+func (s *stubIdentity) Login(context.Context, string) (string, error) { return s.login, s.err }
 
 // startFakeGitHub starts the fixture server and points the options' OAuth base URL at it. It
 // returns the fake's URL.
@@ -966,4 +1048,246 @@ func cookieNamed(rec *httptest.ResponseRecorder, name string) *http.Cookie {
 		}
 	}
 	return nil
+}
+
+// Spec 2026-10-12 §4: the cookie is encrypted and authenticated, carries role and login for
+// everyone and token and repositories for a member, and refuses everything it did not mint.
+func TestSessionCodecRoundTripsOwnerAndMember(t *testing.T) {
+	c := newSessionCodec(testClientSecret)
+	exp := testNow.Add(sessionTTL).Truncate(time.Second)
+	owner := session{Expiry: exp, Role: roleOwner, Login: "zorg"}
+	member := session{Expiry: exp, Role: roleMember, Login: "octocat", Token: "gho_secret",
+		Repos: []string{"isaqb-org/glossary", "isaqb-org/curriculum-foundation"}}
+	for name, want := range map[string]session{"owner": owner, "member": member} {
+		value := c.mint(want)
+		got, ok := c.decode(value, testNow)
+		if !ok {
+			t.Fatalf("%s: a freshly minted cookie does not decode", name)
+		}
+		if !got.Expiry.Equal(want.Expiry) || got.Role != want.Role || got.Login != want.Login ||
+			got.Token != want.Token || strings.Join(got.Repos, ",") != strings.Join(want.Repos, ",") {
+			t.Fatalf("%s: decode = %+v, want %+v", name, got, want)
+		}
+		if strings.Contains(value, "octocat") || strings.Contains(value, "gho_secret") || strings.Contains(value, "glossary") {
+			t.Fatalf("%s: the cookie value is readable: %s", name, value)
+		}
+	}
+	if !member.member() || owner.member() {
+		t.Fatal("member()")
+	}
+}
+
+func TestSessionCodecRefusesWhatItDidNotMint(t *testing.T) {
+	c := newSessionCodec(testClientSecret)
+	exp := testNow.Add(sessionTTL)
+	good := c.mint(session{Expiry: exp, Role: roleMember, Login: "octocat", Token: "t"})
+	flipped := []byte(good)
+	flipped[len(flipped)/2] ^= 0x01
+	// A version-2 cookie: base64(expiry) "." base64(hmac).
+	v2 := sessionEncoding.EncodeToString([]byte("1760000000")) + "." + sessionEncoding.EncodeToString(make([]byte, 32))
+	for name, value := range map[string]string{
+		"bit-flipped":          string(flipped),
+		"version 2":            v2,
+		"other key":            newSessionCodec("another-secret").mint(session{Expiry: exp, Role: roleOwner, Login: "zorg"}),
+		"not base64":           "%%%",
+		"empty":                "",
+		"expired":              c.mint(session{Expiry: testNow.Add(-time.Second), Role: roleOwner, Login: "zorg"}),
+		"unknown role":         c.mint(session{Expiry: exp, Role: "admin", Login: "zorg"}),
+		"no login":             c.mint(session{Expiry: exp, Role: roleOwner}),
+		"bad login":            c.mint(session{Expiry: exp, Role: roleOwner, Login: "-x-"}),
+		"member without token": c.mint(session{Expiry: exp, Role: roleMember, Login: "octocat"}),
+		"13 repos":             c.mint(session{Expiry: exp, Role: roleMember, Login: "octocat", Token: "t", Repos: thirteenRepos()}),
+		"bad repo":             c.mint(session{Expiry: exp, Role: roleMember, Login: "octocat", Token: "t", Repos: []string{"no-slash"}}),
+	} {
+		if _, ok := c.decode(value, testNow); ok {
+			t.Errorf("%s: decoded", name)
+		}
+	}
+}
+
+func thirteenRepos() []string {
+	out := make([]string, 13)
+	for i := range out {
+		out[i] = fmt.Sprintf("isaqb-org/repo-%02d", i+1)
+	}
+	return out
+}
+
+// A member's cookie with the most it can carry — the longest login, twelve repositories of the
+// longest owner (39 characters) and name (100) GitHub allows — stays under a browser's 4 KB limit.
+// It comes to about 2.5 KB.
+func TestAMemberCookieStaysSmall(t *testing.T) {
+	repos := make([]string, config.MaxMemberRepos)
+	for i := range repos {
+		repos[i] = strings.Repeat("o", 39) + "/" + fmt.Sprintf("%02d", i) + strings.Repeat("n", 98)
+	}
+	value := newSessionCodec(testClientSecret).mint(session{
+		Expiry: testNow.Add(memberSessionTTL), Role: roleMember, Login: strings.Repeat("a", 39),
+		Token: "gho_" + strings.Repeat("x", 40), Repos: repos,
+	})
+	if _, ok := newSessionCodec(testClientSecret).decode(value, testNow); !ok {
+		t.Fatal("the longest cookie a member can hold does not decode: the repository names are not valid ones")
+	}
+	if len(sessionCookieName)+1+len(value) > 4096 {
+		t.Fatalf("cookie is %d bytes", len(sessionCookieName)+1+len(value))
+	}
+	t.Logf("the longest member cookie is %d bytes", len(sessionCookieName)+1+len(value))
+}
+
+func TestSessionTTLByRole(t *testing.T) {
+	if sessionTTLFor(roleOwner) != 30*24*time.Hour || sessionTTLFor(roleMember) != 7*24*time.Hour {
+		t.Fatal("ttl")
+	}
+}
+
+// stubRevoker stands in for DELETE /applications/{client_id}/token.
+type stubRevoker struct {
+	mu      sync.Mutex
+	revoked []string
+	err     error
+}
+
+func (s *stubRevoker) Revoke(_ context.Context, token string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.err == nil {
+		s.revoked = append(s.revoked, token)
+	}
+	return s.err
+}
+
+// Spec §9: a member signing out ends their token at GitHub, then loses the cookie. A failed
+// revocation still clears the cookie and is logged with the login, never the token.
+func TestAMemberSigningOutRevokesTheToken(t *testing.T) {
+	var logged bytes.Buffer
+	revoker := &stubRevoker{}
+	h := newTestServerWith(t, func(o *Options) {
+		withMembers(o)
+		o.Revoker = revoker
+		o.Log = slog.New(slog.NewTextHandler(&logged, nil))
+	}).Handler()
+	rec := postAs(h, "/logout", url.Values{}, mintMemberSession("isaqb-org/repo-01"))
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/login" {
+		t.Fatalf("logout = %d %s", rec.Code, rec.Header().Get("Location"))
+	}
+	if c := cookieNamed(rec, sessionCookieName); c == nil || c.MaxAge >= 0 {
+		t.Fatalf("the cookie was not cleared: %+v", c)
+	}
+	if len(revoker.revoked) != 1 || revoker.revoked[0] != testMemberToken {
+		t.Fatalf("revoked %v", revoker.revoked)
+	}
+	line := firstLineContaining(logged.String(), "sign-out")
+	if !strings.Contains(line, "login=octocat") || !strings.Contains(line, "revoked=true") || strings.Contains(logged.String(), testMemberToken) {
+		t.Fatalf("log = %s", logged.String())
+	}
+}
+
+func TestAFailedRevocationStillClearsTheCookie(t *testing.T) {
+	var logged bytes.Buffer
+	h := newTestServerWith(t, func(o *Options) {
+		withMembers(o)
+		o.Revoker = &stubRevoker{err: errors.New("GitHub answered 422 about " + testMemberToken)}
+		o.Log = slog.New(slog.NewTextHandler(&logged, nil))
+	}).Handler()
+	rec := postAs(h, "/logout", url.Values{}, mintMemberSession("isaqb-org/repo-01"))
+	if c := cookieNamed(rec, sessionCookieName); rec.Code != http.StatusSeeOther || c == nil || c.MaxAge >= 0 {
+		t.Fatalf("logout = %d, cookie %+v", rec.Code, c)
+	}
+	out := logged.String()
+	if !strings.Contains(out, "revocation failed") || !strings.Contains(out, "revoked=false") || strings.Contains(out, testMemberToken) {
+		t.Fatalf("log = %s", out)
+	}
+}
+
+func TestTheOwnerSigningOutRevokesNothing(t *testing.T) {
+	revoker := &stubRevoker{}
+	h := newTestServerWith(t, func(o *Options) {
+		withMembers(o)
+		o.Revoker = revoker
+	}).Handler()
+	postAs(h, "/logout", url.Values{}, signIn(t, h))
+	if len(revoker.revoked) != 0 {
+		t.Fatalf("revoked %v for an owner", revoker.revoked)
+	}
+}
+
+// A member's cookie outlives a deployment that switches members off. It is then no session at
+// all, and every route has to agree on that: / sending it to /login while /login sent it back to /
+// was an endless redirect, and /logout refusing it left no way to be rid of it.
+func TestAMemberCookieAfterMembersAreSwitchedOffIsNoSession(t *testing.T) {
+	revoker := &stubRevoker{}
+	h := newTestServerWith(t, func(o *Options) { o.Revoker = revoker }).Handler()
+	c := mintMemberSession("isaqb-org/repo-01")
+
+	if rec := getAs(h, "/", c); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/login" {
+		t.Fatalf("GET / = %d %s, want 303 /login", rec.Code, rec.Header().Get("Location"))
+	}
+	if rec := getAs(h, "/login", c); rec.Code != http.StatusOK {
+		t.Fatalf("GET /login = %d %s, want the sign-in page: / and /login send it back and forth",
+			rec.Code, rec.Header().Get("Location"))
+	}
+	rec := postAs(h, "/logout", url.Values{}, c)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/login" {
+		t.Fatalf("POST /logout = %d %s, want 303 /login", rec.Code, rec.Header().Get("Location"))
+	}
+	if got := cookieNamed(rec, sessionCookieName); got == nil || got.MaxAge >= 0 {
+		t.Fatalf("POST /logout did not clear the cookie: %+v", got)
+	}
+	if len(revoker.revoked) != 0 {
+		t.Fatalf("revoked %v on a cookie that is no session", revoker.revoked)
+	}
+}
+
+// An invalid cookie of any kind — expired, tampered, or from before a secret rotation — is
+// cleared by /logout too: it proves nothing, and clearing it is the only thing asked for.
+func TestSigningOutWithAnInvalidCookieClearsIt(t *testing.T) {
+	h := newTestServer(t).Handler()
+	rec := postAs(h, "/logout", url.Values{}, &http.Cookie{Name: sessionCookieName, Value: "not-a-session"})
+	if c := cookieNamed(rec, sessionCookieName); rec.Code != http.StatusSeeOther || c == nil || c.MaxAge >= 0 {
+		t.Fatalf("logout = %d, cookie %+v", rec.Code, c)
+	}
+}
+
+func TestNewRequiresARevokerWhenMembersAreEnabled(t *testing.T) {
+	o := testOptions()
+	withMembers(&o)
+	o.Revoker = nil
+	if _, err := New(o); err == nil {
+		t.Fatal("New() accepted members without a revoker")
+	}
+}
+
+// QS-4.3 for the member's token: a member signs in with a canary token, sees every page with a
+// failing fetch and a failing repository list, saves, and signs out with a failing revocation —
+// and no response and no log line carries the token.
+func TestNoResponseOrLogLineCarriesAMemberToken(t *testing.T) {
+	const canary = "member-canary-token"
+	var logged strings.Builder
+	sources := &stubMemberSources{err: errors.New("github rejected " + canary)}
+	h := newTestServerWith(t, func(o *Options) {
+		withMembers(o)
+		o.MemberSource = sources.source
+		o.Repos = &stubRepos{err: errors.New("list failed for " + canary)}
+		o.Revoker = &stubRevoker{err: errors.New("revocation refused " + canary)}
+		o.Log = slog.New(slog.NewTextHandler(&logged, nil))
+	}).Handler()
+	c := &http.Cookie{Name: sessionCookieName, Value: newSessionCodec(testClientSecret).mint(session{
+		Expiry: testNow.Add(memberSessionTTL), Role: roleMember, Login: "octocat", Token: canary,
+		Repos: []string{"isaqb-org/repo-01"},
+	})}
+	var bodies []string
+	for _, path := range []string{"/", "/sites", "/radar", "/contributors", "/search?q=x", "/repos", "/items"} {
+		bodies = append(bodies, getSettled(t, h, path, c).Body.String())
+	}
+	bodies = append(bodies, postAs(h, "/repos", url.Values{"repo": {"isaqb-org/repo-01"}}, c).Body.String())
+	rec := postAs(h, "/logout", url.Values{}, c)
+	bodies = append(bodies, rec.Body.String(), rec.Header().Get("Set-Cookie"))
+	for i, body := range bodies {
+		if strings.Contains(body, canary) {
+			t.Errorf("response %d carries the member's token: %s", i, firstLineContaining(body, canary))
+		}
+	}
+	if strings.Contains(logged.String(), canary) {
+		t.Errorf("the log carries the member's token: %s", firstLineContaining(logged.String(), canary))
+	}
 }
