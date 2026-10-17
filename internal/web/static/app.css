@@ -455,27 +455,57 @@ button:hover,
   cursor: not-allowed;
 }
 
-.cog { display: block; }
+.menu-icon { display: block; }
 
-/* The settings panel (FR-1.12). A <details> gives the open and closed states for free; all this
-   does is take the marker off the summary, so the cog is the control rather than a cog with a
-   triangle beside it, and float the panel under it. */
+/* The menu (FR-1.12). A <details> gives the open and closed states for free. Open, the panel is a
+   dialog in the middle of the window, over the page dimmed and blurred: the dimming is the
+   summary's own ::before, so a click on it is a click on the summary and closes the menu without
+   a line of script. The panel stands off the page by a heavier border, a deep shadow and the
+   dimmed ground around it. */
 .settings > summary { list-style: none; cursor: pointer; }
 .settings > summary::-webkit-details-marker { display: none; }
-.settings { position: relative; }
+.settings[open] > summary { color: var(--accent); }
+.settings[open] > summary::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: light-dark(rgba(20, 24, 33, 0.45), rgba(0, 0, 0, 0.6));
+  backdrop-filter: blur(3px);
+  cursor: default;
+}
 .settings-panel {
-  position: absolute;
-  right: 0;
-  z-index: 20;
-  min-width: 18rem;
-  padding: 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
+  position: fixed;
+  z-index: 41;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  box-sizing: border-box;
+  width: min(34rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+  padding: 1rem 1.25rem 1.25rem;
+  border: 1px solid light-dark(#b9bec7, #4a505a);
+  border-radius: 14px;
   background: var(--surface);
+  box-shadow: 0 24px 64px light-dark(rgba(20, 24, 33, 0.28), rgba(0, 0, 0, 0.6)), 0 2px 8px light-dark(rgba(20, 24, 33, 0.12), rgba(0, 0, 0, 0.4));
   text-align: left;
 }
-.setting { margin: 0 0 0.75rem; padding: 0; border: 0; }
-.setting legend { padding: 0; color: var(--muted); font-size: 0.8rem; }
+.menu-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; }
+.menu-title { margin: 0; font-size: 1.25rem; font-weight: 700; }
+.menu-rule { margin: 1rem 0; border: 0; border-top: 1px solid var(--border); }
+/* A setting reads command first: its name bold and at body size, what it does small and muted
+   under it, then the control. */
+.setting { margin: 0 0 1rem; padding: 0; border: 0; }
+.setting:last-of-type { margin-bottom: 0; }
+.setting legend { padding: 0; color: var(--text); font-size: 1rem; font-weight: 700; }
+.setting-link { margin: 0; font-size: 1rem; font-weight: 700; }
+.setting-link a { color: var(--text); }
+.setting-link a:hover { color: var(--accent); }
+.menu-account { display: grid; gap: 0.5rem; justify-items: start; }
+.menu-account .setting-note { margin: 0; }
+.menu-account form { margin: 0; }
+.menu-logout { font-weight: 600; }
 /* A choice of several is one segmented control, drawn like the view switch: outlined, with the
    current choice filled. Ten filled buttons made every option look like the thing to press, and
    the current one was told apart only by an underline. */
@@ -512,7 +542,7 @@ button:hover,
   font-size: 0.85rem;
   font-weight: 500;
 }
-.setting-note { margin: 0.35rem 0 0; color: var(--muted); font-size: 0.78rem; }
+.setting-note { margin: 0.15rem 0 0.35rem; color: var(--muted); font-size: 0.8rem; line-height: 1.4; }
 
 /* The repository page (FR-8.5): one checkbox per repository, the description muted beside it. */
 .repos { max-width: 44rem; margin: 1.5rem auto; padding: 0 1rem; }

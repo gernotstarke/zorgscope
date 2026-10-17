@@ -420,3 +420,44 @@ func TestSettingsOfferRadarAsLanding(t *testing.T) {
 		t.Error("the popover does not offer Radar as the current landing view")
 	}
 }
+
+// FR-1.12 AC1 and FR-1.11 AC1: the menu is a hamburger, not a cog; it holds Log out, which the bar
+// no longer carries beside Refresh; each setting names its command and says what it does; rules
+// divide its groups; and its close button waits for menu.js, since without script there is
+// nothing for it to do.
+func TestTheMenuIsAHamburgerHoldingTheSettingsAndLogOut(t *testing.T) {
+	page := getAuthed(t, newTestServer(t).Handler(), "/").Body.String()
+
+	summary := firstLineContaining(page, "settings-button")
+	if !strings.Contains(summary, `aria-label="Menu"`) {
+		t.Errorf("the menu button is not labelled Menu: %s", summary)
+	}
+	if strings.Contains(page, `class="cog"`) || !strings.Contains(page, `class="menu-icon"`) {
+		t.Error("the menu button still draws the cog")
+	}
+
+	actions := page[strings.Index(page, `class="topbar-actions"`):strings.Index(page, `class="topbar-nav"`)]
+	if strings.Contains(actions, `action="/logout"`) {
+		t.Error("Log out is still in the bar beside Refresh")
+	}
+	panel := page[strings.Index(page, `id="settings"`):strings.Index(page, "</details>")]
+	for _, want := range []string{
+		`action="/logout"`, "Signed in as <b>zorg</b> (owner)", `href="/about"`,
+		`<legend>Open at</legend>`, "The view zorgscope shows when you open it.",
+		"An item with no activity for this long is drawn a step quieter.",
+		`data-menu-close aria-label="Close menu" title="Close (Esc)" hidden`,
+	} {
+		if !strings.Contains(panel, want) {
+			t.Errorf("the menu lacks %s", want)
+		}
+	}
+	if n := strings.Count(panel, `<hr class="menu-rule">`); n < 3 {
+		t.Errorf("the menu has %d rules between its groups, want at least 3", n)
+	}
+	if strings.Index(panel, `href="/about"`) > strings.Index(panel, `action="/logout"`) {
+		t.Error("Log out is not the menu's last group")
+	}
+	if !strings.Contains(page, `src="/static/menu.js?`) {
+		t.Error("menu.js is not linked")
+	}
+}

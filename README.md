@@ -91,6 +91,7 @@ code; `make check` passes.
 
 | Version | Date | Change |
 |---------|------|--------|
+| 2.8.0 | 2026-10-17 | The cog is a menu button (three bars); the menu opens in the middle of the window over the page dimmed, holds Log out besides the settings and About, divides its groups by rules, and names each setting in bold above a smaller line saying what it does; Escape and a close button close it, and so does a click outside it, without JavaScript (FR‑1.11, FR‑1.12) |
 | 2.7.0 | 2026-10-17 | About page: the footer's "Made with ♥ in Cologne" and the settings panel lead to /about, where a radar sweeps up go, fly, htmx, github, cologne and zorg and spirals their letters into the zorgscope logo, with the tagline and "Made with ♥ in Cologne by Gernot, courtesy arc42.org"; complete without JavaScript, still with reduced motion (FR‑1.18) |
 | 2.5.2 | 2026-10-17 | The top bar names who is signed in — the GitHub login beside Log out, linking to the profile, with a "member" chip for a member (FR‑1.11 AC4) |
 | 2.5.0 | 2026-10-12 | Members: write access on zorgscope-members admits invited people to a personal list, tiles and radar over up to 12 public iSAQB repositories of their choice, fetched with their own token; the session cookie is encrypted and carries role and login; signing out revokes a member's token; every existing session ends once at this deploy — everyone signs in once more (FR‑1.17, FR‑8.4, FR‑8.5, ADR‑0019) |

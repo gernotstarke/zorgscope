@@ -33,6 +33,8 @@
 {{/* The visitor's last list, saved here and restored on the wait page (ADR-0013). A file of our
      own for the same reason search.js is one: the policy grants no 'unsafe-inline'. */}}
 <script src="{{.Asset "warm-start.js"}}" defer></script>
+{{/* Escape and the close button for the menu; the menu itself opens and closes without it. */}}
+<script src="{{.Asset "menu.js"}}" defer></script>
 {{/* A page may add to the head. Only the wait page does: a meta refresh inside noscript, so a
      browser without JavaScript still gets the page once the fetch has ended (FR-1.9 AC2). The
      element is permitted inside head and may hold meta, so it applies only when script is off. */}}
@@ -99,35 +101,35 @@
            title="Cmd-K or Ctrl-K" data-search>
   </form>
   <div class="topbar-actions">
-    {{/* Two plain form posts, so the page is fully usable with JavaScript disabled (FR-1.3 AC2
-         for the first; the second, logging out, needs no requirement of its own to justify the
-         same shape).
+    {{/* A plain form post, so the page is fully usable with JavaScript disabled (FR-1.3 AC2).
 
          return names the page the bar sits on, query included, so POST /refresh comes back to it
          rather than always to the list (FR-1.8 AC4). The handler passes it through safeReturn,
          which admits only a path of this site. */}}
     <form class="action" method="post" action="/refresh"><input type="hidden" name="return" value="{{.Return}}"><button type="submit">Refresh</button></form>
-    {{/* Who is signed in, next to the door out (FR-1.11 AC4). The login comes from the session,
-         which admitted it only through config.IsLogin, and is escaped here like any other text.
-         It links to the GitHub profile, since that is the account the sign-in asked about; the
-         role is said in the title, and in words for a member, so an owner testing a member
-         account cannot mistake one view for the other. */}}
+    {{/* Who is signed in, beside the menu that holds the door out (FR-1.11 AC4). The login comes
+         from the session, which admitted it only through config.IsLogin, and is escaped here like
+         any other text. It links to the GitHub profile, since that is the account the sign-in
+         asked about; the role is said in the title, and in words for a member, so an owner
+         testing a member account cannot mistake one view for the other. */}}
     <a class="signed-in-as" href="https://github.com/{{$.Login}}" target="_blank" rel="noopener noreferrer"
        title="Signed in as {{$.Login}} ({{if $.Member}}member{{else}}owner{{end}})">{{$.Login}}{{if $.Member}} <span class="signed-in-role">member</span>{{end}}</a>
-    <form class="action" method="post" action="/logout"><button type="submit">Log out</button></form>
   </div>
   {{end}}
   <nav class="topbar-nav">
-    {{/* The appearance switch on the pages that have no popover to hold it — the sign-in page and
+    {{/* The appearance switch on the pages that have no menu to hold it — the sign-in page and
          the refusal page, which have no session and therefore no preferences, and where the
          appearance is the only thing there is to set. The signed-in pages draw the same form
-         inside the panel below. */}}
+         inside the menu below. */}}
     {{if not .Chrome}}{{template "theme-control" .}}{{end}}
 
     {{if .Chrome}}
-    {{/* The settings panel (FR-1.12 AC1). A <details> so it opens, closes and is announced
-         without a line of script, which the Content-Security-Policy would forbid in any case: it
-         grants no 'unsafe-inline' (QS-4.4).
+    {{/* The menu (FR-1.12 AC1): settings, the about page and Log out. A <details> so it opens,
+         closes and is announced without a line of script, which the Content-Security-Policy would
+         forbid in any case: it grants no 'unsafe-inline' (QS-4.4). Open, the panel is a dialog in
+         the middle of the window over a dimmed page; the dimmed page is the summary's own
+         ::before, so a click anywhere outside the panel closes it, still without script. menu.js
+         adds Escape and the close button, and only that.
 
          The id on the panel div, not on the <details> itself, is what reopens it. Every form in
          here redirects to <page>#settings, and a browser's ancestor details revealing algorithm
@@ -136,28 +138,40 @@
          would never open it. Naming a descendant instead — the panel div — is what lets that walk
          find the <details> and open it, so changing a setting leaves the panel open, with nothing
          scripted and nothing remembered on the server. */}}
-    <details class="settings">
-      <summary class="icon-button settings-button" title="Settings" aria-label="Settings">
-        <svg class="cog" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"
-             fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-          <circle cx="12" cy="12" r="6.5"></circle>
-          <circle cx="12" cy="12" r="2.5"></circle>
-          <path d="M18.5 12h3M16.6 16.6l2.12 2.12M12 18.5v3M7.4 16.6l-2.12 2.12M5.5 12h-3M7.4 7.4 5.28 5.28M12 5.5v-3M16.6 7.4l2.12-2.12"></path>
+    <details class="settings" data-menu>
+      <summary class="icon-button settings-button" title="Menu" aria-label="Menu">
+        <svg class="menu-icon" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"
+             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M4 6.5h16M4 12h16M4 17.5h16"></path>
         </svg>
       </summary>
-      <div class="settings-panel" id="settings">
+      <div class="settings-panel" id="settings" role="group" aria-labelledby="menu-title">
+        <div class="menu-head">
+          <h2 class="menu-title" id="menu-title">Menu</h2>
+          {{/* hidden until menu.js runs: without script, a click outside the panel or on the
+               menu button closes it. */}}
+          <button type="button" class="icon-button menu-close" data-menu-close aria-label="Close menu" title="Close (Esc)" hidden>
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"
+                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <path d="M6 6l12 12M18 6 6 18"></path>
+            </svg>
+          </button>
+        </div>
 
         {{if $.Member}}
         <fieldset class="setting">
           <legend>Repositories</legend>
           {{/* A member's scope is their own choice (FR-8.5); the owner's is the configuration
                and has no page. */}}
-          <p class="setting-note"><a href="/repos">Choose the repositories you watch</a></p>
+          <p class="setting-note">The repositories you watch, up to twelve.</p>
+          <p class="setting-link"><a href="/repos">Choose repositories</a></p>
         </fieldset>
+        <hr class="menu-rule">
         {{end}}
 
         <fieldset class="setting">
           <legend>Open at</legend>
+          <p class="setting-note">The view zorgscope shows when you open it.</p>
           {{/* One button per view in one form rather than a select and a submit: with JavaScript
                off a select needs a button beside it anyway, and a button says what it does. The
                views are few and fixed, so they are written out. */}}
@@ -167,8 +181,8 @@
                  the visitor was relying on — a search, a filter — leaving handleSettings' redirect
                  to strand them on an empty version of the page they were adjusting. Chrome.Return
                  is r.URL.RequestURI(), query included, which is exactly what Refresh already uses
-                 two doors up for the same reason (FR-1.8 AC4). Chrome is never nil here: these
-                 three forms are inside {{if .Chrome}} above. */}}
+                 for the same reason (FR-1.8 AC4). Chrome is never nil here: these forms are
+                 inside {{if .Chrome}} above. */}}
             <input type="hidden" name="return" value="{{$.Chrome.Return}}">
             <button type="submit" name="value" value="list"{{if $.LandingIs "list"}} aria-current="true"{{end}}>List</button>
             <button type="submit" name="value" value="sites"{{if $.LandingIs "sites"}} aria-current="true"{{end}}>Sites</button>
@@ -179,6 +193,7 @@
 
         <fieldset class="setting">
           <legend>Call an item quiet after</legend>
+          <p class="setting-note">An item with no activity for this long is drawn a step quieter.</p>
           <form class="segmented" method="post" action="/settings">
             <input type="hidden" name="name" value="quiet">
             <input type="hidden" name="return" value="{{$.Chrome.Return}}">
@@ -188,34 +203,52 @@
           </form>
         </fieldset>
 
+        <hr class="menu-rule">
+
         <fieldset class="setting">
           <legend>This browser</legend>
           {{/* Turning it off is the clear: warm-start.js reads data-cache and goes to the branch
                that empties the store, so a separate "forget now" button would do the same thing
                by a second name (design §4.3). */}}
+          {{if $.Settings.Cache}}
+          <p class="setting-note">Your last list is kept in this browser so a cold start has something to show.</p>
+          {{else}}
+          <p class="setting-note">Nothing is kept in this browser.</p>
+          {{end}}
           <form method="post" action="/settings">
             <input type="hidden" name="name" value="cache">
             <input type="hidden" name="return" value="{{$.Chrome.Return}}">
             {{if $.Settings.Cache}}
             <button class="setting-toggle" type="submit" name="value" value="off">Stop keeping my last list here</button>
-            <p class="setting-note">Your last list is kept in this browser so a cold start has something to show.</p>
             {{else}}
             <button class="setting-toggle" type="submit" name="value" value="on">Keep my last list here</button>
-            <p class="setting-note">Nothing is kept in this browser.</p>
             {{end}}
           </form>
         </fieldset>
 
         <fieldset class="setting">
           <legend>Appearance</legend>
+          <p class="setting-note">Light, dark, or whatever your system uses. The button switches to the next.</p>
           {{template "theme-control" $}}
         </fieldset>
 
-        <p class="setting-note"><a href="/about">About zorgscope</a></p>
+        <hr class="menu-rule">
 
-        {{/* Said rather than offered: ending every session everywhere means rotating the OAuth
-             client secret, which is a deployment operation and not a button (FR-8.3 AC4). */}}
-        <p class="setting-note">Signing out everywhere means rotating the OAuth client secret.</p>
+        <p class="setting-link"><a href="/about">About zorgscope</a></p>
+
+        <hr class="menu-rule">
+
+        {{/* The door out, in the menu rather than the bar: it is the one action that ends the
+             visit, and the bar keeps what is used on every visit. A plain form post, so it works
+             with JavaScript disabled. */}}
+        <div class="menu-account">
+          <p class="setting-note">Signed in as <b>{{$.Login}}</b> ({{if $.Member}}member{{else}}owner{{end}}).</p>
+          <form class="action" method="post" action="/logout"><button type="submit" class="menu-logout">Log out</button></form>
+          {{/* Log out ends this browser's session; ending every session everywhere means rotating
+               the OAuth client secret, which is a deployment operation and not a button
+               (FR-8.3 AC4). */}}
+          <p class="setting-note">Signing out everywhere means rotating the OAuth client secret.</p>
+        </div>
       </div>
     </details>
     {{end}}
