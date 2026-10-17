@@ -85,6 +85,13 @@ pull requests, and with the browser cache on (ADR‑0013) the rendered list stay
 `localStorage` for up to seven days. Granting someone push access to `gernotstarke/zorgscope` is
 therefore also granting them that read.
 
+That list is the only page content kept in the browser. Up to 2.8.0, htmx kept its own copies
+as well: by default it stored a snapshot of the whole page, up to ten of them, each time a search or a
+filter changed the address, in `localStorage` under `htmx-history-cache`. Those snapshots carried the
+same titles, survived signing out, and ignored the browser‑list setting. Since 2.8.1 htmx is told to
+keep none (`historyCacheSize: 0` in the `htmx-config` meta element of `layout.html`), and
+`warm-start.js` removes what an older build left on every page load.
+
 This makes the token more sensitive than it was. Leaked, it tells its holder which of the
 repositories have unpatched vulnerabilities, and in which dependency. Rotating it works as before —
 a new token in `.env` and as a Fly secret, the old one revoked on GitHub — and a token that loses the

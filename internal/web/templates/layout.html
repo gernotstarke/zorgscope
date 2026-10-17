@@ -26,6 +26,17 @@
      visit. Both files were cut once from the artwork in docs/logo and committed. */}}
 <link rel="icon" href="{{.Asset "favicon.ico"}}" sizes="16x16 32x32">
 <link rel="apple-touch-icon" href="{{.Asset "apple-touch-icon.png"}}">
+{{/* htmx's settings, read when it starts; a meta element, because the policy grants no inline
+     script to set them from (QS-4.4).
+     historyCacheSize 0: htmx keeps no snapshots of whole pages in the browser's storage. By
+     default it kept ten, one each time hx-push-url changed the address, and a page here can carry
+     private titles; those snapshots outlived signing out and ignored "keep nothing in this
+     browser" (FR-1.12 AC5). With 0 it also deletes any it kept.
+     refreshOnHistoryMiss: Back then asks the server for the page, which is what a
+     server-rendered page wants anyway.
+     includeIndicatorStyles false: htmx would add a <style> element for loading indicators, which
+     the policy refuses with a console error on every page, and nothing here uses them. */}}
+<meta name="htmx-config" content='{"historyCacheSize":0,"refreshOnHistoryMiss":true,"includeIndicatorStyles":false}'>
 <script src="{{.Asset "htmx.min.js"}}" defer></script>
 {{/* Cmd-K (FR-12.1 AC3). A file of our own, since htmx's event filters would need unsafe-eval,
      which the policy does not grant. */}}

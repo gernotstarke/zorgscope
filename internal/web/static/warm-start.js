@@ -79,6 +79,12 @@
     mount.appendChild(holder);
   }
 
+  // htmx up to 2.0.4 kept snapshots of whole pages in localStorage under this key, private titles
+  // included. htmx is now told to keep none (layout.html), and its newer releases would look in
+  // sessionStorage anyway, so nothing would ever remove what an older build left behind: this does,
+  // on every page, whatever the visitor's own setting.
+  try { window.localStorage.removeItem("htmx-history-cache"); } catch (e) { /* nothing to undo */ }
+
   // The visitor asked this browser to keep nothing (FR-1.12 AC5). Turning the setting off is the
   // clear, so this branch empties the store rather than merely declining to add to it.
   if (document.documentElement.getAttribute("data-cache") === "off") {

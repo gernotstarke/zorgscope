@@ -3,6 +3,8 @@
 package web
 
 import (
+	"bytes"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -486,5 +488,40 @@ func TestEveryPageDrawsTheOpenCount(t *testing.T) {
 				t.Errorf("%s lacks %s", path, want)
 			}
 		}
+	}
+}
+
+// htmx is told, before it starts, to keep no page snapshots in the browser — a page here can carry
+// private titles, and a snapshot outlived signing out (FR-1.12 AC5) — to ask the server on Back, and
+// not to add the <style> element the policy refuses (QS-4.4). The meta element must come before
+// htmx itself, which reads it once when it loads.
+func TestHtmxIsConfiguredToKeepNothingInTheBrowser(t *testing.T) {
+	body := getAuthed(t, dashHandler(t, &fakeSource{}), "/").Body.String()
+	meta := `<meta name="htmx-config" content='{"historyCacheSize":0,"refreshOnHistoryMiss":true,"includeIndicatorStyles":false}'>`
+	at := strings.Index(body, meta)
+	if at < 0 {
+		t.Fatalf("the page carries no htmx-config, or a different one: %s", firstLineContaining(body, "htmx-config"))
+	}
+	if htmx := strings.Index(body, `src="/static/htmx.min.js?`); htmx < 0 || at > htmx {
+		t.Error("htmx-config is not ahead of htmx, which reads it once when it loads")
+	}
+}
+
+// The vendored htmx is the release the changelog names, and warm-start.js removes the snapshots
+// htmx 2.0.4 left in localStorage, which no later htmx would look for.
+func TestTheVendoredHtmxIs2011AndOldSnapshotsAreRemoved(t *testing.T) {
+	htmx, err := fs.ReadFile(embedded, "static/htmx.min.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(htmx, []byte(`version:"2.0.11"`)) {
+		t.Error("the vendored htmx is not 2.0.11")
+	}
+	warm, err := fs.ReadFile(embedded, "static/warm-start.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(warm, []byte(`localStorage.removeItem("htmx-history-cache")`)) {
+		t.Error("warm-start.js does not remove the history cache htmx 2.0.4 left behind")
 	}
 }
