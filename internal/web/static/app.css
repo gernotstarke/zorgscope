@@ -174,7 +174,6 @@ button:hover,
   border-radius: 50%;
 }
 
-.brand-name { font-weight: 600; }
 
 /* When the snapshot was last fetched (design §5), and — when a fetch is failing — the error
    notice beneath it. Both are quiet, plain lines: there is no run state left to draw, only what
@@ -628,9 +627,9 @@ button:hover,
 
 /* ---------------------------------------------------------------- the top bar's chrome (FR-1.11)
 
-   The search box takes the free width between the switch and the actions, and gives it up first
-   when the bar wraps on a phone. */
-.search-form { flex: 1 1 12rem; min-width: 8rem; margin: 0; display: flex; }
+   The search box is a fixed, modest width pushed to the right beside the actions, rather than
+   every free pixel of the bar, and gives up width first when the bar wraps on a phone. */
+.search-form { flex: 0 1 15rem; min-width: 8rem; margin: 0 0 0 auto; display: flex; }
 .search-form input[type="search"] {
   width: 100%;
   margin: 0;
@@ -643,10 +642,20 @@ button:hover,
   font-size: 0.9rem;
 }
 .search-form input[type="search"]:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* A phone gets three rows rather than four: the mark, the switch and the menu button; the
+   counts beside Refresh; then the search box across the full width, where a thumb finds it. */
+@media (max-width: 40rem) {
+  .topbar-nav { order: 1; }
+  .open-count { order: 2; }
+  .topbar-actions { order: 3; margin-left: auto; }
+  .search-form { order: 4; flex: 1 1 100%; margin-left: 0; }
+  /* The menu names the login above Log out, so the bar can spare it here. */
+  .signed-in-as { display: none; }
+}
 .topbar-actions { display: inline-flex; align-items: center; gap: 0.4rem; }
 .topbar-actions form { margin: 0; }
 .topbar-actions button { margin: 0; padding: 0.3rem 0.7rem; font-size: 0.9rem; }
-/* The signed-in login: quiet text beside Log out, not a third button. A long login is cut with
+/* The signed-in login: quiet text beside the menu button, not a third button. A long login is cut with
    an ellipsis rather than pushing the actions onto a line of their own; the title holds it whole. */
 .signed-in-as {
   max-width: 12rem;

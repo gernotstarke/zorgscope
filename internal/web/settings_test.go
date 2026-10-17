@@ -461,3 +461,28 @@ func TestTheMenuIsAHamburgerHoldingTheSettingsAndLogOut(t *testing.T) {
 		t.Error("menu.js is not linked")
 	}
 }
+
+// FR-1.11 AC1: the bar keeps its width for what is used every visit. The mark stands without its
+// name, which titles the menu instead, and Contributors is reached from the menu, not the switch.
+func TestTheMenuHoldsContributorsAndTheBarDropsTheName(t *testing.T) {
+	page := getAuthed(t, newTestServer(t).Handler(), "/").Body.String()
+	header := page[strings.Index(page, "<header"):strings.Index(page, "</header>")]
+	if strings.Contains(header, `class="brand-name"`) {
+		t.Error("the top bar still spells out the name beside the mark")
+	}
+	if !strings.Contains(header, `alt="zorgscope"`) {
+		t.Error("the mark, now the brand link's only content, has no alt text")
+	}
+	sw := header[strings.Index(header, `id="view-switch"`):]
+	sw = sw[:strings.Index(sw, "</nav>")]
+	if strings.Contains(sw, "/contributors") {
+		t.Error("Contributors is still in the view switch")
+	}
+	panel := page[strings.Index(page, `id="settings"`):strings.Index(page, "</details>")]
+	if !strings.Contains(panel, `<a href="/contributors">Contributors</a>`) {
+		t.Error("the menu does not offer Contributors")
+	}
+	if !strings.Contains(panel, `id="menu-title">zorgscope menu</h2>`) {
+		t.Error(`the menu is not titled "zorgscope menu"`)
+	}
+}

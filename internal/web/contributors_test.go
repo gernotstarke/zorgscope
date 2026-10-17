@@ -20,11 +20,15 @@ func TestContributorsPageListsAuthors(t *testing.T) {
 	for _, want := range []string{
 		"<title>Contributors · zorgscope</title>", "2 contributors",
 		`href="https://github.com/amy"`, `href="/search?q=amy"`, "o/a, o/b",
-		`class="contributor-unknown"`, `aria-current="page"`,
+		`class="contributor-unknown"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("contributors page lacks %s", want)
 		}
+	}
+	// The view is reached from the menu (FR-1.11 AC1), so the switch marks none of its three.
+	if sw := firstLineContaining(body, `aria-current="page"`); sw != "(not found)" {
+		t.Errorf("the switch marks a view on the contributors page: %s", sw)
 	}
 	if strings.Index(body, "github.com/amy") > strings.Index(body, "contributor-unknown") {
 		t.Error("the unknown author is not last")

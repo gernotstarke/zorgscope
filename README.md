@@ -91,6 +91,7 @@ code; `make check` passes.
 
 | Version | Date | Change |
 |---------|------|--------|
+| 2.8.2 | 2026-10-17 | A roomier top bar: the logo without its name, Contributors moved from the view switch into the menu (now titled "zorgscope menu"), a narrower search box; on a phone the bar takes three rows instead of four, the search box across the full width |
 | 2.8.1 | 2026-10-17 | htmx 2.0.11 (was 2.0.4); htmx no longer keeps snapshots of whole pages, private titles included, in the browser's storage, and the ones 2.0.4 kept are removed on the next page load; Back reloads from the server; no more Content Security Policy error for htmx's indicator style |
 | 2.8.0 | 2026-10-17 | The cog is a menu button (three bars); the menu opens in the middle of the window over the page dimmed, holds Log out besides the settings and About, divides its groups by rules, and names each setting in bold above a smaller line saying what it does; Escape and a close button close it, and so does a click outside it, without JavaScript (FR‑1.11, FR‑1.12) |
 | 2.7.0 | 2026-10-17 | About page: the footer's "Made with ♥ in Cologne" and the settings panel lead to /about, where a radar sweeps up go, fly, htmx, github, cologne and zorg and spirals their letters into the zorgscope logo, with the tagline and "Made with ♥ in Cologne by Gernot, courtesy arc42.org"; complete without JavaScript, still with reduced motion (FR‑1.18) |

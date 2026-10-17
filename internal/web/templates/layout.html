@@ -53,14 +53,14 @@
 </head>
 <body>
 <header class="topbar">
-  <a class="brand" href="/">
+  <a class="brand" href="/" title="zorgscope">
     {{/* The mark itself, cut once from the artwork in docs/logo and committed. It is a raster
          file rather than inline markup because the artwork is a raster: 128 px of PNG for a 36 px
          mark covers a 3x display and costs less on the wire than the base64 of the same bytes
-         would. alt is empty because the name beside it is not repeated: a reader that announced
-         both would say "zorgscope zorgscope". */}}
-    <img class="logo" src="{{.Asset "logo.png"}}" width="36" height="36" alt="" decoding="async">
-    <span class="brand-name">zorgscope</span>
+         would. The mark stands alone, its name left to the menu's title and the about page, so
+         the bar keeps its width for what is used; alt is therefore the name, the link's only
+         text. */}}
+    <img class="logo" src="{{.Asset "logo.png"}}" width="36" height="36" alt="zorgscope" decoding="async">
   </a>
   {{/* The chrome (FR-1.11). The search form carries htmx so a keystroke anywhere fetches the
        results page and swaps main; with script off Enter submits the same GET. Refresh and Log
@@ -87,7 +87,6 @@
     <a href="/?view=list"{{if eq .View "list"}} aria-current="page"{{end}}>List</a>
     <a href="/sites"{{if eq .View "sites"}} aria-current="page"{{end}}>Sites</a>
     <a href="/radar"{{if eq .View "radar"}} aria-current="page"{{end}}>Radar</a>
-    <a href="/contributors"{{if eq .View "contributors"}} aria-current="page"{{end}}>Contributors</a>
   </nav>
   {{/* What needs the owner first (FR-1.14), then what is open across every configured repository.
        The lead is the one number the page is opened for, and links to the band that lists it; the
@@ -158,7 +157,7 @@
       </summary>
       <div class="settings-panel" id="settings" role="group" aria-labelledby="menu-title">
         <div class="menu-head">
-          <h2 class="menu-title" id="menu-title">Menu</h2>
+          <h2 class="menu-title" id="menu-title">zorgscope menu</h2>
           {{/* hidden until menu.js runs: without script, a click outside the panel or on the
                menu button closes it. */}}
           <button type="button" class="icon-button menu-close" data-menu-close aria-label="Close menu" title="Close (Esc)" hidden>
@@ -168,6 +167,16 @@
             </svg>
           </button>
         </div>
+
+        {{/* Contributors is a view like the three in the switch, but one visited now and then
+             rather than every day, so it lives here and gives the bar its width back. The link
+             carries no aria-current: a search typed from this page swaps main and the switch,
+             never the menu, so a mark here would outlive the page it named. */}}
+        <div class="setting">
+          <p class="setting-link"><a href="/contributors">Contributors</a></p>
+          <p class="setting-note">Everyone with open issues or PRs: how many, in which repositories, last active when.</p>
+        </div>
+        <hr class="menu-rule">
 
         {{if $.Member}}
         <fieldset class="setting">

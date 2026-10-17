@@ -185,7 +185,7 @@ func TestNoTileCarriesAStyleAttribute(t *testing.T) {
 }
 
 // FR-1.8 AC4, FR-1.11: every view carries the switch in the top bar, marking the view being
-// shown. Contributors is the third link; the page behind it arrives with FR-12.1.
+// shown. Contributors is not in it: the menu holds that view.
 func TestViewSwitchMarksTheCurrentView(t *testing.T) {
 	h := sitesHandler(t, &fakeSource{})
 	c := signIn(t, h)
@@ -193,14 +193,14 @@ func TestViewSwitchMarksTheCurrentView(t *testing.T) {
 	// List, a bare "/" redirects on to the landing view (FR-1.12 AC3), and the query is what lets
 	// the dashboard's redirect (dashboard.go) leave this link alone. The parameter is inert —
 	// parseFilter does not read "view" — so it changes nothing about what the list shows.
-	for _, tc := range []struct{ path, list, sites, contributors string }{
-		{"/", `<a href="/?view=list" aria-current="page">List</a>`, `<a href="/sites">Sites</a>`, `<a href="/contributors">Contributors</a>`},
-		{"/sites", `<a href="/?view=list">List</a>`, `<a href="/sites" aria-current="page">Sites</a>`, `<a href="/contributors">Contributors</a>`},
+	for _, tc := range []struct{ path, list, sites string }{
+		{"/", `<a href="/?view=list" aria-current="page">List</a>`, `<a href="/sites">Sites</a>`},
+		{"/sites", `<a href="/?view=list">List</a>`, `<a href="/sites" aria-current="page">Sites</a>`},
 	} {
 		body := getAs(h, tc.path, c).Body.String()
 		// The switch is part of the top bar now, not of the page body.
 		header := body[strings.Index(body, "<header"):strings.Index(body, "</header>")]
-		for _, want := range []string{tc.list, tc.sites, tc.contributors} {
+		for _, want := range []string{tc.list, tc.sites} {
 			if !strings.Contains(header, want) {
 				t.Errorf("GET %s: the top bar's switch lacks %s:\n%s",
 					tc.path, want, firstLineContaining(header, "view-switch"))
