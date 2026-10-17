@@ -211,6 +211,8 @@
           {{template "theme-control" $}}
         </fieldset>
 
+        <p class="setting-note"><a href="/about">About zorgscope</a></p>
+
         {{/* Said rather than offered: ending every session everywhere means rotating the OAuth
              client secret, which is a deployment operation and not a button (FR-8.3 AC4). */}}
         <p class="setting-note">Signing out everywhere means rotating the OAuth client secret.</p>
@@ -234,7 +236,7 @@
   {{/* role="img" with a label, so the heart is read as the word it stands for rather than as
        "black heart suit" — and so it is one thing to a screen reader rather than a symbol
        stranded between two halves of a sentence. */}}
-  <span class="footer-made">Made with <span class="heart" role="img" aria-label="love">&#9829;</span> in Cologne</span>
+  <a class="footer-made" href="/about">Made with <span class="heart" role="img" aria-label="love">&#9829;</span> in Cologne</a>
   <span class="footer-stack">Built with <a href="https://go.dev" target="_blank" rel="noopener noreferrer">Go</a> and <a href="https://htmx.org" target="_blank" rel="noopener noreferrer">htmx</a> · running on <a href="https://fly.io" target="_blank" rel="noopener noreferrer">Fly.io</a></span>
   <span class="version">{{.Version}}</span>
 </footer>

@@ -1625,3 +1625,114 @@ mark { background: #fde68a; color: #1f2937; border-radius: 2px; padding: 0 0.1em
   .radar-sweep, .blip .mark, .ring-pulse { animation: none; }
   .ring-pulse { display: none; }
 }
+
+/* ---------------------------------------------------------------- the about page (FR-1.18)
+
+   One stage, complete at rest: the logo in the arc42 rainbow the band above draws, the tagline and
+   the credit. about.js plays the radar over it. The six words keep colours of their own, so the
+   moment they turn into the rainbow reads as the change it is. Every colour is a light-dark() pair
+   and about.js reads them resolved, so the animation follows the appearance like the page does. */
+.about { display: grid; gap: 1rem; justify-items: center; }
+.about-stage {
+  --about-r1: light-dark(#c22b47, #ff5c78);
+  --about-r2: light-dark(#c98512, #ffc95c);
+  --about-r3: light-dark(#2e9e67, #45c486);
+  --about-r4: light-dark(#2f8a76, #5fb49c);
+  --about-r5: light-dark(#1675b9, #4aa3e6);
+  --about-r6: light-dark(#374769, #8d9ee0);
+  --about-r7: light-dark(#682d63, #c47bbd);
+  --about-go: light-dark(#0089ad, #3cc8ec);
+  --about-fly: light-dark(#7b3be2, #a98bff);
+  --about-htmx: light-dark(#c4581b, #f08a4b);
+  --about-github: var(--text);
+  --about-cologne: light-dark(#c22b47, #ff6b85);
+  --about-zorg: light-dark(#2e9e67, #5fd39a);
+  --about-ring: light-dark(rgba(47, 91, 215, 0.16), rgba(127, 162, 255, 0.18));
+  --about-sweep: light-dark(rgba(46, 158, 103, 0.3), rgba(95, 211, 154, 0.32));
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  box-sizing: border-box;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+}
+.about-mark { display: grid; gap: 0.4rem; }
+.about-logo, .about-ch, .about-measure {
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+.about-logo { display: flex; margin: 0; font-size: clamp(2.6rem, 11vw, 8rem); }
+.about-logo span:nth-child(1) { color: var(--about-r1); }
+.about-logo span:nth-child(2) { color: var(--about-r2); }
+.about-logo span:nth-child(3),
+.about-logo span:nth-child(4) { color: var(--about-r3); }
+.about-logo span:nth-child(5) { color: var(--about-r4); }
+.about-logo span:nth-child(6) { color: var(--about-r5); }
+.about-logo span:nth-child(7),
+.about-logo span:nth-child(8) { color: var(--about-r6); }
+.about-logo span:nth-child(9) { color: var(--about-r7); }
+.is-playing .about-logo span { visibility: hidden; }
+/* A phone is taller than wide, and the logo takes nearly its whole width: the stage has room for
+   it. After the logo's own rule, so it wins. */
+@media (max-width: 40rem) {
+  .about-stage { aspect-ratio: 3 / 4; }
+  .about-logo { font-size: 17vw; }
+}
+.about-bar {
+  height: 4px;
+  border-radius: 2px;
+  transform-origin: 0 50%;
+  background: linear-gradient(90deg, var(--about-r1), var(--about-r2), var(--about-r3), var(--about-r4), var(--about-r5), var(--about-r6), var(--about-r7));
+}
+.about-tagline { margin: 0; font-size: clamp(1rem, 2.4vw, 1.5rem); font-weight: 600; text-align: center; text-wrap: balance; }
+.about-credit { margin: 0; color: var(--muted); text-align: center; text-wrap: balance; }
+.about-credit a { color: inherit; }
+.about-ch, .about-measure { position: absolute; left: 0; top: 0; white-space: pre; pointer-events: none; }
+.about-ch { transform-origin: 50% 50%; will-change: transform; }
+.about-measure { display: flex; visibility: hidden; }
+.about-scope {
+  position: absolute;
+  z-index: -1;
+  border-radius: 50%;
+  opacity: 0;
+  background:
+    repeating-radial-gradient(circle, transparent 0 calc(12.5% - 1px), var(--about-ring) calc(12.5% - 1px) 12.5%),
+    linear-gradient(var(--about-ring), var(--about-ring)) center / 1px 100% no-repeat,
+    linear-gradient(var(--about-ring), var(--about-ring)) center / 100% 1px no-repeat;
+  box-shadow: inset 0 0 0 1px var(--about-ring);
+}
+.about-sweep {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, transparent 0deg 285deg, var(--about-sweep) 359deg, transparent 360deg);
+}
+.about-ping { position: absolute; left: 0; top: 0; border: 2px solid; border-radius: 50%; opacity: 0; pointer-events: none; }
+.about-play {
+  margin: 0;
+  padding: 0.4rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+.about-play:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.about-text { max-width: 60ch; margin: 0; color: var(--muted); text-align: center; }
+
+/* The footer's "Made with love" is the way to the about page: quiet like the rest of the line
+   until it is pointed at. */
+a.footer-made { text-decoration: none; }
+a.footer-made:hover, a.footer-made:focus-visible { color: var(--text); text-decoration: underline; }

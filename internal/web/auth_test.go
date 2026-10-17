@@ -89,6 +89,9 @@ func TestEveryRouteIsEitherDeliberatelyPublicOrRefusesAnonymousAccess(t *testing
 		// anonymous visitor sees, so a switch that needed a session would be missing exactly
 		// where the appearance is the whole of the page.
 		"POST /theme": true,
+		// The about page: the logo, the tagline and the credit, linked from every footer, the
+		// sign-in page's included. It reads no snapshot and no configuration (FR-1.18).
+		"GET /about": true,
 	}
 
 	for _, rt := range s.routes() {

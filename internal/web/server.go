@@ -48,7 +48,7 @@ var embedded embed.FS
 // pageFiles are the page templates, each of which supplies the "content" block that layout.html
 // wraps. They are parsed one page at a time — layout plus that page — because every page defines a
 // block of the same name, so a single template set would have them overwrite each other.
-var pageFiles = []string{"login.html", "dashboard.html", "sites.html", "search.html", "contributors.html", "radar.html", "waiting.html", "repos.html"}
+var pageFiles = []string{"login.html", "dashboard.html", "sites.html", "search.html", "contributors.html", "radar.html", "waiting.html", "repos.html", "about.html"}
 
 // fragmentGlob matches the templates that are both part of a page and answerable on their own.
 // They are parsed twice on purpose: into every page set, so that dashboard.html can compose the
@@ -295,7 +295,7 @@ const (
 	// except that a cookie which is no valid session is cleared rather than refused, because
 	// refusing it would leave the visitor holding a cookie nothing can remove (requireSignOut).
 	authSignOut
-	// authPublic needs no credential: liveness, sign-in, the appearance switch and static assets.
+	// authPublic needs no credential: liveness, sign-in, the appearance switch, the about page and static assets.
 	// It is deliberately last, so that it can only ever be chosen by naming it.
 	authPublic
 )
@@ -338,6 +338,10 @@ func (s *Server) routes() []route {
 		// sees; a switch that only worked once you were inside would be missing from the only
 		// page where the appearance is all there is.
 		{http.MethodPost, "/theme", authPublic, s.handleTheme, ""},
+		// The about page (FR-1.18): the logo, the tagline and the credit. Public because the
+		// footer link to it is on the sign-in page too, and it reads nothing of this
+		// application's — no snapshot, no configuration.
+		{http.MethodGet, "/about", authPublic, s.handleAbout, ""},
 
 		// "/{$}" and not "/": the bare pattern is the mux's catch-all and matches every path no
 		// other route claims, so /admin, /no-such-page and /items/extra all answered 200

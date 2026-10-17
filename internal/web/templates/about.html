@@ -1,0 +1,23 @@
+{{/* The radar that draws the logo, only on this page: the dashboard's asset budget (QS-2.3) does
+     not carry it. */}}
+{{define "head"}}<script src="{{.Asset "about.js"}}" defer></script>{{end}}
+
+{{define "content"}}
+<section class="about">
+  {{/* The stage is complete at rest: the logo, the tagline and the credit are the page's own
+       text, so a browser without JavaScript, or with reduced motion requested, shows the final
+       frame. about.js hides the logo's letters while it plays, flies its own letters onto exactly
+       their places, and hands back to them at the end. */}}
+  <div class="about-stage" id="about-stage">
+    <div class="about-mark">
+      <h1 class="about-logo" aria-label="zorgscope"><span aria-hidden="true">z</span><span aria-hidden="true">o</span><span aria-hidden="true">r</span><span aria-hidden="true">g</span><span aria-hidden="true">s</span><span aria-hidden="true">c</span><span aria-hidden="true">o</span><span aria-hidden="true">p</span><span aria-hidden="true">e</span></h1>
+      <div class="about-bar" aria-hidden="true"></div>
+    </div>
+    <p class="about-tagline">keep your issues and PRs under control</p>
+    <p class="about-credit">Made with <span class="heart" role="img" aria-label="love">&#9829;</span> in Cologne by Gernot, courtesy <a href="https://arc42.org" target="_blank" rel="noopener noreferrer">arc42.org</a></p>
+  </div>
+  {{/* hidden until about.js runs: without script there is nothing to play again. */}}
+  <button type="button" class="about-play" id="about-play" hidden>Play again</button>
+  <p class="about-text">zorgscope keeps the open issues, pull requests and Dependabot alerts of a set of GitHub repositories in one place: a list, tiles and a radar. Its source is on <a href="https://github.com/gernotstarke/zorgscope" target="_blank" rel="noopener noreferrer">GitHub</a>.</p>
+</section>
+{{end}}
