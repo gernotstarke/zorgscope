@@ -616,6 +616,24 @@ button:hover,
 .topbar-actions { display: inline-flex; align-items: center; gap: 0.4rem; }
 .topbar-actions form { margin: 0; }
 .topbar-actions button { margin: 0; padding: 0.3rem 0.7rem; font-size: 0.9rem; }
+/* The signed-in login: quiet text beside Log out, not a third button. A long login is cut with
+   an ellipsis rather than pushing the actions onto a line of their own; the title holds it whole. */
+.signed-in-as {
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+.signed-in-as:hover, .signed-in-as:focus-visible { color: var(--text); text-decoration: underline; }
+.signed-in-role {
+  padding: 0 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.75rem;
+}
 
 /* ---------------------------------------------------------------- the sites view (FR-1.8)
 

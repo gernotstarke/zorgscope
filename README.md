@@ -91,6 +91,7 @@ code; `make check` passes.
 
 | Version | Date | Change |
 |---------|------|--------|
+| 2.5.2 | 2026-10-17 | The top bar names who is signed in — the GitHub login beside Log out, linking to the profile, with a "member" chip for a member (FR‑1.11 AC4) |
 | 2.5.0 | 2026-10-12 | Members: write access on zorgscope-members admits invited people to a personal list, tiles and radar over up to 12 public iSAQB repositories of their choice, fetched with their own token; the session cookie is encrypted and carries role and login; signing out revokes a member's token; every existing session ends once at this deploy — everyone signs in once more (FR‑1.17, FR‑8.4, FR‑8.5, ADR‑0019) |
 | 2.4.1 | 2026-10-11 | QS-2.3's page budget raised to 300 kB over a 250-item fixture (was 150 kB over 150 items): 229 items are open across the 19 watched repositories |
 | 2.4.0 | 2026-10-11 | aim42 and aim42.org-site as two tiles in aim42's red, blue and green side by side, with Dependabot alerts; the Radar switch is arc42 \| iSAQB \| all — all draws one sector per family (arc42, iSAQB, systems42, aim42, an empty private); systems42 a family of its own, still a sector on the arc42 radar; at most 19 repositories, 38 requests per fetch (ADR-0018) |

@@ -107,6 +107,13 @@
          rather than always to the list (FR-1.8 AC4). The handler passes it through safeReturn,
          which admits only a path of this site. */}}
     <form class="action" method="post" action="/refresh"><input type="hidden" name="return" value="{{.Return}}"><button type="submit">Refresh</button></form>
+    {{/* Who is signed in, next to the door out (FR-1.11 AC4). The login comes from the session,
+         which admitted it only through config.IsLogin, and is escaped here like any other text.
+         It links to the GitHub profile, since that is the account the sign-in asked about; the
+         role is said in the title, and in words for a member, so an owner testing a member
+         account cannot mistake one view for the other. */}}
+    <a class="signed-in-as" href="https://github.com/{{$.Login}}" target="_blank" rel="noopener noreferrer"
+       title="Signed in as {{$.Login}} ({{if $.Member}}member{{else}}owner{{end}})">{{$.Login}}{{if $.Member}} <span class="signed-in-role">member</span>{{end}}</a>
     <form class="action" method="post" action="/logout"><button type="submit">Log out</button></form>
   </div>
   {{end}}

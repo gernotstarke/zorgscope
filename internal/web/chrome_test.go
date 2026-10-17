@@ -84,6 +84,33 @@ func TestTopBarCarriesTheChromeOnlyWhenSignedIn(t *testing.T) {
 	}
 }
 
+// FR-1.11 AC4: the top bar names who is signed in, beside Log out, linking to their GitHub
+// profile; a member is also called one. The sign-in page names nobody.
+func TestTopBarNamesTheSignedInLogin(t *testing.T) {
+	h := dashHandler(t, &fakeSource{})
+	body := getAuthed(t, h, "/").Body.String()
+	header := body[strings.Index(body, "<header"):strings.Index(body, "</header>")]
+	who := firstLineContaining(header, `class="signed-in-as"`)
+	if !strings.Contains(who, `href="https://github.com/zorg"`) || !strings.Contains(header, ">zorg</a>") {
+		t.Errorf("the top bar does not name the owner's login: %s", who)
+	}
+	if strings.Contains(header, "signed-in-role") {
+		t.Error("the owner is labelled with a role chip")
+	}
+	if strings.Index(header, "signed-in-as") > strings.Index(header, `action="/logout"`) {
+		t.Error("the login is not drawn before Log out")
+	}
+	if strings.Contains(get(h, "/login").Body.String(), "signed-in-as") {
+		t.Error("the sign-in page names a login")
+	}
+
+	member := getSettled(t, memberServer(t, &stubMemberSources{}), "/", mintMemberSession("isaqb-org/glossary")).Body.String()
+	if !strings.Contains(member, `href="https://github.com/`+testMemberLogin+`"`) ||
+		!strings.Contains(member, `<span class="signed-in-role">member</span>`) {
+		t.Errorf("the top bar does not name the member: %s", firstLineContaining(member, "signed-in"))
+	}
+}
+
 // The search box echoes the query only where the query is a search: the list's own filter also
 // uses q, and its text is not a search (FR-1.11).
 func TestTheSearchBoxEchoesTheQueryOnlyOnTheResultsPage(t *testing.T) {
